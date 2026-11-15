@@ -76,13 +76,13 @@ def run_tests():
             res = client.put(f'/api/evacuation-centers/{created_center_id}', headers=headers, json={
                 'name': f'Test Integration Center {ts} (Updated)',
                 'capacity': 120,
-                'accessibility_notes': 'Wheelchair accessible'
+                'amenities': ['Wheelchair Ramps']
             })
             assert res.status_code == 200, f"Expected 200, got {res.status_code}: {res.get_data(as_text=True)}"
             data = res.get_json()
             cap = data.get('capacity') or data.get('properties', {}).get('capacity')
             assert cap == 120, f"Expected capacity 120, got {cap}"
-            results[2] = ("PASS", "Updated center capacity to 120 and accessibility notes")
+            results[2] = ("PASS", "Updated center capacity to 120 and amenities")
         except Exception as e:
             results[2] = ("FAIL", str(e))
         print(f"Test 2: {results[2][0]} - {results[2][1]}", flush=True)

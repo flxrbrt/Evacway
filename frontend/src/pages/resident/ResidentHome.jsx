@@ -53,6 +53,7 @@ import {
   faCircleCheck,
   faMagnifyingGlass,
   faBuildingColumns,
+  faBuilding,
   faDoorOpen,
   faChevronRight,
   faChevronDown,
@@ -938,87 +939,15 @@ function createMyLocationMarker() {
 // Popups
 // --------------------------------------------------
 
-function createHazardPopup(properties, closedRoadNames = []) {
-  const container = document.createElement("div");
-
-  const name = document.createElement("strong");
-  name.textContent = properties.report_type || properties.name || properties.hazard_type || "Hazard";
-
-  const type = document.createElement("div");
-  type.textContent = `Type: ${properties.hazard_type || properties.report_type || "Unknown"}`;
-
-  const risk = document.createElement("div");
-  risk.textContent = properties.risk_level
-    ? `Risk: ${properties.risk_level}`
-    : `Status: ${properties.status || "Reported"}`;
-
-  container.appendChild(name);
-  container.appendChild(type);
-  if (isBlockedRoadReport(properties)) {
-    const blockedStatus = document.createElement("div");
-    blockedStatus.textContent = "Road status: Blocked";
-    blockedStatus.style.marginTop = "4px";
-    blockedStatus.style.color = "#b91c1c";
-    blockedStatus.style.fontWeight = "700";
-    container.appendChild(blockedStatus);
-  }
-
-  if (closedRoadNames.length > 0) {
-    const affectedRoads = document.createElement("div");
-    affectedRoads.textContent = `Affected roads: ${closedRoadNames.join(", ")}`;
-    affectedRoads.style.color = "#b91c1c";
-    affectedRoads.style.fontWeight = "600";
-    container.appendChild(affectedRoads);
-  }
-  container.appendChild(risk);
-
-  const description = properties.description || properties.details;
-  if (description) {
-    const detail = document.createElement("p");
-    detail.textContent = description;
-    detail.style.margin = "6px 0 0";
-    detail.style.maxWidth = "230px";
-    detail.style.whiteSpace = "normal";
-    container.appendChild(detail);
-  }
-
-  const photoPath =
-    properties.photo_url ??
-    properties.image_url ??
-    properties.photo_path ??
-    properties.image_path ??
-    properties.photo ??
-    properties.image;
-  const photoMessage = document.createElement("div");
-
-  if (photoPath) {
-    const photo = document.createElement("img");
-    photo.src = resolvePhotoUrl(photoPath);
-    photo.alt = "Photo attached to hazard report";
-    photo.style.display = "block";
-    photo.style.width = "220px";
-    photo.style.maxWidth = "100%";
-    photo.style.maxHeight = "140px";
-    photo.style.objectFit = "cover";
-    photo.style.marginTop = "8px";
-    photo.style.borderRadius = "6px";
-    photo.onerror = () => {
-      photo.remove();
-      photoMessage.textContent = "Photo could not be loaded.";
-    };
-    container.appendChild(photo);
-  } else {
-    photoMessage.textContent = "No photo was attached to this report.";
-  }
-
-  if (photoMessage.textContent) {
-    photoMessage.style.marginTop = "7px";
-    photoMessage.style.color = "#64748b";
-    photoMessage.style.fontSize = "12px";
-    container.appendChild(photoMessage);
-  }
-
-  return container;
+function createHazardPopup(properties, closedRoadNames = [], options = {}) {
+  const fullReport = {
+    ...properties,
+    closed_roads:
+      Array.isArray(closedRoadNames) && closedRoadNames.length > 0
+        ? closedRoadNames
+        : properties.closed_roads || [],
+  };
+  return createReportPopup(fullReport, options);
 }
 
 function isBlockedRoadReport(report) {
@@ -1286,10 +1215,6 @@ const ResidentHome = () => {
   // --------------------------------------------------
 
   const [mapStyle, setMapStyle] = useState("street");
-  const [legendCollapsed, setLegendCollapsed] = useState(
-    () => typeof window !== "undefined" && window.innerWidth < 768
-  );
-
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
 
@@ -1387,6 +1312,23 @@ const ResidentHome = () => {
   const [lookupError, setLookupError] = useState("");
   const [lookupMatches, setLookupMatches] = useState([]);
 
+  // "Find someone" state
+  const [findSomeoneOpen, setFindSomeoneOpen] = useState(false);
+  const [findSomeoneName, setFindSomeoneName] = useState("");
+  const [findSomeoneLoading, setFindSomeoneLoading] = useState(false);
+  const [findSomeoneResults, setFindSomeoneResults] = useState([]);
+  const [findSomeoneHint, setFindSomeoneHint] = useState("");
+  const [findSomeoneSearched, setFindSomeoneSearched] = useState(false);
+
+  // Autosuggest for "Find someone"
+  const [findSomeoneAutosuggestList, setFindSomeoneAutosuggestList] = useState([]);
+  const [findSomeoneAutosuggestOpen, setFindSomeoneAutosuggestOpen] = useState(false);
+  const [findSomeoneAutosuggestLoading, setFindSomeoneAutosuggestLoading] = useState(false);
+  const [findSomeoneAutosuggestIndex, setFindSomeoneAutosuggestIndex] = useState(-1);
+  const findSomeoneAbortRef = useRef(null);
+  const findSomeoneInputWrapRef = useRef(null);
+  const selectingFindSomeoneRef = useRef(false);
+
   // Building details modal (independent of center card)
   const [buildingModalOpen, setBuildingModalOpen] = useState(false);
   const [selectedBuildingId, setSelectedBuildingId] = useState(null);
@@ -1416,6 +1358,7 @@ const ResidentHome = () => {
   // --------------------------------------------------
 
   const [selectedCenter, setSelectedCenter] = useState(null);
+  const [centerPanelScrolled, setCenterPanelScrolled] = useState(false);
 
   // --------------------------------------------------
   // Keep pickingLocationRef in sync with pickingLocation
@@ -1595,10 +1538,23 @@ const ResidentHome = () => {
       const feature = event.features?.[0];
       if (!feature) return;
 
-      new mapboxgl.Popup({ offset: 10 })
+      const popup = new mapboxgl.Popup({
+        offset: [0, -20],
+        className: "ew-popup",
+        maxWidth: "440px",
+        closeButton: false,
+        closeOnClick: true,
+      });
+      popup
         .setLngLat(event.lngLat)
-        .setDOMContent(createHazardPopup(feature.properties || {}))
+        .setDOMContent(
+          createHazardPopup(feature.properties || {}, [], {
+            onClose: () => popup.remove(),
+            popup,
+          })
+        )
         .addTo(map);
+      hazardPopupRef.current = popup;
     };
 
     const handleMouseEnter = () => {
@@ -1774,12 +1730,18 @@ const ResidentHome = () => {
       const popup = new mapboxgl.Popup({
         offset: [0, -28],
         className: "ew-popup",
-        maxWidth: "340px",
-        closeButton: true,
+        maxWidth: "440px",
+        closeButton: false,
         closeOnClick: true,
-      })
+      });
+      popup
         .setLngLat(coordinates)
-        .setDOMContent(createReportPopup(fullReport))
+        .setDOMContent(
+          createReportPopup(fullReport, {
+            onClose: () => popup.remove(),
+            popup,
+          })
+        )
         .addTo(map);
 
       hazardPopupRef.current = popup;
@@ -2487,12 +2449,18 @@ const ResidentHome = () => {
           const popup = new mapboxgl.Popup({
             offset: [0, -28],
             className: "ew-popup",
-            maxWidth: "340px",
-            closeButton: true,
+            maxWidth: "440px",
+            closeButton: false,
             closeOnClick: true,
-          })
+          });
+          popup
             .setLngLat(coordinates)
-            .setDOMContent(createReportPopup(fullReport))
+            .setDOMContent(
+              createReportPopup(fullReport, {
+                onClose: () => popup.remove(),
+                popup,
+              })
+            )
             .addTo(map);
 
           hazardPopupRef.current = popup;
@@ -4415,6 +4383,10 @@ const ResidentHome = () => {
 
   async function handleRequestAssistance() {
     if (requestingAssistance) return;
+    if (!user) {
+      openLoginDialog("Please log in to send a rescue request to EvacWay response staff.");
+      return;
+    }
     setRequestingAssistance(true);
     try {
       const lat = myLocation?.lat ?? myLocation?.latitude;
@@ -4502,6 +4474,30 @@ const ResidentHome = () => {
     setLookupError("");
     setLookupMatches([]);
     setMyCenterOpen(true);
+
+    if (user && !myCenter) {
+      const queryParam = user.resident_id
+        ? { resident_id: user.resident_id }
+        : { name: user.name || (user.first_name ? `${user.first_name} ${user.last_name || ""}`.trim() : "") };
+      if (queryParam.resident_id || queryParam.name) {
+        api
+          .findMyEvacuationCenter(queryParam)
+          .then((result) => {
+            const matches = normalizeMatches(result);
+            const match =
+              matches.find(
+                (item) =>
+                  user.resident_id != null &&
+                  String(item.resident_id) === String(user.resident_id)
+              ) || (matches.length > 0 ? matches[0] : null);
+
+            if (match?.evacuation_center) {
+              setMyCenter(match);
+            }
+          })
+          .catch(() => {});
+      }
+    }
   }
 
   function closeMyCenter() {
@@ -4721,6 +4717,281 @@ const ResidentHome = () => {
   }
 
   // --------------------------------------------------
+  // "Find someone" handlers
+  // --------------------------------------------------
+
+  const closeFindSomeone = () => {
+    setFindSomeoneOpen(false);
+    setFindSomeoneHint("");
+    setFindSomeoneAutosuggestOpen(false);
+    setFindSomeoneAutosuggestList([]);
+    setFindSomeoneAutosuggestIndex(-1);
+  };
+
+  // --------------------------------------------------
+  // AUTOSUGGEST LOGIC FOR "FIND SOMEONE"
+  // --------------------------------------------------
+
+  function normalizeForMatch(str) {
+    return (str || "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+      .trim();
+  }
+
+  function matchAndRankResident(query, name) {
+    const q = normalizeForMatch(query);
+    const n = normalizeForMatch(name);
+    if (!q || !n) return { matches: false, score: 999 };
+
+    // Rank names that start with the typed text first
+    if (n.startsWith(q)) {
+      return { matches: true, score: 0 };
+    }
+
+    const words = n.split(/\s+/).filter(Boolean);
+
+    // Start of first name
+    if (words.length > 0 && words[0].startsWith(q)) {
+      return { matches: true, score: 1 };
+    }
+
+    // Start of last name
+    if (words.length > 1 && words[words.length - 1].startsWith(q)) {
+      return { matches: true, score: 2 };
+    }
+
+    // Start of any word in full name
+    const idx = words.findIndex((w) => w.startsWith(q));
+    if (idx !== -1) {
+      return { matches: true, score: 3 + idx };
+    }
+
+    return { matches: false, score: 999 };
+  }
+
+  // Autosuggest lookup debounce for "Find someone" (triggers on 1 character, 200ms debounce)
+  useEffect(() => {
+    if (!findSomeoneOpen) {
+      setFindSomeoneAutosuggestList([]);
+      setFindSomeoneAutosuggestOpen(false);
+      setFindSomeoneAutosuggestLoading(false);
+      return;
+    }
+
+    if (selectingFindSomeoneRef.current) {
+      selectingFindSomeoneRef.current = false;
+      return;
+    }
+
+    const trimmed = findSomeoneName.trim();
+    if (trimmed.length < 1) {
+      setFindSomeoneAutosuggestList([]);
+      setFindSomeoneAutosuggestOpen(false);
+      setFindSomeoneAutosuggestLoading(false);
+      return;
+    }
+
+    if (findSomeoneAbortRef.current) {
+      findSomeoneAbortRef.current.abort();
+    }
+    const controller = new AbortController();
+    findSomeoneAbortRef.current = controller;
+
+    setFindSomeoneAutosuggestLoading(true);
+    setFindSomeoneAutosuggestOpen(true);
+
+    const timer = setTimeout(() => {
+      api
+        .autosuggestResidents(trimmed, controller.signal)
+        .then((res) => {
+          const suggestions = res.suggestions || [];
+          const ranked = suggestions
+            .map((item) => ({ item, ...matchAndRankResident(trimmed, item.name) }))
+            .filter((entry) => entry.matches)
+            .sort((a, b) => a.score - b.score || a.item.name.localeCompare(b.item.name))
+            .map((entry) => entry.item);
+
+          setFindSomeoneAutosuggestList(
+            (ranked.length > 0 ? ranked : suggestions).slice(0, 5)
+          );
+          setFindSomeoneAutosuggestIndex(-1);
+          setFindSomeoneAutosuggestLoading(false);
+        })
+        .catch((err) => {
+          if (err.name !== "AbortError") {
+            setFindSomeoneAutosuggestList([]);
+            setFindSomeoneAutosuggestLoading(false);
+          }
+        });
+    }, 200);
+
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [findSomeoneName, findSomeoneOpen]);
+
+  // Dismiss Find Someone autosuggest when clicking outside
+  useEffect(() => {
+    if (!findSomeoneAutosuggestOpen) return;
+    function handleClickOutside(e) {
+      if (
+        findSomeoneInputWrapRef.current &&
+        !findSomeoneInputWrapRef.current.contains(e.target)
+      ) {
+        setFindSomeoneAutosuggestOpen(false);
+        setFindSomeoneAutosuggestIndex(-1);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    document.addEventListener("touchstart", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("touchstart", handleClickOutside);
+    };
+  }, [findSomeoneAutosuggestOpen]);
+
+  const handleSelectFindSomeoneSuggestion = async (item) => {
+    selectingFindSomeoneRef.current = true;
+    const name = item.name;
+    setFindSomeoneName(name);
+    setFindSomeoneAutosuggestOpen(false);
+    setFindSomeoneAutosuggestList([]);
+    setFindSomeoneAutosuggestIndex(-1);
+    setFindSomeoneHint("");
+    setFindSomeoneLoading(true);
+    setFindSomeoneSearched(true);
+    setFindSomeoneResults([]);
+
+    try {
+      const result = await api.findMyEvacuationCenter(name);
+      const matches = normalizeMatches(result);
+      let bestMatches = matches;
+      if (item.barangay) {
+        const filtered = matches.filter(
+          (m) =>
+            m.barangay?.toLowerCase() === item.barangay.toLowerCase() ||
+            m.address?.toLowerCase().includes(item.barangay.toLowerCase())
+        );
+        if (filtered.length > 0) bestMatches = filtered;
+      }
+      setFindSomeoneResults(bestMatches.slice(0, 5));
+    } catch {
+      setFindSomeoneResults([]);
+    } finally {
+      setFindSomeoneLoading(false);
+    }
+  };
+
+  function handleFindSomeoneKeyDown(e) {
+    if (!findSomeoneAutosuggestOpen) {
+      if (e.key === "ArrowDown" && findSomeoneAutosuggestList.length > 0) {
+        setFindSomeoneAutosuggestOpen(true);
+      }
+      return;
+    }
+
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setFindSomeoneAutosuggestIndex((prev) =>
+        prev < findSomeoneAutosuggestList.length - 1 ? prev + 1 : 0
+      );
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setFindSomeoneAutosuggestIndex((prev) =>
+        prev > 0 ? prev - 1 : findSomeoneAutosuggestList.length - 1
+      );
+    } else if (e.key === "Enter") {
+      if (
+        findSomeoneAutosuggestIndex >= 0 &&
+        findSomeoneAutosuggestList[findSomeoneAutosuggestIndex]
+      ) {
+        e.preventDefault();
+        handleSelectFindSomeoneSuggestion(
+          findSomeoneAutosuggestList[findSomeoneAutosuggestIndex]
+        );
+      }
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      setFindSomeoneAutosuggestOpen(false);
+      setFindSomeoneAutosuggestIndex(-1);
+    }
+  }
+
+  const handleFindSomeoneSubmit = async (e) => {
+    e.preventDefault();
+    setFindSomeoneAutosuggestOpen(false);
+    const query = findSomeoneName.trim();
+    const words = query.split(/\s+/).filter(Boolean);
+
+    if (words.length < 2) {
+      setFindSomeoneHint("Please enter at least two words (first and last name).");
+      return;
+    }
+
+    setFindSomeoneHint("");
+    setFindSomeoneLoading(true);
+    setFindSomeoneSearched(true);
+    setFindSomeoneResults([]);
+
+    try {
+      const result = await api.findMyEvacuationCenter(query);
+      const matches = normalizeMatches(result);
+      setFindSomeoneResults(matches.slice(0, 5));
+    } catch {
+      setFindSomeoneResults([]);
+    } finally {
+      setFindSomeoneLoading(false);
+    }
+  };
+
+  const handleViewPersonCenterOnMap = (person) => {
+    setFindSomeoneOpen(false);
+    const centerInfo = person?.evacuation_center;
+    if (!centerInfo) return;
+
+    let feature = null;
+    if (evacCenters?.features) {
+      feature = evacCenters.features.find((c) => {
+        const cId = c.properties?.id ?? c.id;
+        if (centerInfo.id && String(cId) === String(centerInfo.id)) return true;
+        const cName = c.properties?.name ?? c.name;
+        if (
+          centerInfo.name &&
+          cName &&
+          cName.toLowerCase() === centerInfo.name.toLowerCase()
+        ) {
+          return true;
+        }
+        return false;
+      });
+    }
+
+    const map = mapRef.current;
+    let coords = null;
+    if (feature?.geometry?.coordinates) {
+      coords = feature.geometry.coordinates;
+    } else if (centerInfo.longitude && centerInfo.latitude) {
+      coords = [Number(centerInfo.longitude), Number(centerInfo.latitude)];
+    }
+
+    if (feature) {
+      setSelectedCenter(feature);
+    }
+
+    if (map && coords) {
+      map.flyTo({
+        center: coords,
+        zoom: 16.5,
+        duration: 1200,
+        essential: true,
+      });
+    }
+  };
+
+  // --------------------------------------------------
   // Search (evacuation centers)
   // --------------------------------------------------
 
@@ -4860,6 +5131,7 @@ const ResidentHome = () => {
 
   function closeCenterDetails() {
     setSelectedCenter(null);
+    setCenterPanelScrolled(false);
   }
 
 
@@ -4876,6 +5148,16 @@ const ResidentHome = () => {
       ? [{ name: selectedCenterProperties.barangay }]
       : [];
 
+  const selectedCenterAddress = useMemo(() => {
+    if (selectedCenterBarangays && selectedCenterBarangays.length > 0) {
+      return selectedCenterBarangays.map((b) => displayEntityName(b.name)).join(", ");
+    }
+    if (selectedCenterProperties.address) {
+      return selectedCenterProperties.address;
+    }
+    return "";
+  }, [selectedCenterProperties.address, selectedCenterBarangays]);
+
   const selectedCenterCapacity = selectedCenterProperties.capacity ?? null;
   const selectedCenterOccupied =
     selectedCenterProperties.occupied ??
@@ -4890,7 +5172,9 @@ const ResidentHome = () => {
     displayEntityName(selectedCenterProperties.building_material) || null;
 
   const selectedCenterAccessibility =
-    displayEntityName(selectedCenterProperties.accessibility_notes) || null;
+    Array.isArray(selectedCenterProperties.amenities) && selectedCenterProperties.amenities.length > 0
+      ? selectedCenterProperties.amenities.map((a) => (typeof a === 'string' ? a : a.name || a.code)).filter(Boolean).join(', ')
+      : (typeof selectedCenterProperties.amenities === 'string' ? selectedCenterProperties.amenities : null);
 
   const selectedCenterIsMine =
     myCenter?.evacuation_center?.id != null &&
@@ -5057,10 +5341,10 @@ const ResidentHome = () => {
         <span>Safe evacuation center where your family can stay.</span>
       </div>
       <div className="legend-item">
-        <div className="legend-icon-wrapper place-room">
-          <FontAwesomeIcon icon={faDoorOpen} />
+        <div className="legend-icon-wrapper place-building">
+          <FontAwesomeIcon icon={faBuilding} />
         </div>
-        <span>Room inside an evacuation center when you zoom in.</span>
+        <span>Building inside an evacuation center when you zoom in.</span>
       </div>
       <div className="legend-item">
         <div className="legend-icon-wrapper hazard-report">
@@ -5074,17 +5358,46 @@ const ResidentHome = () => {
         </div>
         <span>Road that is blocked or closed and cannot be passed.</span>
       </div>
+
+      <div className="help-section-divider" role="separator" />
+
+      <div className="help-section-heading">How full is the building?</div>
+
       <div className="legend-item">
-        <div className="legend-icon-wrapper hazard-flood">
-          <FontAwesomeIcon icon={faWater} />
+        <div className="legend-icon-wrapper">
+          <span className="legend-status-dot dot-green" aria-hidden="true" />
         </div>
-        <span>Area that can flood during heavy rain.</span>
+        <span>
+          <strong>Plenty of space.</strong>{" "}
+          <span className="legend-desc-muted">You can go here.</span>
+        </span>
       </div>
       <div className="legend-item">
-        <div className="legend-icon-wrapper hazard-landslide">
-          <FontAwesomeIcon icon={faMountain} />
+        <div className="legend-icon-wrapper">
+          <span className="legend-status-dot dot-orange" aria-hidden="true" />
         </div>
-        <span>Steep area where landslides may happen.</span>
+        <span>
+          <strong>Getting crowded.</strong>{" "}
+          <span className="legend-desc-muted">Space is running low, so go soon.</span>
+        </span>
+      </div>
+      <div className="legend-item">
+        <div className="legend-icon-wrapper">
+          <span className="legend-status-dot dot-red" aria-hidden="true" />
+        </div>
+        <span>
+          <strong>Full.</strong>{" "}
+          <span className="legend-desc-muted">No space left. Choose another center.</span>
+        </span>
+      </div>
+      <div className="legend-item">
+        <div className="legend-icon-wrapper">
+          <span className="legend-status-dot dot-gray" aria-hidden="true" />
+        </div>
+        <span>
+          <strong>No information yet.</strong>{" "}
+          <span className="legend-desc-muted">Check with your barangay or the center.</span>
+        </span>
       </div>
     </div>
   );
@@ -5099,9 +5412,13 @@ const ResidentHome = () => {
   );
 
   const hasRoom = Boolean(myCenter?.room);
-  const roomNum = myCenter?.room?.room_number?.startsWith("Room")
-    ? myCenter.room.room_number
-    : `Room ${myCenter?.room?.room_number || "29"}`;
+  const roomNum = myCenter?.room?.room_name || (
+    myCenter?.room?.room_number
+      ? (String(myCenter.room.room_number).toLowerCase().startsWith("room")
+          ? myCenter.room.room_number
+          : `Room ${myCenter.room.room_number}`)
+      : "Room 29"
+  );
   const hasBuilding = Boolean(myCenter?.room?.building_id && myCenter?.room?.building_name);
   const myCheckinStatus =
     myCenter?.is_checked_in || myCenter?.room?.is_checked_in
@@ -5109,13 +5426,13 @@ const ResidentHome = () => {
       : "Reserved for your household";
   const centerDisplayName =
     myCenter?.evacuation_center?.name || "Sogod Central School";
-  const roomLabel = hasRoom
-    ? (hasBuilding
-      ? `${centerDisplayName} · ${roomNum} (${myCenter.room.building_name})`
-      : `${centerDisplayName} · ${roomNum}`)
-    : (hasBuilding
-      ? `${centerDisplayName} · ${myCenter.room.building_name}`
-      : centerDisplayName);
+  const roomTitle = hasRoom
+    ? (myCenter?.room?.room_name || roomNum)
+    : (hasBuilding ? myCenter.room.building_name : "General Shelter");
+  const roomSubtitle = hasBuilding
+    ? `${myCenter.room.building_name} · ${centerDisplayName}`
+    : centerDisplayName;
+  const roomLabel = `${roomTitle} · ${roomSubtitle}`;
   const fullCenterRoomLabel = roomLabel;
 
   const handleOpenMyRoomBuilding = useCallback(() => {
@@ -5427,15 +5744,8 @@ const ResidentHome = () => {
                   <FontAwesomeIcon icon={hasRoom ? faDoorOpen : faHouseFlag} />
                 </span>
                 <div className="your-room-text-stack">
-                  <div className="your-room-center-sub" title={centerDisplayName}>
-                    <FontAwesomeIcon icon={faBuildingColumns} className="your-room-center-sub-icon" />
-                    <span className="your-room-center-sub-name">{centerDisplayName}</span>
-                  </div>
-                  <div className="your-room-main-title">
-                    {hasRoom
-                      ? (hasBuilding ? `${roomNum} · ${myCenter.room.building_name}` : roomNum)
-                      : (hasBuilding ? myCenter.room.building_name : "General Shelter")}
-                  </div>
+                  <div className="your-room-main-title">{roomTitle}</div>
+                  <div className="your-room-sub-title">{roomSubtitle}</div>
                 </div>
               </div>
               <div className="your-room-collapsed-right">
@@ -5443,8 +5753,8 @@ const ResidentHome = () => {
                   type="button"
                   className="your-room-collapsed-nav-btn"
                   onClick={handleStartWalkingToMyRoom}
-                  title="Navigate"
-                  aria-label="Navigate"
+                  title="Start walking navigation"
+                  aria-label="Start walking navigation"
                 >
                   <FontAwesomeIcon icon={faPersonWalking} />
                 </button>
@@ -5483,20 +5793,13 @@ const ResidentHome = () => {
                     <FontAwesomeIcon icon={hasRoom ? faDoorOpen : faHouseFlag} />
                   </span>
                   <div className="your-room-text-stack">
-                    <div className="your-room-center-sub" title={centerDisplayName}>
-                      <FontAwesomeIcon icon={faBuildingColumns} className="your-room-center-sub-icon" />
-                      <span className="your-room-center-sub-name">{centerDisplayName}</span>
-                    </div>
-                    <div className="your-room-main-title">
-                      {hasRoom
-                        ? (hasBuilding ? `${roomNum} · ${myCenter.room.building_name}` : roomNum)
-                        : (hasBuilding ? myCenter.room.building_name : "General Shelter")}
-                    </div>
+                    <div className="your-room-main-title">{roomTitle}</div>
+                    <div className="your-room-sub-title">{roomSubtitle}</div>
                   </div>
                 </div>
                 <button
                   type="button"
-                  className="your-room-collapsed-expand-btn"
+                  className="your-room-collapsed-expand-btn is-expanded"
                   onClick={() => setRoomCardExpanded(false)}
                   title="Collapse room details"
                   aria-label="Collapse room details"
@@ -5505,10 +5808,8 @@ const ResidentHome = () => {
                   <FontAwesomeIcon icon={faChevronDown} />
                 </button>
               </div>
+              <div className="your-room-divider" aria-hidden="true" />
               <div className="your-room-expanded-content">
-                <div className="pinned-room-center-name">
-                  {myCenter.evacuation_center?.name || "Sogod Central School"}
-                </div>
                 <p className="pinned-room-details-line">
                   <strong>{myCheckinStatus}</strong>
                   {" · "}
@@ -5553,23 +5854,24 @@ const ResidentHome = () => {
                 <span className="your-room-door-icon" aria-hidden="true">
                   <FontAwesomeIcon icon={hasRoom ? faDoorOpen : faHouseFlag} />
                 </span>
-                <span className="your-room-expanded-title">{roomLabel}</span>
+                <div className="your-room-text-stack">
+                  <div className="your-room-main-title">{roomTitle}</div>
+                  <div className="your-room-sub-title">{roomSubtitle}</div>
+                </div>
               </div>
               <button
                 type="button"
-                className="your-room-collapsed-expand-btn"
+                className="your-room-collapsed-expand-btn is-expanded"
                 onClick={() => setRoomCardExpanded(false)}
                 title="Collapse room details"
                 aria-label="Collapse room details"
                 aria-expanded="true"
               >
-                <FontAwesomeIcon icon={faChevronUp} />
+                <FontAwesomeIcon icon={faChevronDown} />
               </button>
             </div>
+            <div className="your-room-divider" aria-hidden="true" />
             <div className="your-room-expanded-content">
-              <div className="pinned-room-center-name">
-                {myCenter.evacuation_center?.name || "Sogod Central School"}
-              </div>
               <p className="pinned-room-details-line">
                 <strong>{myCheckinStatus}</strong>
                 {" · "}
@@ -5716,84 +6018,117 @@ const ResidentHome = () => {
           role="dialog"
           aria-label="Evacuation Center Details"
         >
-          {isMobile && <div className="sheet-handle" aria-hidden="true" />}
-          <div className="center-card-header">
-            <div className="center-card-title-group">
-              <div className="center-card-name-row">
-                <h3>{selectedCenterName}</h3>
-                {selectedCenterIsMine ? (
-                  <span className="center-status-badge mine">Your Assigned Center</span>
-                ) : (
-                  <span className="center-status-badge open">Open Center</span>
+          {/* Fixed Top Section: Header, Quick Stats, My Room, Primary Action */}
+          <div className={`center-card-top-fixed ${centerPanelScrolled ? "is-scrolled" : ""}`}>
+            {isMobile && <div className="sheet-handle" aria-hidden="true" />}
+
+            {/* Header */}
+            <div className="center-card-header">
+              <div className="center-card-header-main">
+                <div className="center-card-name-row">
+                  <h3 className="center-card-title">{selectedCenterName}</h3>
+                  {selectedCenterIsMine ? (
+                    <span className="center-status-badge mine">
+                      <span className="center-status-dot" />
+                      Your Assigned Center
+                    </span>
+                  ) : (
+                    <span className="center-status-badge open">
+                      <span className="center-status-dot" />
+                      Open Center
+                    </span>
+                  )}
+                </div>
+                {selectedCenterAddress && (
+                  <div className="center-card-address" title={selectedCenterAddress}>
+                    {selectedCenterAddress}
+                  </div>
                 )}
               </div>
-              <div className="center-card-meta">
-                {selectedCenterDistance && (
-                  <span className="center-meta-item">
-                    <FontAwesomeIcon icon={faLocationCrosshairs} />
-                    <strong>{selectedCenterDistance}</strong>
-                  </span>
-                )}
-                {selectedCenterCapacity != null && (
-                  <span className="center-meta-item">
-                    <strong>{selectedCenterOccupied}</strong> of{" "}
-                    <strong>{selectedCenterCapacity}</strong> here ·{" "}
-                    <strong>{selectedCenterAssigned}</strong> assigned
-                  </span>
-                )}
-                {selectedCenterBarangays.length > 0 && (
-                  <span className="center-meta-item">
-                    {selectedCenterBarangays
-                      .map((b) => displayEntityName(b.name))
-                      .join(", ")}
-                  </span>
-                )}
+
+              <button
+                type="button"
+                className="center-card-close-btn"
+                onClick={closeCenterDetails}
+                aria-label="Close details"
+                title="Close"
+              >
+                <FontAwesomeIcon icon={faXmark} />
+              </button>
+            </div>
+
+            {/* Quick stats: 3 small stat tiles */}
+            <div className="center-stat-tiles-row">
+              {/* Distance */}
+              <div className="center-stat-tile">
+                <div className="center-stat-val-row">
+                  <FontAwesomeIcon icon={faLocationDot} className="center-stat-pin-icon" />
+                  <span className="center-stat-num">{selectedCenterDistance || "Nearby"}</span>
+                </div>
+                <span className="center-stat-lbl">distance</span>
+              </div>
+
+              {/* Here */}
+              <div className="center-stat-tile">
+                <div className="center-stat-val-row">
+                  <span className="center-stat-num">{selectedCenterOccupied ?? 0}</span>
+                </div>
+                <span className="center-stat-lbl">here</span>
+              </div>
+
+              {/* Assigned */}
+              <div className="center-stat-tile">
+                <div className="center-stat-val-row">
+                  <span className="center-stat-num">{selectedCenterAssigned ?? 0}</span>
+                  {selectedCenterCapacity != null && (
+                    <span className="center-stat-sub">of {selectedCenterCapacity}</span>
+                  )}
+                </div>
+                <span className="center-stat-lbl">assigned</span>
               </div>
             </div>
 
-            <button
-              type="button"
-              className="center-card-close"
-              onClick={closeCenterDetails}
-              aria-label="Close details"
-            >
-              <FontAwesomeIcon icon={faXmark} />
-            </button>
-          </div>
+            {/* Assigned Room Callout (if this is the resident's assigned center) */}
+            {selectedCenterIsMine && (
+              <div className="cd-your-room">
+                <FontAwesomeIcon icon={faCircleCheck} />
+                <span>
+                  {myCenter?.room?.room_number ? (
+                    <>
+                      Your assigned room: <strong>{myCenter.room.room_number}</strong> · {myCheckinStatus}
+                    </>
+                  ) : (
+                    <>
+                      Your assigned shelter (1 space) · {myCheckinStatus}
+                    </>
+                  )}
+                </span>
+              </div>
+            )}
 
-          {selectedCenterIsMine && (
-            <div className="cd-your-room">
-              <FontAwesomeIcon icon={faCircleCheck} />
-              <span>
-                {myCenter?.room?.room_number ? (
-                  <>
-                    Your assigned room: <strong>{myCenter.room.room_number}</strong> · {myCheckinStatus}
-                  </>
-                ) : (
-                  <>
-                    Your assigned shelter (1 space) · {myCheckinStatus}
-                  </>
-                )}
-              </span>
+            {/* Primary Action Button: Navigate to this Center */}
+            <div className="center-card-actions">
+              <button
+                type="button"
+                className="center-navigate-btn"
+                onClick={() => {
+                  handleFindRoute(selectedCenterId);
+                  closeCenterDetails();
+                }}
+                disabled={findingRoute || locationPermission === "denied"}
+              >
+                <FontAwesomeIcon icon={faRoute} spin={findingRoute} />
+                <span>Navigate to this Center</span>
+              </button>
             </div>
-          )}
-
-          <div className="center-card-actions">
-            <button
-              type="button"
-              className="center-navigate-btn"
-              onClick={() => {
-                handleFindRoute(selectedCenterId);
-                closeCenterDetails();
-              }}
-              disabled={findingRoute || locationPermission === "denied"}
-            >
-              <FontAwesomeIcon icon={faRoute} spin={findingRoute} />
-              <span>Navigate to this Center</span>
-            </button>
           </div>
 
-          {/* BUILDINGS LIST (for campus) OR OPEN SHELTER SPACE (for single venue / private property) */}
+          {/* Scrollable Body: Buildings List Only */}
+          <div
+            className="center-card-scroll-body"
+            onScroll={(e) => setCenterPanelScrolled(e.currentTarget.scrollTop > 4)}
+          >
+            {/* BUILDINGS LIST (for campus) OR OPEN SHELTER SPACE (for single venue / private property) */}
           {(() => {
             const cType =
               selectedCenter.properties?.center_type ||
@@ -5809,42 +6144,22 @@ const ResidentHome = () => {
               return (
                 <div className="center-card-buildings-section">
                   <div className="center-card-buildings-header">
-                    <span>Shelter Space</span>
+                    <span className="buildings-header-title">Shelter Space</span>
                     <span className="buildings-header-sub">
                       {cType === "private_property"
                         ? "Private Property"
                         : "Single Open Space"}
                     </span>
                   </div>
-                  <div
-                    style={{
-                      padding: "12px 14px",
-                      background: "#f8fafc",
-                      border: "1px solid #e2e8f0",
-                      borderRadius: 8,
-                      fontSize: 13,
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: 6,
-                    }}
-                  >
-                    <div
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                      }}
-                    >
-                      <span style={{ color: "#64748b" }}>Capacity:</span>
-                      <strong style={{ color: "#0f172a" }}>{cap} people</strong>
+                  <div className="center-shelter-space-card">
+                    <div className="center-shelter-row">
+                      <span className="center-shelter-label">Capacity</span>
+                      <strong className="center-shelter-val">{cap} people</strong>
                     </div>
-                    <div
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                      }}
-                    >
-                      <span style={{ color: "#64748b" }}>Space remaining:</span>
+                    <div className="center-shelter-row">
+                      <span className="center-shelter-label">Space remaining</span>
                       <strong
+                        className="center-shelter-val"
                         style={{
                           color: spaceLeft > 0 ? "#16a34a" : "#dc2626",
                         }}
@@ -5853,16 +6168,11 @@ const ResidentHome = () => {
                       </strong>
                     </div>
                     {selectedCenter.properties?.building_material && (
-                      <div
-                        style={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                        }}
-                      >
-                        <span style={{ color: "#64748b" }}>
-                          Building material:
+                      <div className="center-shelter-row">
+                        <span className="center-shelter-label">
+                          Building material
                         </span>
-                        <span style={{ color: "#0f172a" }}>
+                        <span className="center-shelter-val">
                           {selectedCenter.properties.building_material}
                         </span>
                       </div>
@@ -5875,7 +6185,9 @@ const ResidentHome = () => {
             return (
               <div className="center-card-buildings-section">
                 <div className="center-card-buildings-header">
-                  <span>Buildings ({selectedCenterBuildings.length})</span>
+                  <span className="buildings-header-title">
+                    Buildings ({selectedCenterBuildings.length})
+                  </span>
                   <span className="buildings-header-sub">
                     Tap building to view rooms
                   </span>
@@ -5894,16 +6206,34 @@ const ResidentHome = () => {
                         bCap > 0
                           ? Math.min(100, Math.round((bAssigned / bCap) * 100))
                           : 0;
-                      const bIsFull = bCap > 0 && bOcc >= bCap;
-                      const bIsFullyAssigned = bCap > 0 && bAssigned >= bCap;
-                      const bColor =
-                        bCap === 0
-                          ? "#94a3b8"
-                          : bOcc >= bCap
-                            ? "#dc2626"
-                            : bPct >= 70
-                              ? "#d97706"
-                              : "#16a34a";
+
+                      // Unified status colors
+                      let statusKey = "available";
+                      let statusLabel = "Available";
+                      let statusDotColor = "#16a34a";
+                      let bColor = "#16a34a";
+
+                      if (bCap === 0) {
+                        statusKey = "no-data";
+                        statusLabel = "No data";
+                        statusDotColor = "#94a3b8";
+                        bColor = "#94a3b8";
+                      } else if (bOcc >= bCap) {
+                        statusKey = "full";
+                        statusLabel = "Full";
+                        statusDotColor = "#dc2626";
+                        bColor = "#dc2626";
+                      } else if (bAssigned >= bCap) {
+                        statusKey = "fully-assigned";
+                        statusLabel = "Fully assigned";
+                        statusDotColor = "#d97706";
+                        bColor = "#d97706";
+                      } else if (bPct >= 70) {
+                        statusKey = "filling";
+                        statusLabel = "Filling";
+                        statusDotColor = "#d97706";
+                        bColor = "#d97706";
+                      }
 
                       const isUserBuilding =
                         myCenter?.room?.building_id != null &&
@@ -5913,8 +6243,9 @@ const ResidentHome = () => {
                         <button
                           type="button"
                           key={b.id}
-                          className={`center-building-row-btn ${isUserBuilding ? "is-user-building" : ""
-                            }`}
+                          className={`center-building-card ${
+                            isUserBuilding ? "is-user-building" : ""
+                          }`}
                           onClick={() => {
                             setSelectedBuildingId(b.id);
                             setSelectedBuildingData(b);
@@ -5922,64 +6253,73 @@ const ResidentHome = () => {
                             closeCenterDetails();
                           }}
                           role="listitem"
-                          aria-label={`${b.name || "Building"}, ${b.room_count || 0} rooms, ${bOcc} of ${bCap} here, ${bAssigned} assigned`}
+                          aria-label={`${b.name || "Building"}, ${b.room_count || 0} rooms, ${statusLabel}, ${bOcc} of ${bCap} here, ${bAssigned} assigned`}
                         >
-                          <div className="center-building-row-top">
-                            <div className="center-building-name-wrap">
-                              <strong>{b.name || `Building #${b.id}`}</strong>
-                              {isUserBuilding && (
-                                <span className="bldg-badge-yours">
-                                  Your building
-                                </span>
-                              )}
-                              {bIsFull && (
-                                <span className="center-bldg-badge is-full">
-                                  Full
-                                </span>
-                              )}
-                              {bIsFullyAssigned && (
-                                <span className="center-bldg-badge is-fully-assigned">
-                                  Fully assigned
-                                </span>
-                              )}
+                          <div className="center-building-card-main">
+                            {/* 40px soft-tinted rounded icon square */}
+                            <div className="center-building-icon-square" aria-hidden="true">
+                              <FontAwesomeIcon icon={faBuilding} />
                             </div>
-                            <span className="center-building-rooms-count">
-                              {b.room_count || 0}{" "}
-                              {b.room_count === 1 ? "room" : "rooms"}
-                            </span>
+
+                            {/* Building Name & Subtitle */}
+                            <div className="center-building-card-info">
+                              <div className="center-building-name-line">
+                                <span className="center-building-card-name">
+                                  {b.name || `Building #${b.id}`}
+                                </span>
+                                {isUserBuilding && (
+                                  <span className="bldg-badge-yours">
+                                    Your building
+                                  </span>
+                                )}
+                              </div>
+                              <div className="center-building-card-sub">
+                                {bOcc} of {bCap} here · {bAssigned} assigned
+                              </div>
+                            </div>
+
+                            {/* Right: room count + chevron and status pill */}
+                            <div className="center-building-card-right">
+                              <div className="center-building-rooms-wrap">
+                                <span className="center-building-rooms-text">
+                                  {b.room_count || 0}{" "}
+                                  {b.room_count === 1 ? "room" : "rooms"}
+                                </span>
+                                <FontAwesomeIcon
+                                  icon={faChevronRight}
+                                  className="center-building-chevron"
+                                />
+                              </div>
+                              <span className={`center-bldg-badge is-${statusKey}`}>
+                                <span
+                                  className="center-bldg-dot"
+                                  style={{ backgroundColor: statusDotColor }}
+                                />
+                                {statusLabel}
+                              </span>
+                            </div>
                           </div>
 
-                          <div className="center-building-row-mid">
-                            <span className="center-building-occ-text">
-                              <strong>{bOcc}</strong> of {bCap} here ·{" "}
-                              {bAssigned} assigned
-                            </span>
-                            <span
-                              className="center-building-pct-text"
-                              style={{ color: bColor }}
-                            >
+                          {/* Thin 4px progress bar with percentage */}
+                          <div className="center-building-bar-row">
+                            <div className="center-building-bar-track" aria-hidden="true">
+                              {bAssignedPct > 0 && (
+                                <div
+                                  className="center-building-bar-assigned"
+                                  style={{ width: `${Math.min(100, bAssignedPct)}%` }}
+                                />
+                              )}
+                              <div
+                                className="center-building-bar-fill"
+                                style={{
+                                  width: `${Math.min(100, bPct)}%`,
+                                  backgroundColor: bColor,
+                                }}
+                              />
+                            </div>
+                            <span className="center-building-pct-text">
                               {bPct}%
                             </span>
-                          </div>
-
-                          {/* Small 4px occupancy bar */}
-                          <div
-                            className="center-building-bar-track"
-                            aria-hidden="true"
-                          >
-                            {bAssignedPct > 0 && (
-                              <div
-                                className="center-building-bar-assigned"
-                                style={{ width: `${bAssignedPct}%` }}
-                              />
-                            )}
-                            <div
-                              className="center-building-bar-fill"
-                              style={{
-                                width: `${bPct}%`,
-                                backgroundColor: bColor,
-                              }}
-                            />
                           </div>
                         </button>
                       );
@@ -5994,125 +6334,223 @@ const ResidentHome = () => {
             );
           })()}
         </div>
-      )}
+      </div>
+    )}
 
-      {/* Bottom Action Bar (always visible & clickable) */}
-      <div className={`bottom-actions-container ${isMobile ? "mobile" : ""}`}>
-        {isMobile ? (
-          /* Phones/tablets: compact single-row dock */
-          <div className="mobile-action-dock">
-            {locationPermission !== "granted" ? (
-              <button
-                type="button"
-                onClick={handleEnableLocation}
-                className="action-btn-primary mobile-route-btn"
-              >
-                <FontAwesomeIcon icon={faLocationCrosshairs} />
-                <span>Nearest safe place</span>
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={() => handleFindRoute()}
-                disabled={findingRoute}
-                className="action-btn-primary mobile-route-btn"
-              >
-                <FontAwesomeIcon icon={faRoute} spin={findingRoute} />
-                <span>
-                  {findingRoute
-                    ? "Finding..."
-                    : myCenter
-                      ? "My center"
-                      : "Nearest safe place"}
-                </span>
-              </button>
-            )}
-
-            <button
-              type="button"
-              onClick={() => openSheet("more")}
-              className="action-btn-secondary mobile-more-btn"
-              aria-label="More options"
-              aria-expanded={moreMenuOpen}
+      {/* Bottom Action Bar: Google Earth-style round icon button row in bottom-right corner */}
+      <div
+        className="bottom-actions-container"
+        role="toolbar"
+        aria-label="Quick actions"
+      >
+        {locationPermission !== "granted" ? (
+          <button
+            type="button"
+            onClick={handleEnableLocation}
+            className="action-btn-circle action-btn-primary"
+            aria-label="Go to nearest safe place"
+          >
+            <svg
+              width="24"
+              height="24"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.75"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
             >
-              <FontAwesomeIcon icon={faEllipsis} />
-              <span>More</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setRescueAlertOpen(true)}
-              className="action-btn-sos mobile-sos-btn"
-              aria-label="I need rescue"
-            >
-              <FontAwesomeIcon icon={faTriangleExclamation} />
-              <span>I need rescue</span>
-            </button>
-          </div>
+              <circle cx="6" cy="19" r="2.5" />
+              <path d="M8.5 19h6a4.5 4.5 0 0 0 0-9H9.5a4.5 4.5 0 0 1 0-9H15" />
+              <polyline points="13 3.5 15.5 1 18 3.5" />
+            </svg>
+            <span className="action-tooltip" role="tooltip">
+              Go to nearest safe place
+            </span>
+          </button>
         ) : (
-          /* Desktop Row */
-          <div className="desktop-action-bar">
-            <div className="desktop-primary-group">
-              {locationPermission !== "granted" ? (
-                <button
-                  type="button"
-                  onClick={handleEnableLocation}
-                  className="action-btn-primary"
-                >
-                  <FontAwesomeIcon icon={faLocationCrosshairs} />
-                  <span>Go to nearest safe place</span>
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => handleFindRoute()}
-                  disabled={findingRoute}
-                  className="action-btn-primary"
-                >
-                  <FontAwesomeIcon icon={faRoute} spin={findingRoute} />
-                  <span>
-                    {findingRoute
-                      ? "Finding route..."
-                      : myCenter
-                        ? "Go to my evacuation center"
-                        : "Go to nearest safe place"}
-                  </span>
-                </button>
-              )}
-
-              <button
-                type="button"
-                onClick={handleReportMapClick}
-                className="action-btn-secondary"
+          <button
+            type="button"
+            onClick={() => handleFindRoute()}
+            disabled={findingRoute}
+            className="action-btn-circle action-btn-primary"
+            aria-label={
+              findingRoute
+                ? "Finding route..."
+                : myCenter
+                  ? "Go to my evacuation center"
+                  : "Go to nearest safe place"
+            }
+          >
+            {findingRoute ? (
+              <svg
+                className="spin-icon"
+                width="24"
+                height="24"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.75"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
               >
-                <FontAwesomeIcon icon={faMapPin} />
-                <span>{pickingLocation ? "Tap map..." : "Report a danger"}</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={openMyCenter}
-                className={`action-btn-secondary ${myCenter ? "verified" : ""}`}
-                title={myCenter ? "My Evacuation Center" : "Find My Evacuation Center"}
+                <line x1="12" y1="2" x2="12" y2="6" />
+                <line x1="12" y1="18" x2="12" y2="22" />
+                <line x1="4.93" y1="4.93" x2="7.76" y2="7.76" />
+                <line x1="16.24" y1="16.24" x2="19.07" y2="19.07" />
+                <line x1="2" y1="12" x2="6" y2="12" />
+                <line x1="18" y1="12" x2="22" y2="12" />
+                <line x1="4.93" y1="19.07" x2="7.76" y2="16.24" />
+                <line x1="16.24" y1="7.76" x2="19.07" y2="4.93" />
+              </svg>
+            ) : (
+              <svg
+                width="24"
+                height="24"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.75"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
               >
-                <FontAwesomeIcon icon={myCenter ? faCircleCheck : faUser} />
-                <span>{myCenter ? `My Evacuation Center (${firstName})` : "My Evacuation Center"}</span>
-              </button>
-            </div>
-
-            <div className="desktop-sos-divider" aria-hidden="true" />
-
-            <button
-              type="button"
-              onClick={() => setRescueAlertOpen(true)}
-              className="action-btn-sos"
-              aria-label="I need rescue"
-            >
-              <FontAwesomeIcon icon={faTriangleExclamation} />
-              <span>I need rescue</span>
-            </button>
-          </div>
+                <circle cx="6" cy="19" r="2.5" />
+                <path d="M8.5 19h6a4.5 4.5 0 0 0 0-9H9.5a4.5 4.5 0 0 1 0-9H15" />
+                <polyline points="13 3.5 15.5 1 18 3.5" />
+              </svg>
+            )}
+            <span className="action-tooltip" role="tooltip">
+              {findingRoute
+                ? "Finding route..."
+                : myCenter
+                  ? "Go to my evacuation center"
+                  : "Go to nearest safe place"}
+            </span>
+          </button>
         )}
+
+        <button
+          type="button"
+          onClick={handleReportMapClick}
+          className="action-btn-circle action-btn-secondary"
+          aria-label={pickingLocation ? "Tap map to mark danger" : "Report a danger"}
+        >
+          <svg
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.75"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" />
+            <circle cx="12" cy="10" r="3" />
+          </svg>
+          <span className="action-tooltip" role="tooltip">
+            {pickingLocation ? "Tap map to mark danger" : "Report a danger"}
+          </span>
+        </button>
+
+        <button
+          type="button"
+          onClick={openMyCenter}
+          className={`action-btn-circle action-btn-secondary ${myCenter ? "verified" : ""}`}
+          aria-label={myCenter ? `My Evacuation Center (${firstName})` : "My Evacuation Center"}
+        >
+          {myCenter ? (
+            <svg
+              width="24"
+              height="24"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.75"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+              <polyline points="22 4 12 14.01 9 11.01" />
+            </svg>
+          ) : (
+            <svg
+              width="24"
+              height="24"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.75"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+              <circle cx="12" cy="7" r="4" />
+            </svg>
+          )}
+          <span className="action-tooltip" role="tooltip">
+            {myCenter ? `My Evacuation Center (${firstName})` : "My Evacuation Center"}
+          </span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setFindSomeoneOpen(true)}
+          className="action-btn-circle action-btn-secondary"
+          aria-label="Find someone"
+        >
+          <svg
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.75"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <circle cx="10" cy="7" r="4" />
+            <path d="M10.3 15H7a4 4 0 0 0-4 4v2" />
+            <circle cx="17" cy="17" r="3" />
+            <line x1="19.2" y1="19.2" x2="22" y2="22" />
+          </svg>
+          <span className="action-tooltip" role="tooltip">
+            Find someone
+          </span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setRescueAlertOpen(true)}
+          className="action-btn-circle action-btn-sos"
+          aria-label="I need rescue"
+        >
+          <svg
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.75"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+            <line x1="12" y1="9" x2="12" y2="13" />
+            <line x1="12" y1="17" x2="12.01" y2="17" />
+          </svg>
+          <span className="action-tooltip" role="tooltip">
+            I need rescue
+          </span>
+        </button>
       </div>
 
       {/* Phones/tablets: More bottom sheet */}
@@ -6451,38 +6889,62 @@ const ResidentHome = () => {
               </button>
             </div>
 
-            {myCenter ? (
+            {Boolean(user) || myCenter ? (
               <div className="mc-body">
                 <div className="mc-result">
                   <div className="mc-result-name">
                     <FontAwesomeIcon icon={faCircleCheck} />
 
-                    {myCenter.household_head_name}
+                    {myCenter?.household_head_name ||
+                      (user?.first_name
+                        ? `${user.first_name} ${user.last_name || ""}`.trim()
+                        : user?.name || "Resident")}
                   </div>
 
-                  {(myCenter.address || myCenter.barangay) && (
+                  {(myCenter?.address || myCenter?.barangay || user?.barangay || user?.address) && (
                     <div className="mc-result-sub">
-                      {myCenter.address || myCenter.barangay}
+                      {myCenter?.address ||
+                        myCenter?.barangay ||
+                        [user?.address, user?.barangay ? `Barangay ${user.barangay}` : ""]
+                          .filter(Boolean)
+                          .join(", ")}
                     </div>
                   )}
 
                   <div className="mc-result-row">
                     <span>Evacuation center</span>
 
-                    <strong>{myCenter.evacuation_center?.name}</strong>
+                    <strong>
+                      {myCenter?.evacuation_center?.name ||
+                        user?.evacuation_center?.name ||
+                        user?.assigned_center_name ||
+                        "Assigned Evacuation Center"}
+                    </strong>
                   </div>
 
-                  {myCenter.room?.building_name && (
+                  {(myCenter?.room?.building_name ||
+                    user?.building_name ||
+                    user?.room?.building_name) && (
                     <div className="mc-result-row">
                       <span>Building</span>
-                      <strong>{myCenter.room.building_name}</strong>
+                      <strong>
+                        {myCenter?.room?.building_name ||
+                          user?.building_name ||
+                          user?.room?.building_name}
+                      </strong>
                     </div>
                   )}
 
-                  {myCenter.room?.room_number && (
+                  {(myCenter?.room?.room_number ||
+                    user?.room_number ||
+                    user?.room?.room_number) && (
                     <div className="mc-result-row">
                       <span>Assigned room</span>
-                      <strong>{myCenter.room.room_number}</strong>
+                      <strong>
+                        {myCenter?.room?.room_number ||
+                          user?.room_number ||
+                          user?.room?.room_number}
+                      </strong>
                     </div>
                   )}
                 </div>
@@ -6490,7 +6952,8 @@ const ResidentHome = () => {
                 <div className="mc-actions">
                   <button
                     type="button"
-                    className="mc-btn mc-btn-primary"
+                    className={`mc-btn mc-btn-primary ${user ? "mc-btn-full" : ""}`}
+                    style={user ? { width: "100%", justifyContent: "center" } : undefined}
                     onClick={handleFindMyCenterFromModal}
                     disabled={locationPermission === "denied"}
                   >
@@ -6498,13 +6961,15 @@ const ResidentHome = () => {
                     Find My Center
                   </button>
 
-                  <button
-                    type="button"
-                    className="mc-btn"
-                    onClick={handleForgetMe}
-                  >
-                    Not me
-                  </button>
+                  {!user && (
+                    <button
+                      type="button"
+                      className="mc-btn"
+                      onClick={handleForgetMe}
+                    >
+                      Not me
+                    </button>
+                  )}
                 </div>
 
                 {locationPermission === "denied" && (
@@ -6668,6 +7133,212 @@ const ResidentHome = () => {
         </div>
       )}
 
+      {/* "Find someone" Modal */}
+      {findSomeoneOpen && (
+        <div
+          className="mc-overlay"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              closeFindSomeone();
+            }
+          }}
+        >
+          <div
+            className="mc-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="fs-modal-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mc-header">
+              <h3 id="fs-modal-title">Find someone</h3>
+
+              <button
+                type="button"
+                className="mc-close"
+                onClick={closeFindSomeone}
+                aria-label="Close"
+              >
+                <FontAwesomeIcon icon={faXmark} />
+              </button>
+            </div>
+
+            <div className="mc-body">
+              <p className="mc-hint">
+                Looking for a family member or neighbor? Enter their full name to see where they were assigned.
+              </p>
+
+              <form onSubmit={handleFindSomeoneSubmit}>
+                <label className="mc-label" htmlFor="fs-name">
+                  Full name
+                </label>
+
+                <div className="find-someone-input-wrap" ref={findSomeoneInputWrapRef}>
+                  <input
+                    id="fs-name"
+                    type="text"
+                    className="mc-input"
+                    value={findSomeoneName}
+                    onChange={(e) => {
+                      setFindSomeoneName(e.target.value);
+                      if (findSomeoneHint) setFindSomeoneHint("");
+                      if (!e.target.value.trim() || e.target.value.trim().length < 1) {
+                        setFindSomeoneAutosuggestOpen(false);
+                        setFindSomeoneAutosuggestList([]);
+                      }
+                    }}
+                    onKeyDown={handleFindSomeoneKeyDown}
+                    placeholder="e.g. Juan Dela Cruz"
+                    autoComplete="off"
+                    role="combobox"
+                    aria-autocomplete="list"
+                    aria-expanded={findSomeoneAutosuggestOpen}
+                    aria-controls="fs-autosuggest-listbox"
+                    aria-activedescendant={
+                      findSomeoneAutosuggestIndex >= 0
+                        ? `fs-suggest-item-${findSomeoneAutosuggestIndex}`
+                        : undefined
+                    }
+                    autoFocus
+                  />
+
+                  {/* Accessible screen reader announcement */}
+                  <div className="sr-only" aria-live="polite">
+                    {findSomeoneAutosuggestOpen && findSomeoneAutosuggestList.length > 0
+                      ? `${findSomeoneAutosuggestList.length} suggestions available.`
+                      : ""}
+                  </div>
+
+                  {/* Autosuggest Dropdown */}
+                  {findSomeoneAutosuggestOpen && (
+                    <div
+                      id="fs-autosuggest-listbox"
+                      className="find-someone-autosuggest-dropdown"
+                      role="listbox"
+                      aria-label="Resident suggestions"
+                    >
+                      {findSomeoneAutosuggestLoading ? (
+                        <div className="find-someone-suggest-status" role="status">
+                          <FontAwesomeIcon
+                            icon={faSpinner}
+                            spin
+                            className="find-someone-suggest-spinner"
+                          />
+                          <span>Searching…</span>
+                        </div>
+                      ) : findSomeoneAutosuggestList.length === 0 ? (
+                        <div className="find-someone-suggest-status find-someone-suggest-empty">
+                          <span>No resident found.</span>
+                        </div>
+                      ) : (
+                        findSomeoneAutosuggestList.map((item, idx) => {
+                          const isSelected = idx === findSomeoneAutosuggestIndex;
+                          return (
+                            <button
+                              type="button"
+                              key={`${item.name}-${item.barangay}-${idx}`}
+                              id={`fs-suggest-item-${idx}`}
+                              role="option"
+                              aria-selected={isSelected}
+                              className={`find-someone-suggest-item ${
+                                isSelected ? "is-active" : ""
+                              }`}
+                              onClick={() => handleSelectFindSomeoneSuggestion(item)}
+                              onMouseEnter={() => setFindSomeoneAutosuggestIndex(idx)}
+                            >
+                              <span className="find-someone-suggest-name">
+                                {renderHighlightedText(item.name, findSomeoneName)}
+                              </span>
+                              {item.barangay && (
+                                <span className="find-someone-suggest-sub">
+                                  Barangay {item.barangay}
+                                </span>
+                              )}
+                            </button>
+                          );
+                        })
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {findSomeoneHint && (
+                  <div className="mc-error" style={{ marginTop: "8px" }}>
+                    {findSomeoneHint}
+                  </div>
+                )}
+
+                <div className="mc-actions find-someone-actions">
+                  <button
+                    type="submit"
+                    className="mc-btn mc-btn-primary"
+                    disabled={findSomeoneLoading}
+                  >
+                    <FontAwesomeIcon
+                      icon={faMagnifyingGlass}
+                      spin={findSomeoneLoading}
+                    />
+                    {findSomeoneLoading ? "Searching..." : "Search"}
+                  </button>
+
+                  <button
+                    type="button"
+                    className="mc-btn find-someone-cancel-btn"
+                    onClick={closeFindSomeone}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </form>
+
+              {findSomeoneSearched && !findSomeoneLoading && (
+                findSomeoneResults.length > 0 ? (
+                  <div className="find-someone-results">
+                    <div className="find-someone-count">
+                      Matching residents ({findSomeoneResults.length})
+                    </div>
+                    {findSomeoneResults.map((item, idx) => (
+                      <div
+                        key={item.resident_id ?? `${item.household_head_name || item.name}-${idx}`}
+                        className="find-someone-card"
+                      >
+                        <div className="find-someone-info">
+                          <div className="find-someone-name">
+                            {item.household_head_name || item.name || "Resident"}
+                          </div>
+                          {(item.barangay || item.address) && (
+                            <div className="find-someone-meta">
+                              <span>Barangay:</span> {item.barangay || item.address}
+                            </div>
+                          )}
+                          <div className="find-someone-meta">
+                            <span>Evacuation center:</span>{" "}
+                            <strong>
+                              {item.evacuation_center?.name || item.center_name || "Assigned Center"}
+                            </strong>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          className="find-someone-view-btn"
+                          onClick={() => handleViewPersonCenterOnMap(item)}
+                        >
+                          View on map
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="find-someone-empty">
+                    No resident found. Check the spelling or ask your barangay.
+                  </div>
+                )
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Deep-link / notification opening a saved hazard report */}
       {/* Rescue Alert Modal */}
       {rescueAlertOpen && (
@@ -6677,6 +7348,8 @@ const ResidentHome = () => {
           initialCoordinates={rescueCoordinates}
           onPinOnMap={handlePinRescueOnMap}
           onLocationCaptured={handleRescueLocationCaptured}
+          onOpenLogin={openLoginDialog}
+          onOpenSignUp={openSignUpDialog}
         />
       )}
 
@@ -6692,38 +7365,6 @@ const ResidentHome = () => {
         />
       )}
 
-      {/* Collapsible Building Occupancy Legend (bottom-left) */}
-      <div className={`rh-building-legend ${legendCollapsed ? "is-collapsed" : ""}`}>
-        <button
-          type="button"
-          className="rh-legend-toggle-btn"
-          onClick={() => setLegendCollapsed((prev) => !prev)}
-          aria-label={legendCollapsed ? "Expand building legend" : "Collapse building legend"}
-        >
-          <span className="rh-legend-title">Building Occupancy</span>
-          <FontAwesomeIcon icon={legendCollapsed ? faChevronUp : faChevronDown} />
-        </button>
-        {!legendCollapsed && (
-          <div className="rh-legend-content">
-            <div className="rh-legend-row">
-              <span className="rh-legend-swatch" style={{ background: "#16a34a" }} />
-              <span>Available (&lt;70%)</span>
-            </div>
-            <div className="rh-legend-row">
-              <span className="rh-legend-swatch" style={{ background: "#d97706" }} />
-              <span>Filling (70–99%)</span>
-            </div>
-            <div className="rh-legend-row">
-              <span className="rh-legend-swatch" style={{ background: "#dc2626" }} />
-              <span>Full</span>
-            </div>
-            <div className="rh-legend-row">
-              <span className="rh-legend-swatch" style={{ background: "#94a3b8" }} />
-              <span>No data</span>
-            </div>
-          </div>
-        )}
-      </div>
 
       {/* Building Details Modal (independent of center card) */}
       <BuildingDetailsModal

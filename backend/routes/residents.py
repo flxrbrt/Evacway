@@ -191,8 +191,9 @@ COLUMN_MAP = {
     "building material": "building_material",
     "building_material": "building_material",
 
-    "accessibility notes": "accessibility_notes",
-    "accessibility_notes": "accessibility_notes",
+    "accessibility notes": "amenities",
+    "accessibility_notes": "amenities",
+    "amenities": "amenities",
 
     "center contact": "center_contact",
     "center_contact": "center_contact",
@@ -948,7 +949,7 @@ def validate_columns(df):
         "evacuation_center",
         "center_capacity",
         "building_material",
-        "accessibility_notes",
+        "amenities",
         "center_contact",
 
         # Room
@@ -1278,8 +1279,8 @@ def upload_residents():
                 row.get("building_material")
             )
 
-            accessibility_notes = clean_value(
-                row.get("accessibility_notes")
+            amenities = clean_value(
+                row.get("amenities") or row.get("accessibility_notes")
             )
 
             center_contact = clean_value(
@@ -1519,10 +1520,6 @@ def upload_residents():
                         building_material
                     ),
 
-                    accessibility_notes=(
-                        accessibility_notes
-                    ),
-
                     contact_number=(
                         center_contact
                     ),
@@ -1533,6 +1530,13 @@ def upload_residents():
 
                     entrance_geom=None
                 )
+
+                if amenities:
+                    all_ams = Amenity.query.filter_by(is_active=True).all()
+                    text_lower = str(amenities).lower()
+                    matched = [a for a in all_ams if a.name.lower() in text_lower or a.code.lower() in text_lower]
+                    if matched:
+                        center.amenities = matched
 
                 db.session.add(center)
 
@@ -2432,15 +2436,44 @@ def autosuggest_residents():
     query = request.args.get('q', '').strip() or request.args.get('name', '').strip()
     query_normalized = normalize_name(query)
 
-    if not query_normalized or len(query_normalized) < 3:
+    if not query_normalized or len(query_normalized) < 1:
         return jsonify({
             "suggestions": []
         }), 200
 
+    import unicodedata
+
+    def strip_accents(s):
+        if not s:
+            return ""
+        return ''.join(c for c in unicodedata.normalize('NFD', s) if unicodedata.category(c) != 'Mn').lower().strip()
+
+    q_clean = strip_accents(query)
+
+    def score_match(name):
+        n_clean = strip_accents(name)
+        if not q_clean or not n_clean:
+            return None
+        # Rank names that start with the typed text first
+        if n_clean.startswith(q_clean):
+            return 0
+        words = n_clean.split()
+        # Start of first name
+        if words and words[0].startswith(q_clean):
+            return 1
+        # Start of last name
+        if len(words) > 1 and words[-1].startswith(q_clean):
+            return 2
+        # Start of any word in full name
+        for i, w in enumerate(words):
+            if w.startswith(q_clean):
+                return 3 + i
+        return None
+
     # Build barangay lookup
     barangays = {b.id: b.name for b in Barangay.query.all()}
 
-    suggestions = []
+    candidates = []
     seen = set()
 
     # Query families with barangay preloaded
@@ -2449,42 +2482,35 @@ def autosuggest_residents():
         head_name = (family.head_name or '').strip()
         if not head_name:
             continue
-        head_normalized = normalize_name(head_name)
-        if _name_matches(query_normalized, head_normalized):
+        score = score_match(head_name)
+        if score is not None:
             b_name = family.barangay.name if family.barangay else ''
             key = (head_name.lower(), b_name.lower())
             if key not in seen:
                 seen.add(key)
-                suggestions.append({
-                    "name": head_name,
-                    "barangay": b_name
-                })
-                if len(suggestions) >= 5:
-                    break
+                candidates.append((score, head_name, b_name))
 
-    # If fewer than 5, also check individual residents with family and barangay preloaded
-    if len(suggestions) < 5:
-        residents = Resident.query.join(Family).join(Barangay).options(
-            joinedload(Resident.family).joinedload(Family.barangay)
-        ).all()
-        for res in residents:
-            full_name = (res.get_full_name() or f"{res.first_name} {res.last_name}").strip()
-            if not full_name:
-                continue
-            res_normalized = normalize_name(full_name)
-            if _name_matches(query_normalized, res_normalized):
-                family = res.family
-                b_name = family.barangay.name if (family and family.barangay) else ''
-                key = (full_name.lower(), b_name.lower())
-                if key not in seen:
-                    seen.add(key)
-                    suggestions.append({
-                        "name": full_name,
-                        "barangay": b_name
-                    })
-                    if len(suggestions) >= 5:
-                        break
+    # Also check individual residents with family and barangay preloaded
+    residents = Resident.query.join(Family).join(Barangay).options(
+        joinedload(Resident.family).joinedload(Family.barangay)
+    ).all()
+    for res in residents:
+        full_name = (res.get_full_name() or f"{res.first_name} {res.last_name}").strip()
+        if not full_name:
+            continue
+        score = score_match(full_name)
+        if score is not None:
+            family = res.family
+            b_name = family.barangay.name if (family and family.barangay) else ''
+            key = (full_name.lower(), b_name.lower())
+            if key not in seen:
+                seen.add(key)
+                candidates.append((score, full_name, b_name))
+
+    # Sort candidates by score (lower score = higher rank), then alphabetically by name
+    candidates.sort(key=lambda c: (c[0], c[1].lower()))
+    suggestions = [{"name": c[1], "barangay": c[2]} for c in candidates[:5]]
 
     return jsonify({
-        "suggestions": suggestions[:5]
+        "suggestions": suggestions
     }), 200

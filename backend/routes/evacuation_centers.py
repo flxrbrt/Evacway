@@ -409,8 +409,7 @@ def center_to_feature(center):
 
     metrics = _center_metrics(center)
 
-    amenities_list = [a.to_dict() for a in center.amenities] if hasattr(center, 'amenities') and center.amenities else []
-    amenity_ids = [a["id"] for a in amenities_list]
+    amenity_names = [a.name for a in sorted(center.amenities, key=lambda x: (getattr(x, 'display_order', 0), x.id))] if hasattr(center, 'amenities') and center.amenities else []
     return {
         "type": "Feature",
         "geometry": geometry,
@@ -421,14 +420,11 @@ def center_to_feature(center):
             "center_type_id": center.center_type_id,
             "center_type_name": center.center_type_name,
             "owner_name": center.owner_name,
+            "owner_operator": center.owner_name,
             **metrics,
             "building_material": center.building_material,
             "building_material_id": center.building_material_id,
-            "amenities": amenities_list,
-            "amenity_ids": amenity_ids,
-            "accessibility_features": amenities_list,
-            "accessibility_feature_ids": amenity_ids,
-            "accessibility_notes": ", ".join(a["name"] for a in amenities_list),
+            "amenities": amenity_names,
             "hazard_exposure_score": center.hazard_exposure_score,
             "contact_number": center.contact_number,
             "is_active": center.is_active,
@@ -866,7 +862,12 @@ def get_evacuation_centers():
     status = request.args.get('status', '').strip().lower()
     include_inactive = request.args.get('include_inactive') == 'true'
 
-    query = EvacuationCenter.query
+    query = EvacuationCenter.query.options(
+        db.selectinload(EvacuationCenter.amenities),
+        db.selectinload(EvacuationCenter.barangay_links).selectinload(CenterBarangay.barangay),
+        db.selectinload(EvacuationCenter.center_type_ref),
+        db.selectinload(EvacuationCenter.building_material_ref)
+    )
 
     if status == 'active':
         query = query.filter_by(is_active=True)
@@ -1061,6 +1062,71 @@ def get_evacuation_center_details(center_id):
     })
 
 
+def _resolve_amenities(data):
+    """
+    Extracts and queries Amenity models from any variant:
+    - amenity_ids: [1, 2]
+    - accessibility_feature_ids: [1, 2]
+    - amenities: [1, 2] or [{"id": 1}] or ["Wheelchair Ramps"] or "Wheelchair Ramps, PWD Restrooms"
+    - accessibility_features: same
+    Returns a list of Amenity objects, or None if no amenity-related field was present in data.
+    """
+    raw = None
+    for key in ['amenity_ids', 'accessibility_feature_ids', 'amenities', 'accessibility_features']:
+        if key in data:
+            raw = data[key]
+            break
+
+    if raw is None:
+        return None
+
+    if isinstance(raw, str):
+        tokens = [t.strip() for t in raw.split(',') if t.strip()]
+    elif isinstance(raw, (list, tuple, set)):
+        tokens = list(raw)
+    else:
+        tokens = [raw]
+
+    id_candidates = set()
+    text_candidates = set()
+
+    for item in tokens:
+        if isinstance(item, dict):
+            if 'id' in item and item['id'] is not None:
+                try:
+                    id_candidates.add(int(item['id']))
+                except (ValueError, TypeError):
+                    pass
+            elif 'code' in item and item['code']:
+                text_candidates.add(str(item['code']).strip().lower())
+            elif 'name' in item and item['name']:
+                text_candidates.add(str(item['name']).strip().lower())
+        elif isinstance(item, int):
+            id_candidates.add(item)
+        elif isinstance(item, str):
+            trimmed = item.strip()
+            if trimmed.isdigit():
+                id_candidates.add(int(trimmed))
+            elif trimmed:
+                text_candidates.add(trimmed.lower())
+
+    resolved = set()
+    if id_candidates:
+        matched = Amenity.query.filter(Amenity.id.in_(list(id_candidates))).all()
+        resolved.update(matched)
+
+    if text_candidates:
+        matched_text = Amenity.query.filter(
+            or_(
+                func.lower(Amenity.code).in_(list(text_candidates)),
+                func.lower(Amenity.name).in_(list(text_candidates))
+            )
+        ).all()
+        resolved.update(matched_text)
+
+    return list(resolved)
+
+
 @centers_bp.route('/api/evacuation-centers', methods=['POST'])
 @role_required('admin', 'lgu_personnel')
 def create_evacuation_center():
@@ -1118,12 +1184,13 @@ def create_evacuation_center():
 
     user_id = get_jwt_identity()
 
-    raw_center_type = str(data.get('center_type') or '').strip().lower()
+    raw_center_type = str(data.get('center_type') or 'campus').strip().lower()
     valid_types = {'campus', 'single_venue', 'private_property'}
     if not raw_center_type or raw_center_type not in valid_types:
-        return jsonify({"error": "center_type is required and must be one of: campus, single_venue, private_property"}), 400
+        return jsonify({"error": "center_type must be one of: campus, single_venue, private_property"}), 400
     center_type = raw_center_type
-    owner_name = str(data.get('owner_name') or '').strip() or None
+    owner_val = data.get('owner_name') if 'owner_name' in data else data.get('owner_operator')
+    owner_name = str(owner_val).strip() if owner_val else None
 
     center_type_id = data.get('center_type_id')
     if not center_type_id and center_type:
@@ -1133,11 +1200,24 @@ def create_evacuation_center():
 
     building_material_id = data.get('building_material_id')
     if not building_material_id and data.get('building_material'):
-        bm = BuildingMaterial.query.filter(
-            (BuildingMaterial.name.ilike(str(data.get('building_material')).strip())) |
-            (BuildingMaterial.code == str(data.get('building_material')).strip().lower())
-        ).first()
-        if bm:
+        raw_mat = str(data.get('building_material')).strip()
+        if raw_mat:
+            bm = BuildingMaterial.query.filter(
+                (BuildingMaterial.name.ilike(raw_mat)) |
+                (BuildingMaterial.code == raw_mat.lower())
+            ).first()
+            if not bm:
+                import re
+                code = re.sub(r'[^a-z0-9]+', '_', raw_mat.lower()).strip('_')
+                if not code:
+                    code = 'custom_material'
+                existing = BuildingMaterial.query.filter_by(code=code).first()
+                if existing:
+                    bm = existing
+                else:
+                    bm = BuildingMaterial(code=code, name=raw_mat)
+                    db.session.add(bm)
+                    db.session.flush()
             building_material_id = bm.id
 
     center = EvacuationCenter(
@@ -1153,10 +1233,11 @@ def create_evacuation_center():
         entrance_geom=entrance_geom,
         managed_by=user_id
     )
-    raw_amenities = data.get('amenity_ids') or data.get('accessibility_feature_ids') or []
-    amenity_ids = [int(x) for x in raw_amenities if str(x).isdigit()]
-    if amenity_ids:
-        center.amenities = Amenity.query.filter(Amenity.id.in_(amenity_ids)).all()
+
+    resolved_amenities = _resolve_amenities(data)
+    if resolved_amenities is not None:
+        center.amenities = resolved_amenities
+
     db.session.add(center)
     db.session.flush()
     db.session.add_all(
@@ -1225,31 +1306,77 @@ def update_evacuation_center(center_id):
         else:
             center.capacity = None
 
-    for field in ['building_material', 'accessibility_notes', 'hazard_exposure_score', 'contact_number', 'owner_name']:
-        if field in data:
-            setattr(center, field, data[field])
+    if 'building_material_id' in data and data.get('building_material_id') is not None:
+        bm_id = data.get('building_material_id')
+        center.building_material_id = int(bm_id) if bm_id else None
+    elif 'building_material' in data:
+        bm_val = data.get('building_material')
+        if bm_val and str(bm_val).strip():
+            raw_mat = str(bm_val).strip()
+            bm = BuildingMaterial.query.filter(
+                (BuildingMaterial.name.ilike(raw_mat)) |
+                (BuildingMaterial.code == raw_mat.lower())
+            ).first()
+            if not bm:
+                import re
+                code = re.sub(r'[^a-z0-9]+', '_', raw_mat.lower()).strip('_')
+                if not code:
+                    code = 'custom_material'
+                existing = BuildingMaterial.query.filter_by(code=code).first()
+                if existing:
+                    bm = existing
+                else:
+                    bm = BuildingMaterial(code=code, name=raw_mat)
+                    db.session.add(bm)
+                    db.session.flush()
+            center.building_material_id = bm.id
+        else:
+            center.building_material_id = None
+    elif 'building_material_id' in data:
+        center.building_material_id = None
 
-    if 'amenity_ids' in data or 'accessibility_feature_ids' in data:
-        raw_amenities = data.get('amenity_ids') if 'amenity_ids' in data else data.get('accessibility_feature_ids')
-        amenity_ids = [int(x) for x in (raw_amenities or []) if str(x).isdigit()]
-        center.amenities = Amenity.query.filter(Amenity.id.in_(amenity_ids)).all() if amenity_ids else []
+    if 'owner_name' in data or 'owner_operator' in data:
+        owner_val = data.get('owner_name') if 'owner_name' in data else data.get('owner_operator')
+        center.owner_name = str(owner_val).strip() if owner_val else None
 
-    if 'center_type' in data:
+    if 'contact_number' in data:
+        val = data.get('contact_number')
+        center.contact_number = str(val).strip() if val else None
+
+    if 'hazard_exposure_score' in data:
+        val = data.get('hazard_exposure_score')
+        center.hazard_exposure_score = float(val) if val is not None and str(val).strip() != "" else None
+
+    if 'max_rooms' in data:
+        mr = data.get('max_rooms')
+        center.max_rooms = int(mr) if mr is not None and str(mr).strip() != "" else None
+
+    resolved_amenities = _resolve_amenities(data)
+    if resolved_amenities is not None:
+        center.amenities = resolved_amenities
+
+    if 'center_type' in data or 'center_type_id' in data:
         raw_type = str(data.get('center_type') or '').strip().lower()
-        if raw_type not in VALID_CENTER_TYPES:
-            return jsonify({"error": "Invalid center type"}), 400
+        if not raw_type and data.get('center_type_id'):
+            ct = CenterType.query.get(data.get('center_type_id'))
+            if ct:
+                raw_type = ct.code
 
-        # Validate the type change
-        current_type = center.center_type or "campus"
-        if raw_type != current_type:
-            allowed, reason, blocked = validate_center_type_change(center, raw_type, current_type)
-            if not allowed:
-                return jsonify({
-                    "error": f"Cannot change center type to '{raw_type}': {reason}",
-                    "blocked_types": blocked
-                }), 400
+        if raw_type:
+            if raw_type not in VALID_CENTER_TYPES:
+                return jsonify({"error": "Invalid center type"}), 400
 
-        center.center_type = raw_type
+            # Validate the type change
+            current_type = center.center_type or "campus"
+            if raw_type != current_type:
+                allowed, reason, blocked = validate_center_type_change(center, raw_type, current_type)
+                if not allowed:
+                    return jsonify({
+                        "error": f"Cannot change center type to '{raw_type}': {reason}",
+                        "blocked_types": blocked
+                    }), 400
+
+            center.center_type = raw_type
 
     polygon_data = data.get('polygon')
     if polygon_data is None and isinstance(data.get('geometry'), dict):
@@ -1307,7 +1434,7 @@ def update_evacuation_center(center_id):
 
 @centers_bp.route('/api/evacuation-centers/<int:center_id>/allowed-center-types', methods=['GET'])
 @role_required('admin', 'lgu_personnel')
-def get_allowed_center_types(center_id):
+def get_allowed_center_types_endpoint(center_id):
     """Get allowed center types with reasons for a center."""
     center = EvacuationCenter.query.get_or_404(center_id)
     allowed = get_allowed_center_types(center)

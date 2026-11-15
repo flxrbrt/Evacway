@@ -183,7 +183,7 @@ function BarangayManager() {
   const [overviewBuildingFilter, setOverviewBuildingFilter] = useState("");
 
   // Evacuation Center Add/Edit Modal
-  const [centerModal, setCenterModal] = useState(null); // { mode: 'add' | 'edit', id?, name, address, capacity, contact_number, building_material, accessibility_notes, is_active }
+  const [centerModal, setCenterModal] = useState(null); // { mode: 'add' | 'edit', id?, name, address, capacity, contact_number, building_material, amenities, is_active }
   const [savingCenter, setSavingCenter] = useState(false);
 
   // Room Add/Edit Modal
@@ -494,7 +494,7 @@ function BarangayManager() {
       capacity: 100,
       contact_number: "",
       building_material: "",
-      accessibility_notes: "",
+      amenities: "",
       is_active: true,
     });
   }
@@ -510,7 +510,9 @@ function BarangayManager() {
       capacity: center.capacity ?? 0,
       contact_number: center.contact_number || "",
       building_material: center.building_material || "",
-      accessibility_notes: center.accessibility_notes || "",
+      amenities: Array.isArray(center.amenities)
+        ? center.amenities.map((a) => (typeof a === "string" ? a : a.name)).join(", ")
+        : center.amenities || "",
       is_active: center.is_active !== false,
     });
   }
@@ -537,7 +539,9 @@ function BarangayManager() {
         capacity: Number(centerModal.capacity || 0),
         contact_number: centerModal.contact_number.trim() || null,
         building_material: centerModal.building_material.trim() || null,
-        accessibility_notes: centerModal.accessibility_notes.trim() || null,
+        amenities: centerModal.amenities
+          ? centerModal.amenities.split(",").map((s) => s.trim()).filter(Boolean)
+          : [],
         is_active: Boolean(centerModal.is_active),
       };
 
@@ -2985,15 +2989,15 @@ function BarangayManager() {
                     />
                   </label>
                   <label className="bm-form-field bm-span-2">
-                    <span>Accessibility Notes</span>
+                    <span>Amenities</span>
                     <input
                       type="text"
-                      placeholder="Wheelchair ramp, ground-floor access, etc."
-                      value={centerModal.accessibility_notes}
+                      placeholder="Wheelchair Ramps, PWD Restrooms, etc."
+                      value={centerModal.amenities}
                       onChange={(e) =>
                         setCenterModal((p) => ({
                           ...p,
-                          accessibility_notes: e.target.value,
+                          amenities: e.target.value,
                         }))
                       }
                     />

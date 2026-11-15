@@ -43,7 +43,6 @@
   font-weight: 400;
   line-height: 1.6;
   overflow-x: clip;
-  border-top: 3px solid #1B56C4;
   -webkit-font-smoothing: antialiased;
 }
 
@@ -98,23 +97,21 @@
    ========================================================================== */
 .ew-header {
   position: fixed;
-  top: 3px;
+  top: 0;
   left: 0;
   right: 0;
-  z-index: 50;
+  z-index: 1000;
   height: 60px;
-  background: transparent;
+  background: var(--ew-paper);
+  border-top: 3px solid #1B56C4;
   transition:
     background-color 0.25s ease-out,
-    box-shadow 0.25s ease-out,
-    top 0.2s ease-out;
+    box-shadow 0.25s ease-out;
 }
 
 .ew-header-scrolled {
   top: 0;
-  background: rgba(244, 248, 253, 0.9);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  background: var(--ew-paper);
   border-bottom: 1px solid var(--ew-rule);
   box-shadow: 0 6px 20px rgba(13, 31, 60, 0.05);
 }

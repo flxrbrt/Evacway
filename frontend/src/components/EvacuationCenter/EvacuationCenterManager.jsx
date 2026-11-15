@@ -141,12 +141,13 @@ export default function EvacuationCenterManager({
 
   // Center modals
   const [centerModalMode, setCenterModalMode] = useState(null);
+  const [centerModalInitialStep, setCenterModalInitialStep] = useState(1);
   const [centerForm, setCenterForm] = useState({
     name: "",
     barangay_ids: [],
     capacity: "",
     building_material: "",
-    accessibility_notes: "",
+    amenities: [],
     contact_number: "",
   });
   const [savingCenter, setSavingCenter] = useState(false);
@@ -274,48 +275,53 @@ export default function EvacuationCenterManager({
       capacity: "",
       center_type: "campus",
       building_material: "",
-      amenity_ids: [],
-      accessibility_feature_ids: [],
-      accessibility_id: null,
-      accessibility_notes: "",
+      amenities: [],
       contact_number: "",
       owner_name: "",
       max_rooms: "",
     });
+    setCenterModalInitialStep(1);
     setCenterModalMode("add");
     setError("");
   }
 
-  function openEditCenterModal(center) {
+  function openEditCenterModal(center, initialStep = 1) {
     const props = center.properties || center;
-    const featIds = props.amenity_ids || props.accessibility_feature_ids || (props.amenities || props.accessibility_features || []).map(f => f.id) || [];
+    const rawAmenities = props.amenities || [];
+    const prefilledAmenities = Array.isArray(rawAmenities)
+      ? rawAmenities.map((a) => (typeof a === "object" && a !== null ? a.name || a.code : a)).filter(Boolean)
+      : [];
+
     setCenterForm({
       name: props.name || "",
-      barangay_ids: (props.barangays || []).map((barangay) => String(barangay.id)),
-      capacity: props.capacity !== null && props.capacity !== undefined ? String(props.capacity) : "",
+      barangay_ids: (props.barangays || []).map((barangay) =>
+        String(typeof barangay === "object" && barangay !== null ? barangay.id : barangay)
+      ),
+      capacity:
+        props.capacity !== null && props.capacity !== undefined ? String(props.capacity) : "",
       center_type: props.center_type || "campus",
       center_type_id: props.center_type_id || 1,
       building_material: props.building_material || "",
       building_material_id: props.building_material_id || null,
-      amenity_ids: featIds,
-      accessibility_feature_ids: featIds,
-      accessibility_notes: props.accessibility_notes || "",
+      amenities: prefilledAmenities,
       contact_number: props.contact_number || "",
-      owner_name: props.owner_name || "",
+      owner_name: props.owner_name || props.owner_operator || "",
       max_rooms: props.max_rooms ? String(props.max_rooms) : "",
     });
     setSelectedCenter(normalizeCenter(center));
+    setCenterModalInitialStep(typeof initialStep === "number" ? initialStep : 1);
     setCenterModalMode("edit");
     setError("");
   }
 
   async function handleSaveCenter(e) {
-    e.preventDefault();
-    if (!centerForm.name.trim()) {
+    if (e?.preventDefault) e.preventDefault();
+    if (savingCenter) return;
+    if (!centerForm.name?.trim()) {
       setError("Evacuation center name is required.");
       return;
     }
-    if (!centerForm.barangay_ids.length) {
+    if (!centerForm.barangay_ids?.length) {
       setError("Select at least one barangay served by this center.");
       return;
     }
@@ -326,17 +332,23 @@ export default function EvacuationCenterManager({
     try {
       const payload = {
         name: centerForm.name.trim(),
-        barangay_ids: centerForm.barangay_ids.map(Number),
-        capacity: centerForm.capacity !== "" ? Number(centerForm.capacity) : null,
+        barangay_ids: (centerForm.barangay_ids || []).map(Number),
+        capacity:
+          centerForm.capacity !== "" &&
+          centerForm.capacity !== null &&
+          centerForm.capacity !== undefined
+            ? Number(centerForm.capacity)
+            : null,
         center_type: centerForm.center_type || "campus",
-        center_type_id: centerForm.center_type_id || null,
+        center_type_id: centerForm.center_type_id ? Number(centerForm.center_type_id) : null,
         building_material: centerForm.building_material?.trim() || null,
-        building_material_id: centerForm.building_material_id || null,
-        amenity_ids: centerForm.amenity_ids || centerForm.accessibility_feature_ids || [],
-        accessibility_feature_ids: centerForm.amenity_ids || centerForm.accessibility_feature_ids || [],
-        accessibility_notes: centerForm.accessibility_notes?.trim() || null,
+        building_material_id: centerForm.building_material_id
+          ? Number(centerForm.building_material_id)
+          : null,
+        amenities: centerForm.amenities || [],
         contact_number: centerForm.contact_number?.trim() || null,
         owner_name: centerForm.owner_name?.trim() || null,
+        owner_operator: centerForm.owner_name?.trim() || null,
         max_rooms: centerForm.max_rooms ? Number(centerForm.max_rooms) : null,
       };
 
@@ -346,17 +358,31 @@ export default function EvacuationCenterManager({
         if (created?.data) {
           setSelectedCenter(normalizeCenter(created.data));
           setCenterSection("overview");
+        } else if (created) {
+          setSelectedCenter(normalizeCenter(created));
+          setCenterSection("overview");
         }
       } else {
-        await api.updateEvacuationCenter(selectedCenter.id, payload);
+        const updated = await api.updateEvacuationCenter(selectedCenter.id, payload);
         setNotice(`Evacuation center "${payload.name}" updated successfully.`);
-        setSelectedCenter((prev) => ({ ...prev, ...payload }));
+        if (updated?.data) {
+          setSelectedCenter(normalizeCenter(updated.data));
+        } else if (updated) {
+          setSelectedCenter(normalizeCenter(updated));
+        } else {
+          setSelectedCenter((prev) => ({ ...prev, ...payload }));
+        }
       }
 
       setCenterModalMode(null);
       await invalidateCenterData();
+      await onRefresh?.();
     } catch (err) {
-      setError(err.message || "Failed to save evacuation center.");
+      const msg =
+        err?.message === "Failed to fetch" || err?.name === "TypeError"
+          ? "Couldn't reach the server. Check your connection and try again."
+          : err?.message || "Failed to save evacuation center.";
+      setError(msg);
     } finally {
       setSavingCenter(false);
     }
@@ -945,7 +971,7 @@ export default function EvacuationCenterManager({
             const cId = selectedCenter?.id || selectedCenter?.properties?.id;
             navigate(`${mapBasePath}?center=${cId}`);
           }}
-          onEditCenter={() => openEditCenterModal(selectedCenter)}
+          onEditCenter={(step) => openEditCenterModal(selectedCenter, typeof step === "number" ? step : 1)}
           onAddRooms={() => {
             setRoomModalMode("add");
 
@@ -1020,9 +1046,15 @@ export default function EvacuationCenterManager({
           onChange={setCenterForm}
           barangays={barangays}
           saving={savingCenter}
+          error={error}
+          onClearError={() => setError("")}
           onSubmit={handleSaveCenter}
-          onClose={() => setCenterModalMode(null)}
+          onClose={() => {
+            setCenterModalMode(null);
+            setError("");
+          }}
           onBeforeDeselect={handleBeforeDeselectBarangay}
+          initialStep={centerModalInitialStep}
         />
       )}
       {roomModalMode && (
@@ -1037,6 +1069,7 @@ export default function EvacuationCenterManager({
           onClose={() => setRoomModalMode(null)}
           buildings={buildings}
           defaultBuildingId={roomModalMode === 'add' ? '' : (selectedRoom?.building_id != null ? String(selectedRoom.building_id) : '')}
+          onDeleteRoom={confirmDeleteRoom}
         />
       )}
       <AssignFamilyModal

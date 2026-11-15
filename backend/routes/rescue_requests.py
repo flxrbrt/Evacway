@@ -4,7 +4,7 @@ import os
 import uuid
 
 from flask import Blueprint, current_app, jsonify, request
-from flask_jwt_extended import get_jwt, get_jwt_identity, verify_jwt_in_request
+from flask_jwt_extended import get_jwt, get_jwt_identity, jwt_required
 from werkzeug.utils import secure_filename
 
 from models import RescueRequest, SystemLog, db, ResidentAccount, User
@@ -69,6 +69,7 @@ def _rescue_to_dict(rescue):
 
 
 @rescue_bp.route('/api/rescue-requests', methods=['POST'])
+@jwt_required()
 def submit_rescue_request():
     # The resident modal sends multipart FormData (so photos can be attached).
     # JSON bodies are still accepted for backwards compatibility.
@@ -80,40 +81,41 @@ def submit_rescue_request():
     requester_name = str(data.get('requester_name') or '').strip()
     requester_contact = str(data.get('requester_contact') or '').strip()
 
-    if not requester_name or not requester_contact:
+    claims = get_jwt() or {}
+    ident = get_jwt_identity()
+    account_type = claims.get('account_type', 'user')
+
+    saved_name = claims.get('name') or ''
+    saved_contact = ''
+
+    if ident:
         try:
-            verify_jwt_in_request(optional=True)
-            claims = get_jwt() or {}
-            if not requester_name and claims.get('name'):
-                requester_name = str(claims.get('name')).strip()
-            
-            ident = get_jwt_identity()
-            if ident:
-                account_type = claims.get('account_type', 'user')
-                if account_type == 'resident_account':
-                    acct = ResidentAccount.query.get(int(ident))
-                    if acct:
-                        if not requester_name:
-                            if acct.resident:
-                                requester_name = acct.resident.get_full_name()
-                            elif acct.email:
-                                requester_name = acct.email.split('@')[0]
-                        if not requester_contact and acct.resident and getattr(acct.resident, 'contact_number', None):
-                            requester_contact = str(acct.resident.contact_number).strip()
-                else:
-                    usr = User.query.get(int(ident))
-                    if usr:
-                        if not requester_name:
-                            requester_name = usr.name or (usr.email.split('@')[0] if usr.email else '')
-                        if not requester_contact and getattr(usr, 'phone', None):
-                            requester_contact = str(usr.phone).strip()
+            ident_int = int(ident)
+            if account_type == 'resident_account':
+                acct = ResidentAccount.query.get(ident_int)
+                if acct:
+                    if acct.resident:
+                        saved_name = acct.resident.get_full_name()
+                        if getattr(acct.resident, 'contact_number', None):
+                            saved_contact = str(acct.resident.contact_number).strip()
+                    elif acct.email and not saved_name:
+                        saved_name = acct.email.split('@')[0]
+            else:
+                usr = User.query.get(ident_int)
+                if usr:
+                    if usr.name:
+                        saved_name = usr.name
+                    elif usr.email and not saved_name:
+                        saved_name = usr.email.split('@')[0]
+                    if getattr(usr, 'phone', None):
+                        saved_contact = str(usr.phone).strip()
         except Exception:
             pass
 
     if not requester_name:
-        requester_name = "Resident (Assistance Needed)"
+        requester_name = saved_name or "Resident (Assistance Needed)"
     if not requester_contact:
-        requester_contact = "Not provided"
+        requester_contact = saved_contact or ""
 
     photo_files = [
         f for f in request.files.getlist('proof_images') if f and f.filename
@@ -123,10 +125,10 @@ def submit_rescue_request():
         return jsonify({'error': 'Describe the emergency (up to 2000 characters).'}), 400
     if location_description and len(location_description) > 255:
         return jsonify({'error': 'Location details must be 255 characters or fewer.'}), 400
-    if not requester_name or len(requester_name) > 100:
+    if requester_name and len(requester_name) > 100:
         return jsonify({'error': 'Please provide your name (up to 100 characters).'}), 400
-    if not requester_contact or len(requester_contact) > 20:
-        return jsonify({'error': 'Please provide a contact number (up to 20 characters).'}), 400
+    if requester_contact and len(requester_contact) > 20:
+        return jsonify({'error': 'Contact number must be 20 characters or fewer.'}), 400
     if len(photo_files) > MAX_PROOF_IMAGES:
         return jsonify({'error': f'You may attach up to {MAX_PROOF_IMAGES} photos.'}), 400
     for photo in photo_files:
@@ -159,14 +161,7 @@ def submit_rescue_request():
         return jsonify({'error': 'Provide a GPS location or describe where help is needed.'}), 400
 
     # All validation passed — only now write photo files to disk.
-    uploader_name = requester_name
-    try:
-        verify_jwt_in_request(optional=True)
-        claims = get_jwt() or {}
-        if not uploader_name and claims.get('name'):
-            uploader_name = claims.get('name')
-    except Exception:
-        pass
+    uploader_name = requester_name or claims.get('name')
     proof_image_urls = (
         _save_proof_images(photo_files, uploader_name=uploader_name)
         if photo_files

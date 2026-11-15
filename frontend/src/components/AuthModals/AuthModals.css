@@ -50,6 +50,36 @@
   justify-content: space-between;
 }
 
+.ew-modern-login .ew-login-head {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 34px;
+}
+
+.ew-modern-login .ew-login-heading {
+  margin: 0;
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: #0f172a;
+  letter-spacing: -0.02em;
+  text-align: center;
+}
+
+.ew-modern-login .ew-login-close-btn {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  transform: translateY(-50%);
+}
+
+.ew-login-sub-recovery {
+  margin: -4px 0 0;
+  text-align: center;
+}
+
 .ew-brand-pill {
   display: inline-flex;
   align-items: center;
@@ -384,83 +414,45 @@
   text-decoration: underline;
 }
 
-/* Resident Registration Spotlight Callout */
-.ew-signup-callout {
-  margin-top: 2px;
-  padding: 11px 13px;
-  background: #f0fdf4;
-  border: 1px solid #bbf7d0;
-  border-radius: 11px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.ew-signup-callout-text {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-  text-align: left;
-}
-
-.ew-signup-callout-title {
-  font-size: 0.825rem;
-  font-weight: 700;
-  color: #166534;
-}
-
-.ew-signup-callout-desc {
-  font-size: 0.75rem;
-  color: #15803d;
-  line-height: 1.35;
-}
-
-.ew-signup-callout-btn {
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 7px 12px;
-  background: #16a34a;
-  color: #ffffff;
-  font-size: 0.8rem;
-  font-weight: 600;
-  border: none;
-  border-radius: 7px;
-  cursor: pointer;
-  transition: all 150ms ease;
-}
-
-.ew-signup-callout-btn:hover {
-  background: #15803d;
-}
-
-.ew-callout-arrow {
-  font-size: 0.72rem;
-}
-
-/* Direct Public Bypass Link */
-.ew-public-bypass {
+/* Centered Resident Sign-up Footer */
+.ew-login-footer {
   text-align: center;
-  padding-top: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: 0.875rem;
+  padding-top: 4px;
 }
 
-.ew-public-link {
-  font-size: 0.8rem;
-  color: #64748b;
+.ew-login-footer-text {
+  color: var(--muted, #64748b);
+  font-weight: 400;
+}
+
+.ew-login-signup-link {
+  background: transparent;
+  border: none;
+  padding: 0;
+  margin: 0;
+  color: var(--brand, #2563eb);
+  font-size: inherit;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
   text-decoration: none;
   transition: color 150ms ease;
 }
 
-.ew-public-link span {
-  color: #2563eb;
-  font-weight: 600;
+.ew-login-signup-link:hover {
+  color: #1d4ed8;
+  text-decoration: underline;
 }
 
-.ew-public-link:hover span {
-  text-decoration: underline;
+.ew-login-signup-link:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+  border-radius: 2px;
 }
 
 /* Generic Fallback Button Styles */
@@ -552,12 +544,5 @@
 @media (max-width: 640px) {
   .ew-signup-grid {
     grid-template-columns: 1fr;
-  }
-  .ew-signup-callout {
-    flex-direction: column;
-    align-items: stretch;
-  }
-  .ew-signup-callout-btn {
-    justify-content: center;
   }
 }

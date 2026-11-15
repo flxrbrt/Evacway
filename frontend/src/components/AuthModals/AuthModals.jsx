@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useNavigate, Link } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
   faXmark,
@@ -9,10 +9,8 @@ import {
   faEye,
   faEyeSlash,
   faCircleNotch,
-  faShieldHalved,
   faHouseUser,
   faUserShield,
-  faArrowRight,
   faArrowLeft,
   faTriangleExclamation,
   faCircleCheck,
@@ -332,29 +330,20 @@ export function LoginDialog({ dialogRef, onOpenSignUp, onLoginSuccess, notice = 
       onClick={(e) => e.target === dialogRef.current && close()}
     >
       <form className="ew-login ew-modern-login" onSubmit={recoveryMode ? handleRecoverySubmit : handleSubmit}>
-        {/* Header with Brand Badge and Close */}
+        {/* Header with Centered Title and Top-Right Close Button */}
         <div className="ew-login-head">
-          <div className="ew-brand-pill">
-            <span className="ew-brand-pill-icon">
-              <FontAwesomeIcon icon={faShieldHalved} />
-            </span>
-            <span className="ew-brand-pill-text">EvacWay Portal</span>
-          </div>
-          <button type="button" className="ew-icon-btn" onClick={close} aria-label="Close dialog">
+          <h2 id="ew-login-title" className="ew-login-heading">
+            {recoveryMode ? "Reset your password" : "Sign in"}
+          </h2>
+          <button type="button" className="ew-icon-btn ew-login-close-btn" onClick={close} aria-label="Close dialog">
             <FontAwesomeIcon icon={faXmark} />
           </button>
         </div>
-
-        <div className="ew-login-intro">
-          <h2 id="ew-login-title" className="ew-login-heading">
-            {recoveryMode ? "Reset your password" : "Sign in to your account"}
-          </h2>
-          <p className="ew-login-sub">
-            {recoveryMode
-              ? "Enter your registered email to receive recovery instructions."
-              : "Access real-time emergency routing, shelter updates, and disaster response tools."}
+        {recoveryMode && (
+          <p className="ew-login-sub ew-login-sub-recovery">
+            Enter your registered email to receive recovery instructions.
           </p>
-        </div>
+        )}
 
         {/* Role Selector Tabs (when not in recovery mode) */}
         {!recoveryMode && (
@@ -518,30 +507,17 @@ export function LoginDialog({ dialogRef, onOpenSignUp, onLoginSuccess, notice = 
           </button>
         )}
 
-        {/* Sign-up Callout Box for Residents */}
-        {!recoveryMode && (
-          <div className="ew-signup-callout">
-            <div className="ew-signup-callout-text">
-              <span className="ew-signup-callout-title">Need a resident account?</span>
-              <span className="ew-signup-callout-desc">Register your household to see your room & shelter.</span>
-            </div>
+        {/* Centered Sign-up Footer for Resident tab */}
+        {!recoveryMode && activeTab === "resident" && (
+          <div className="ew-login-footer">
+            <span className="ew-login-footer-text">No account?</span>{" "}
             <button
               type="button"
-              className="ew-signup-callout-btn"
+              className="ew-login-signup-link"
               onClick={onOpenSignUp}
             >
               Sign up
-              <FontAwesomeIcon icon={faArrowRight} className="ew-callout-arrow" />
             </button>
-          </div>
-        )}
-
-        {/* Public Map Direct Access */}
-        {!recoveryMode && (
-          <div className="ew-public-bypass">
-            <Link to="/map" onClick={close} className="ew-public-link">
-              Looking for open routes right now? <span>Open public map →</span>
-            </Link>
           </div>
         )}
       </form>

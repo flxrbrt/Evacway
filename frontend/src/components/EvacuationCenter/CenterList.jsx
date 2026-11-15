@@ -1,40 +1,123 @@
-import { useState, useMemo, useCallback } from 'react'
+import { useState, useMemo, useCallback, useEffect, useRef } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
-  faPlus, faRotate, faBuilding, faCircleCheck, faTriangleExclamation,
+  faPlus, faBuilding, faCircleCheck, faTriangleExclamation,
   faCircleStop, faMapPin, faBan, faPen, faLocationDot,
   faFilter, faXmark, faSearch, faHome, faWarehouse,
-  faCircleXmark, faDrawPolygon,
+  faCircleXmark, faDrawPolygon, faChevronRight,
 } from '@fortawesome/free-solid-svg-icons'
 
 import { useAuth } from '../../context/AuthContext'
-import { centerStatus, centerNeedsMapping, isCenterMapped } from './utils'
+import { centerStatus, isCenterMapped } from './utils'
 import { statusVariant } from './evacuationStatus'
 import { FloatingMenuTrigger } from './FloatingMenu'
 import './CenterList.css'
 
+export function AnimatedCount({ value, duration = 400 }) {
+  const [displayValue, setDisplayValue] = useState(0)
+  const prevValueRef = useRef(0)
+
+  useEffect(() => {
+    const prefersReduced =
+      typeof window !== 'undefined' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches
+
+    const target = Number(value || 0)
+
+    if (prefersReduced) {
+      setDisplayValue(target)
+      prevValueRef.current = target
+      return
+    }
+
+    const start = prevValueRef.current
+    if (start === target && displayValue === target) {
+      return
+    }
+
+    const startTime = performance.now()
+    let frameId
+
+    const update = (now) => {
+      const elapsed = now - startTime
+      const progress = Math.min(elapsed / duration, 1)
+      const easeProgress = progress * (2 - progress)
+      const current = Math.round(start + (target - start) * easeProgress)
+      setDisplayValue(current)
+
+      if (progress < 1) {
+        frameId = requestAnimationFrame(update)
+      } else {
+        setDisplayValue(target)
+        prevValueRef.current = target
+      }
+    }
+
+    frameId = requestAnimationFrame(update)
+    return () => {
+      cancelAnimationFrame(frameId)
+      prevValueRef.current = target
+    }
+  }, [value, duration])
+
+  return <span>{displayValue}</span>
+}
 
 const FILTER_CARDS = [
-  { key: 'all', label: 'All Centers', icon: faBuilding, colorToken: 'brand', countKey: 'all' },
-  { key: 'available', label: 'Available', icon: faCircleCheck, colorToken: 'success', countKey: 'available' },
-  { key: 'near-full', label: 'Near Full', icon: faTriangleExclamation, colorToken: 'warning', countKey: 'near-full' },
-  { key: 'full', label: 'Full', icon: faCircleStop, colorToken: 'danger', countKey: 'full' },
-  { key: 'needs-mapping', label: 'Needs Mapping', icon: faMapPin, colorToken: 'neutral', countKey: 'needs-mapping' },
+  {
+    key: 'all',
+    label: 'All',
+    helper: 'Total centers',
+    colorToken: 'blue',
+    renderIcon: () => (
+      <FontAwesomeIcon icon={faBuilding} style={{ width: '18px', height: '18px' }} />
+    ),
+  },
+  {
+    key: 'mapped',
+    label: 'Mapped',
+    helper: 'On the map',
+    colorToken: 'green',
+    renderIcon: () => (
+      <svg
+        width="18"
+        height="18"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+      >
+        <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z" />
+        <polyline points="9 9 11 11 15 7" />
+      </svg>
+    ),
+  },
+  {
+    key: 'unmapped',
+    label: 'Unmapped',
+    helper: 'Needs a location',
+    colorToken: 'gray',
+    renderIcon: () => (
+      <svg
+        width="18"
+        height="18"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+      >
+        <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z" />
+        <line x1="4.5" y1="4.5" x2="19.5" y2="19.5" />
+      </svg>
+    ),
+  },
 ]
-
-const STATUS_BY_KEY = {
-  available: 'Available',
-  'near-full': 'Near full',
-  full: 'Full',
-}
-
-const COLOR_TOKEN_MAP = {
-  brand: { bg: 'brand-soft', border: 'brand', text: 'brand', dot: 'brand' },
-  success: { bg: 'success-soft', border: 'success', text: 'success', dot: 'success' },
-  warning: { bg: 'warning-soft', border: 'warning', text: 'warning', dot: 'warning' },
-  danger: { bg: 'danger-soft', border: 'danger', text: 'danger', dot: 'danger' },
-  neutral: { bg: 'neutral-soft', border: 'neutral', text: 'neutral', dot: 'neutral' },
-}
 
 export default function CenterList({
   centers,
@@ -58,9 +141,152 @@ export default function CenterList({
 
   const [searchQuery, setSearchQuery] = useState('')
   const [barangayFilter, setBarangayFilter] = useState('')
+  const [barangaySearchText, setBarangaySearchText] = useState('')
   const [quickFilter, setQuickFilter] = useState('all')
   const [dropdownOpen, setDropdownOpen] = useState(false)
-  const [barangayLocal, setBarangayLocal] = useState('')
+  const [activeIndex, setActiveIndex] = useState(-1)
+
+  const dropdownContainerRef = useRef(null)
+  const triggerRef = useRef(null)
+  const searchInputRef = useRef(null)
+  const listboxRef = useRef(null)
+
+  const selectedBarangayObj = useMemo(() => {
+    if (!barangayFilter) return null
+    return (
+      barangays.find((b) => {
+        const id = typeof b === 'object' && b !== null ? b.id : b
+        return String(id) === String(barangayFilter)
+      }) || null
+    )
+  }, [barangays, barangayFilter])
+
+  const selectedBarangayName = useMemo(() => {
+    if (!selectedBarangayObj) return ''
+    return typeof selectedBarangayObj === 'object'
+      ? selectedBarangayObj.name || selectedBarangayObj.title || String(selectedBarangayObj.id)
+      : String(selectedBarangayObj)
+  }, [selectedBarangayObj])
+
+  const filteredBarangayOptions = useMemo(() => {
+    const q = barangaySearchText.trim().toLowerCase()
+    const allOption = { id: '', name: 'All Barangays' }
+
+    if (!q) {
+      const items = barangays.map((b) => ({
+        id: String(typeof b === 'object' && b !== null ? b.id : b),
+        name: typeof b === 'object' && b !== null ? b.name || b.title || String(b.id) : String(b),
+      }))
+      return [allOption, ...items]
+    }
+
+    const matches = []
+    if ('all barangays'.includes(q)) {
+      matches.push(allOption)
+    }
+    barangays.forEach((b) => {
+      const id = String(typeof b === 'object' && b !== null ? b.id : b)
+      const name = typeof b === 'object' && b !== null ? b.name || b.title || String(b.id) : String(b)
+      if (name.toLowerCase().includes(q)) {
+        matches.push({ id, name })
+      }
+    })
+    return matches
+  }, [barangays, barangaySearchText])
+
+  const handleSelectBarangay = useCallback(
+    (id) => {
+      const val = id ? String(id) : ''
+      setBarangayFilter(val)
+      onBarangayChange?.(val)
+      setBarangaySearchText('')
+      setDropdownOpen(false)
+      triggerRef.current?.focus()
+    },
+    [onBarangayChange]
+  )
+
+  useEffect(() => {
+    if (dropdownOpen) {
+      setBarangaySearchText('')
+      const selIdx = filteredBarangayOptions.findIndex((opt) => opt.id === barangayFilter)
+      const targetIdx = selIdx >= 0 ? selIdx : 0
+      setActiveIndex(targetIdx)
+
+      requestAnimationFrame(() => {
+        searchInputRef.current?.focus()
+        const selectedEl = listboxRef.current?.querySelector('[aria-selected="true"]')
+        if (selectedEl) {
+          selectedEl.scrollIntoView({ block: 'nearest' })
+        }
+      })
+    } else {
+      setBarangaySearchText('')
+      setActiveIndex(-1)
+    }
+  }, [dropdownOpen])
+
+  useEffect(() => {
+    if (!dropdownOpen) return
+    const handleClickOutside = (e) => {
+      if (dropdownContainerRef.current && !dropdownContainerRef.current.contains(e.target)) {
+        setDropdownOpen(false)
+        setBarangaySearchText('')
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    document.addEventListener('touchstart', handleClickOutside)
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+      document.removeEventListener('touchstart', handleClickOutside)
+    }
+  }, [dropdownOpen])
+
+  const handleSearchKeyDown = (e) => {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      if (filteredBarangayOptions.length > 0) {
+        setActiveIndex((prev) => {
+          const next = prev < filteredBarangayOptions.length - 1 ? prev + 1 : 0
+          const activeEl = listboxRef.current?.querySelector(`[data-index="${next}"]`)
+          if (activeEl) activeEl.scrollIntoView({ block: 'nearest' })
+          return next
+        })
+      }
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      if (filteredBarangayOptions.length > 0) {
+        setActiveIndex((prev) => {
+          const next = prev > 0 ? prev - 1 : filteredBarangayOptions.length - 1
+          const activeEl = listboxRef.current?.querySelector(`[data-index="${next}"]`)
+          if (activeEl) activeEl.scrollIntoView({ block: 'nearest' })
+          return next
+        })
+      }
+    } else if (e.key === 'Enter') {
+      e.preventDefault()
+      if (activeIndex >= 0 && activeIndex < filteredBarangayOptions.length) {
+        handleSelectBarangay(filteredBarangayOptions[activeIndex].id)
+      }
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      setDropdownOpen(false)
+      setBarangaySearchText('')
+      triggerRef.current?.focus()
+    }
+  }
+
+  const handleTriggerKeyDown = (e) => {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault()
+      setDropdownOpen(true)
+    }
+  }
+
+  const activeOptionId =
+    dropdownOpen && activeIndex >= 0 && activeIndex < filteredBarangayOptions.length
+      ? `ec-barangay-opt-${filteredBarangayOptions[activeIndex].id || 'all'}`
+      : undefined
 
   const allCenters = useMemo(() => {
     const features = Array.isArray(centers?.features) ? centers.features : Array.isArray(centers) ? centers : []
@@ -68,22 +294,22 @@ export default function CenterList({
   }, [centers])
 
   const counts = useMemo(() => {
-    const c = { all: allCenters.length, available: 0, 'near-full': 0, full: 0, 'needs-mapping': 0 }
+    let mapped = 0
+    let unmapped = 0
     allCenters.forEach((cen) => {
       const props = cen.properties || cen
-      const mapped = Boolean(props.has_map)
-      if (!mapped) c['needs-mapping'] += 1
-      const st = centerStatus(
-        cen,
-        Number(cen.occupied || 0),
-        Number(cen.assigned || 0),
-        Number(cen.capacity || 0)
-      )
-      if (st === 'Available') c.available += 1
-      else if (st === 'Near full') c['near-full'] += 1
-      else if (st === 'Full') c.full += 1
+      const isMapped = isCenterMapped(props) || Boolean(props.has_map)
+      if (isMapped) {
+        mapped += 1
+      } else {
+        unmapped += 1
+      }
     })
-    return c
+    return {
+      all: allCenters.length,
+      mapped,
+      unmapped,
+    }
   }, [allCenters])
 
   const activeFilterCount =
@@ -104,25 +330,27 @@ export default function CenterList({
         .toLowerCase()
       if (q && !name.includes(q) && !brgyNames.includes(q)) return false
       if (barangayFilter) {
-        const ids = (Array.isArray(props.barangays) ? props.barangays : []).map(
-          (b) => String(typeof b === 'string' ? b : b.id)
-        )
-        if (!ids.includes(String(barangayFilter))) return false
+        const brgyList = Array.isArray(props.barangays) ? props.barangays : []
+        const matched = brgyList.some((b) => {
+          if (typeof b === 'object' && b !== null) {
+            return (
+              String(b.id) === String(barangayFilter) ||
+              (selectedBarangayName && String(b.name || '').toLowerCase() === selectedBarangayName.toLowerCase())
+            )
+          }
+          return (
+            String(b) === String(barangayFilter) ||
+            (selectedBarangayName && String(b).toLowerCase() === selectedBarangayName.toLowerCase())
+          )
+        })
+        if (!matched && String(props.barangay_id) !== String(barangayFilter)) return false
       }
-      if (quickFilter === 'needs-mapping') {
-        if (!centerNeedsMapping(props)) return false
-      } else if (quickFilter !== 'all') {
-        const st = centerStatus(
-          props,
-          Number(props.occupied || 0),
-          Number(props.assigned || 0),
-          Number(props.capacity || 0)
-        )
-        if (st !== STATUS_BY_KEY[quickFilter]) return false
-      }
+      const mapped = isCenterMapped(props) || Boolean(props.has_map)
+      if (quickFilter === 'mapped' && !mapped) return false
+      if (quickFilter === 'unmapped' && mapped) return false
       return true
     })
-  }, [allCenters, searchQuery, barangayFilter, quickFilter])
+  }, [allCenters, searchQuery, barangayFilter, selectedBarangayName, quickFilter])
 
   const handleRefresh = useCallback(() => {
     onRefresh?.()
@@ -131,9 +359,10 @@ export default function CenterList({
   const handleClearFilters = useCallback(() => {
     setSearchQuery('')
     setBarangayFilter('')
-    setBarangayLocal('')
+    setBarangaySearchText('')
+    onBarangayChange?.('')
     setQuickFilter('all')
-  }, [])
+  }, [onBarangayChange])
 
   const handleRetry = useCallback(() => {
     onRefresh?.()
@@ -165,19 +394,26 @@ export default function CenterList({
     return `${buildingCount} building${buildingCount !== 1 ? 's' : ''} · ${roomCount} room${roomCount !== 1 ? 's' : ''}`
   }, [])
 
-  const structureIcon = useCallback((cen) => {
-    const buildingCount = Number(cen.building_count || 0)
-    const roomCount = Number(cen.room_count || cen.total_rooms || 0)
-    if (buildingCount <= 1) {
-      return roomCount > 0 ? faHome : faWarehouse
+  const getStatusInfo = useCallback((props, arrived, assigned, cap) => {
+    const mapped = isCenterMapped(props) || Boolean(props.has_map)
+    if (!mapped) {
+      return {
+        key: 'unmapped',
+        label: 'Unmapped',
+      }
     }
-    return faBuilding
+    const st = centerStatus(props, arrived, assigned, cap)
+    const key = st === 'Near full' ? 'near-full' : st.toLowerCase()
+    return {
+      key,
+      label: st,
+    }
   }, [])
 
   const kebabItems = useCallback(
     (feature) => {
       const props = feature.properties || feature
-      const mapped = isCenterMapped(props)
+      const mapped = isCenterMapped(props) || Boolean(props.has_map)
       const items = [
         { label: 'View on map', icon: faLocationDot, onClick: () => onViewMap?.(props) },
       ]
@@ -206,7 +442,7 @@ export default function CenterList({
         <div className="ec-list-title-group">
           <h2 className="ec-list-title">Evacuation Centers</h2>
           <p className="ec-list-subtitle">
-            Check shelter capacity, building readiness, and live check-ins across the municipality.
+            Check shelter capacity, building readiness, and live arrivals across the municipality.
           </p>
         </div>
         <div className="ec-list-controls">
@@ -218,33 +454,33 @@ export default function CenterList({
         </div>
       </header>
 
-      <div className="ec-filter-cards" role="group" aria-label="Center status filters">
+      {/* 3 filter cards: All, Mapped, Unmapped */}
+      <div className="ec-filter-cards" role="group" aria-label="Center filters">
         {FILTER_CARDS.map((card) => {
-          const count = counts[card.countKey]
+          const count = counts[card.key]
           const active = quickFilter === card.key
-          const tokens = COLOR_TOKEN_MAP[card.colorToken]
           return (
             <button
               key={card.key}
               type="button"
-              role="radio"
+              role="button"
               aria-pressed={active}
-              className={`ec-filter-card ${active ? 'is-active' : ''}`}
-              style={{
-                '--card-bg': `var(--${tokens.bg})`,
-                '--card-border': `var(--${tokens.border})`,
-                '--card-text': `var(--${tokens.text})`,
-                '--card-dot': `var(--${tokens.dot})`,
-              }}
+              className={`ec-filter-card ec-filter-card--${card.colorToken} ${active ? 'is-active' : ''}`}
               onClick={() => setQuickFilter(card.key)}
             >
-              <div className="ec-filter-card-top">
-                <span className="ec-filter-card-icon" aria-hidden="true">
-                  <FontAwesomeIcon icon={card.icon} size="sm" />
+              <div className="ec-fcard-top">
+                <span className={`ec-fcard-icon ec-fcard-icon--${card.colorToken}`} aria-hidden="true">
+                  {card.renderIcon()}
                 </span>
-                <span className="ec-filter-card-count">{count}</span>
+                <span className="ec-fcard-count">
+                  <AnimatedCount value={count} duration={400} />
+                </span>
               </div>
-              <span className="ec-filter-card-label">{card.label}</span>
+              <div className="ec-fcard-bottom">
+                <span className="ec-fcard-label">{card.label}</span>
+                <span className="ec-fcard-helper">{card.helper}</span>
+              </div>
+              <span className={`ec-fcard-bar ec-fcard-bar--${card.colorToken}`} aria-hidden="true" />
             </button>
           )
         })}
@@ -261,67 +497,92 @@ export default function CenterList({
             />
           </div>
 
-          <div className="ec-toolbar-select">
+          <div className="ec-toolbar-select" ref={dropdownContainerRef}>
             <button
+              ref={triggerRef}
               type="button"
+              id="ec-barangay-select-button"
               className="ds-select ec-barangay-select"
-              onClick={() => setDropdownOpen(!dropdownOpen)}
+              onClick={() => {
+                setDropdownOpen((prev) => !prev)
+              }}
+              role="combobox"
               aria-expanded={dropdownOpen}
+              aria-haspopup="listbox"
+              aria-controls="ec-barangay-listbox"
               aria-label="Barangay filter"
+              onKeyDown={handleTriggerKeyDown}
             >
-              {barangayLocal ? barangayLocal : 'All Barangays'}
-              <FontAwesomeIcon icon={faXmark} size="xs" style={{ marginLeft: 'auto', color: barangayLocal ? 'var(--muted)' : 'transparent' }} />
-              <FontAwesomeIcon icon={faFilter} size="xs" style={{ marginLeft: 'var(--space-2)', color: 'var(--muted)' }} />
+              <span className="ec-barangay-select-text">
+                {selectedBarangayName || 'All Barangays'}
+              </span>
+              {barangayFilter ? (
+                <button
+                  type="button"
+                  className="ec-barangay-clear-btn"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    handleSelectBarangay('')
+                  }}
+                  aria-label="Clear barangay filter"
+                  title="Clear barangay filter"
+                >
+                  <FontAwesomeIcon icon={faXmark} size="xs" />
+                </button>
+              ) : null}
+              <FontAwesomeIcon
+                icon={faFilter}
+                size="xs"
+                className="ec-barangay-filter-icon"
+                aria-hidden="true"
+              />
             </button>
+
             {dropdownOpen && (
               <div className="ec-dropdown ec-dropdown--open">
                 <input
+                  ref={searchInputRef}
                   type="text"
                   className="ds-input"
                   placeholder="Search barangays…"
-                  autoFocus
-                  onChange={(e) => setBarangayLocal(e.target.value || '')}
-                  aria-label="Filter barangay options"
+                  value={barangaySearchText}
+                  onChange={(e) => {
+                    setBarangaySearchText(e.target.value)
+                    setActiveIndex(0)
+                  }}
+                  onKeyDown={handleSearchKeyDown}
+                  role="combobox"
+                  aria-autocomplete="list"
+                  aria-expanded="true"
+                  aria-controls="ec-barangay-listbox"
+                  aria-activedescendant={activeOptionId}
+                  aria-label="Search barangays"
                 />
-                <ul role="listbox">
-                  <li
-                    role="option"
-                    aria-selected={!barangayLocal}
-                    onClick={() => {
-                      setBarangayLocal('')
-                      setBarangayFilter('')
-                      onBarangayChange?.('')
-                      setDropdownOpen(false)
-                    }}
-                  >
-                    All Barangays
-                  </li>
-                  {barangays
-                    .filter((b) => {
-                      const q = barangayLocal.toLowerCase()
-                      return !q || String(b.name || b).toLowerCase().includes(q)
-                    })
-                    .slice(0, 20)
-                    .map((b) => {
-                      const name = typeof b === 'string' ? b : b.name || b
-                      const id = typeof b === 'string' ? b : b.id || b
+                <ul id="ec-barangay-listbox" role="listbox" ref={listboxRef}>
+                  {filteredBarangayOptions.length === 0 ? (
+                    <li className="ec-dropdown-empty" role="status" aria-live="polite">
+                      No barangays found
+                    </li>
+                  ) : (
+                    filteredBarangayOptions.map((opt, idx) => {
+                      const isSelected = opt.id === barangayFilter
+                      const isActive = idx === activeIndex
                       return (
                         <li
-                          key={id}
+                          key={opt.id || 'all'}
+                          id={`ec-barangay-opt-${opt.id || 'all'}`}
                           role="option"
-                          aria-selected={barangayLocal === String(id)}
-                          onClick={() => {
-                            setBarangayLocal(name)
-                            setBarangayFilter(id)
-                            onBarangayChange?.(String(id))
-                            setDropdownOpen(false)
-                          }}
+                          data-index={idx}
+                          aria-selected={isSelected}
+                          className={`ec-dropdown-option ${isSelected ? 'is-selected' : ''} ${isActive ? 'is-active' : ''}`}
+                          onClick={() => handleSelectBarangay(opt.id)}
+                          onMouseEnter={() => setActiveIndex(idx)}
                         >
-                          {name}
+                          {opt.name}
                         </li>
                       )
                     })
-                  }
+                  )}
                 </ul>
               </div>
             )}
@@ -363,152 +624,219 @@ export default function CenterList({
             />
           </div>
         ) : (
-          <div className="ec-table-wrapper">
-            <table className="ds-table ec-center-table ds-table--stack">
-              <thead>
-                <tr>
-                  <th style={{ width: '22%' }} scope="col">Center</th>
-                  <th style={{ width: '22%' }} scope="col">Barangay</th>
-                  <th style={{ width: '15%' }} scope="col">Structure</th>
-                  <th style={{ width: '24%' }} scope="col">Occupancy</th>
-                  <th style={{ width: '13%' }} scope="col">Status</th>
-                  <th style={{ width: '4%' }} scope="col" />
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((feature) => {
-                  const props = feature.properties || feature
-                  const id = props.id
-                  const name = props.name || 'Unnamed Center'
-                  const mapped = !centerNeedsMapping(props)
-                  const brgyList = Array.isArray(props.barangays) ? props.barangays : []
-                  const brgyShown = brgyList.slice(0, 2).map((b) => ({
-                    id: typeof b === 'string' ? b : b.id || b,
-                    name: typeof b === 'string' ? b : b.name || b,
-                    color: typeof b === 'string' ? undefined : b.color,
-                  }))
-                  const extraBrgy = Math.max(0, brgyList.length - 2)
-                  const allBrgyNames = brgyList.map((b) => (typeof b === 'string' ? b : b.name || b)).join(', ')
-                  const cap = Number(props.capacity || 0)
-                  const assigned = Number(props.assigned || 0)
-                  const checkedIn = Number(props.occupied || 0)
-                  const status = centerStatus(props, checkedIn, assigned, cap)
-                  const occupancyPct = cap > 0 ? Math.min(100, Math.round((assigned / cap) * 100)) : 0
-                  const statusVariantClass = statusVariant(status)
-                  const statusTokens = {
-                    Available: { bg: 'success-soft', border: 'success', text: 'success', dot: 'success' },
-                    'Near full': { bg: 'warning-soft', border: 'warning', text: 'warning', dot: 'warning' },
-                    Full: { bg: 'danger-soft', border: 'danger', text: 'danger', dot: 'danger' },
-                  }[status] || { bg: 'neutral-soft', border: 'neutral', text: 'neutral', dot: 'neutral' }
+          <>
+            {/* Desktop Table View */}
+            <div className="ec-table-wrapper ec-desktop-table-wrap">
+              <table className="ds-table ec-center-table">
+                <thead>
+                  <tr>
+                    <th style={{ width: '32%' }} scope="col">Center</th>
+                    <th style={{ width: '24%' }} scope="col">Barangay</th>
+                    <th style={{ width: '26%' }} scope="col">Occupancy</th>
+                    <th style={{ width: '14%' }} scope="col">Status</th>
+                    <th style={{ width: '4%' }} scope="col" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.map((feature) => {
+                    const props = feature.properties || feature
+                    const id = props.id
+                    const name = props.name || 'Unnamed Center'
+                    const brgyList = Array.isArray(props.barangays) ? props.barangays : []
+                    const brgyShown = brgyList.slice(0, 2).map((b) => ({
+                      id: typeof b === 'string' ? b : b.id || b,
+                      name: typeof b === 'string' ? b : b.name || b,
+                    }))
+                    const extraBrgy = Math.max(0, brgyList.length - 2)
+                    const allBrgyNames = brgyList.map((b) => (typeof b === 'string' ? b : b.name || b)).join(', ')
+                    const cap = Number(props.capacity || 0)
+                    const assigned = Number(props.assigned || 0)
+                    const arrived = Number(props.occupied || 0)
+                    const occupancyPct = cap > 0 ? Math.min(100, Math.round((assigned / cap) * 100)) : 0
+                    const { key: statusKey, label: statusLabel } = getStatusInfo(props, arrived, assigned, cap)
 
-                  return (
-                    <tr
-                      key={id}
-                      className="ec-center-row"
-                      role="button"
-                      tabIndex={0}
-                      aria-label={`Open ${name}`}
-                      onClick={() => handleRowOpen(feature)}
-                      onKeyDown={(e) => handleRowKeyDown(e, feature)}
-                    >
-                      <td className="ec-cell-center" data-label="Center">
-                        <div className="ec-center-name" title={name}>
-                          {name}
-                        </div>
-                        {!mapped && (
-                          <div className="ec-center-needs-mapping" aria-label="Not mapped">
-                            <FontAwesomeIcon icon={faBan} size="xs" /> Needs mapping
+                    return (
+                      <tr
+                        key={id}
+                        className="ec-center-row"
+                        role="button"
+                        tabIndex={0}
+                        aria-label={`Open ${name}`}
+                        onClick={() => handleRowOpen(feature)}
+                        onKeyDown={(e) => handleRowKeyDown(e, feature)}
+                      >
+                        <td className="ec-cell-center" data-label="Center">
+                          <div className="ec-center-name" title={name}>
+                            {name}
                           </div>
-                        )}
-                      </td>
-                      <td className="ec-cell-barangay" data-label="Barangay">
-                        <div className="ec-barangay-badges">
-                          {brgyShown.map((b) => (
-                            <span
-                              key={b.id}
-                              className="ec-barangay-badge"
-                              title={b.name}
-                              style={{
-                                '--barangay-color': b.color || 'var(--neutral)',
-                              }}
-                            >
-                              {b.name}
-                            </span>
-                          ))}
-                          {extraBrgy > 0 && (
-                            <span className="ec-barangay-badge ec-barangay-badge--more" title={allBrgyNames}>
-                              +{extraBrgy}
-                            </span>
-                          )}
-                          {brgyShown.length === 0 && (
-                            <span className="ec-barangay-badge ec-barangay-badge--none">—</span>
-                          )}
-                        </div>
-                      </td>
-                      <td className="ec-cell-structure" data-label="Structure">
-                        <div className="ec-structure-cell">
-                          <span className="ec-structure-icon" aria-hidden="true">
-                            <FontAwesomeIcon icon={structureIcon(props)} size="xs" />
-                          </span>
-                          <span>{structureText(props)}</span>
-                        </div>
-                      </td>
-                      <td className="ec-cell-occupancy" data-label="Occupancy">
-                        <div className="ec-occupancy-cell">
-                          <div className="ec-occupancy-bar-wrap">
+                          <div className="ec-center-structure">
+                            {structureText(props)}
+                          </div>
+                        </td>
+                        <td className="ec-cell-barangay" data-label="Barangay">
+                          <div className="ec-barangay-badges">
+                            {brgyShown.map((b) => (
+                              <span
+                                key={b.id}
+                                className="ec-barangay-pill"
+                                title={b.name}
+                              >
+                                {b.name}
+                              </span>
+                            ))}
+                            {extraBrgy > 0 && (
+                              <span className="ec-barangay-pill ec-barangay-pill--more" title={allBrgyNames}>
+                                +{extraBrgy}
+                              </span>
+                            )}
+                            {brgyShown.length === 0 && (
+                              <span className="ec-barangay-empty">—</span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="ec-cell-occupancy" data-label="Occupancy">
+                          <div className="ec-occupancy-cell">
                             <div className="ec-occupancy-bar-track">
                               <div
                                 className="ec-occupancy-bar-fill"
-                                style={{
-                                  width: `${occupancyPct}%`,
-                                  backgroundColor: `var(--${statusTokens.dot})`,
-                                }}
+                                style={{ width: `${occupancyPct}%` }}
                               />
                             </div>
+                            <div className="ec-occupancy-text">
+                              <span className="ec-occupancy-assigned">
+                                <strong>{assigned}</strong> of {cap} assigned
+                              </span>
+                              <span className="ec-occupancy-arrived">
+                                {arrived} arrived
+                              </span>
+                            </div>
                           </div>
-                          <div className="ec-occupancy-text">
-                            <span className="ec-occupancy-assigned">
-                              <strong>{assigned}</strong> of {cap} assigned
-                            </span>
-                            <span className="ec-occupancy-checkedin">
-                              {checkedIn} CHECKED IN
-                            </span>
+                        </td>
+                        <td className="ec-cell-status" data-label="Status">
+                          <span className={`ec-status-pill ec-status-pill--${statusKey}`}>
+                            <span className="ec-status-dot" aria-hidden="true" />
+                            {statusLabel}
+                          </span>
+                        </td>
+                        <td className="ec-cell-actions" data-label="Actions" onClick={(e) => e.stopPropagation()}>
+                          <div className="ec-actions-wrap">
+                            <FloatingMenuTrigger
+                              items={kebabItems(feature)}
+                              label={`Actions for ${name}`}
+                              align="right"
+                            />
+                            <FontAwesomeIcon icon={faChevronRight} className="ec-row-chevron" aria-hidden="true" />
                           </div>
-                        </div>
-                      </td>
-                      <td className="ec-cell-status" data-label="Status">
-                        <span
-                          className={`ec-status-pill ${statusVariantClass}`}
-                          style={{
-                            '--pill-bg': `var(--${statusTokens.bg})`,
-                            '--pill-border': `var(--${statusTokens.border})`,
-                            '--pill-text': `var(--${statusTokens.text})`,
-                            '--pill-dot': `var(--${statusTokens.dot})`,
-                          }}
-                        >
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Mobile Cards View (<= 768px) */}
+            <div className="ec-mobile-cards">
+              {filtered.map((feature) => {
+                const props = feature.properties || feature
+                const id = props.id
+                const name = props.name || 'Unnamed Center'
+                const brgyList = Array.isArray(props.barangays) ? props.barangays : []
+                const brgyShown = brgyList.slice(0, 2).map((b) => ({
+                  id: typeof b === 'string' ? b : b.id || b,
+                  name: typeof b === 'string' ? b : b.name || b,
+                }))
+                const extraBrgy = Math.max(0, brgyList.length - 2)
+                const allBrgyNames = brgyList.map((b) => (typeof b === 'string' ? b : b.name || b)).join(', ')
+                const cap = Number(props.capacity || 0)
+                const assigned = Number(props.assigned || 0)
+                const arrived = Number(props.occupied || 0)
+                const occupancyPct = cap > 0 ? Math.min(100, Math.round((assigned / cap) * 100)) : 0
+                const { key: statusKey, label: statusLabel } = getStatusInfo(props, arrived, assigned, cap)
+
+                return (
+                  <div
+                    key={id}
+                    className="ec-mobile-card"
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`Open ${name}`}
+                    onClick={() => handleRowOpen(feature)}
+                    onKeyDown={(e) => handleRowKeyDown(e, feature)}
+                  >
+                    {/* Line 1: Name with status pill on line 1 */}
+                    <div className="ec-mcard-line1">
+                      <span className="ec-mcard-name">{name}</span>
+                      <div className="ec-mcard-line1-right" onClick={(e) => e.stopPropagation()}>
+                        <span className={`ec-status-pill ec-status-pill--${statusKey}`}>
                           <span className="ec-status-dot" aria-hidden="true" />
-                          {status}
+                          {statusLabel}
                         </span>
-                      </td>
-                      <td className="ec-cell-actions" data-label="Actions" onClick={(e) => e.stopPropagation()}>
                         <FloatingMenuTrigger
                           items={kebabItems(feature)}
                           label={`Actions for ${name}`}
                           align="right"
                         />
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+                      </div>
+                    </div>
 
-      <footer className="ec-list-footer">
-        Showing <strong>{filtered.length}</strong> of <strong>{allCenters.length}</strong> evacuation centers
-      </footer>
+                    {/* Line 2: Structure below it */}
+                    <div className="ec-mcard-line2">
+                      <span className="ec-mcard-structure">{structureText(props)}</span>
+                    </div>
+
+                    {/* Line 3: Occupancy bar with text */}
+                    <div className="ec-mcard-line3">
+                      <div className="ec-occupancy-bar-track">
+                        <div
+                          className="ec-occupancy-bar-fill"
+                          style={{ width: `${occupancyPct}%` }}
+                        />
+                      </div>
+                      <div className="ec-occupancy-text">
+                        <span className="ec-occupancy-assigned">
+                          <strong>{assigned}</strong> of {cap} assigned
+                        </span>
+                        <span className="ec-occupancy-arrived">
+                          {arrived} arrived
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Line 4: Barangay pills at the bottom */}
+                    <div className="ec-mcard-line4">
+                      <div className="ec-barangay-badges">
+                        {brgyShown.map((b) => (
+                          <span
+                            key={b.id}
+                            className="ec-barangay-pill"
+                            title={b.name}
+                          >
+                            {b.name}
+                          </span>
+                        ))}
+                        {extraBrgy > 0 && (
+                          <span className="ec-barangay-pill ec-barangay-pill--more" title={allBrgyNames}>
+                            +{extraBrgy}
+                          </span>
+                        )}
+                        {brgyShown.length === 0 && (
+                          <span className="ec-barangay-empty">—</span>
+                        )}
+                      </div>
+                      <FontAwesomeIcon icon={faChevronRight} className="ec-row-chevron" aria-hidden="true" />
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </>
+        )}
+
+        <footer className="ec-table-footer">
+          Showing <strong>{filtered.length}</strong> of <strong>{allCenters.length}</strong> centers
+        </footer>
+      </div>
     </section>
   )
 }
@@ -531,12 +859,74 @@ export function SearchInput({ value, onChange, placeholder, ariaLabel }) {
 
 export function EmptyState({ icon, title = 'No data available', text, action, actionLabel, className = '' }) {
   return (
-    <div className={`es-empty ${className}`.trim()}>
-      {icon && <FontAwesomeIcon icon={icon} className="es-icon" aria-hidden="true" />}
-      <h2 className="es-title">{title}</h2>
-      {text && <p className="es-text">{text}</p>}
+    <div
+      className={`es-empty ${className}`.trim()}
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        textAlign: 'center',
+        padding: '48px 24px',
+        gap: '12px',
+        width: '100%',
+        boxSizing: 'border-box',
+      }}
+    >
+      {icon && (
+        <div
+          className="es-icon-box"
+          style={{
+            width: '48px',
+            height: '48px',
+            borderRadius: '12px',
+            backgroundColor: 'var(--brand-soft, #e8f0fe)',
+            color: 'var(--brand, #1B56C4)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontSize: '20px',
+            marginBottom: '4px',
+          }}
+        >
+          <FontAwesomeIcon icon={icon} className="es-icon" aria-hidden="true" />
+        </div>
+      )}
+      <h2
+        className="es-title"
+        style={{
+          margin: 0,
+          fontFamily: 'var(--font-display, inherit)',
+          fontSize: 'var(--text-base, 1.125rem)',
+          fontWeight: 'var(--weight-semibold, 600)',
+          color: 'var(--ink, #0f172a)',
+        }}
+      >
+        {title}
+      </h2>
+      {text && (
+        <p
+          className="es-text"
+          style={{
+            margin: 0,
+            fontSize: 'var(--text-sm, 0.875rem)',
+            color: 'var(--muted, #64748b)',
+            maxWidth: '420px',
+            lineHeight: 'var(--line-height-body, 1.5)',
+          }}
+        >
+          {text}
+        </p>
+      )}
       {action && actionLabel && (
-        <button type="button" className="ds-btn ds-btn--primary es-action" onClick={action}>
+        <button
+          type="button"
+          className="ds-btn ds-btn--primary es-action"
+          onClick={action}
+          style={{
+            marginTop: '8px',
+          }}
+        >
           {actionLabel}
         </button>
       )}
@@ -585,26 +975,36 @@ export function Skeleton({ variant = 'line', count = 3, width, className = '' })
 export function SkeletonRows({ count = 4 }) {
   return (
     <div className="ec-table-wrapper">
-      <table className="ds-table">
+      <table className="ds-table ec-center-table">
         <thead>
           <tr>
-            <th style={{ width: '22%' }}>Center</th>
-            <th style={{ width: '22%' }}>Barangay</th>
-            <th style={{ width: '15%' }}>Structure</th>
-            <th style={{ width: '24%' }}>Occupancy</th>
-            <th style={{ width: '13%' }}>Status</th>
-            <th style={{ width: '4%' }}></th>
+            <th style={{ width: '32%' }}>Center</th>
+            <th style={{ width: '24%' }}>Barangay</th>
+            <th style={{ width: '26%' }}>Occupancy</th>
+            <th style={{ width: '14%' }}>Status</th>
+            <th style={{ width: '4%' }} />
           </tr>
         </thead>
         <tbody>
           {Array.from({ length: count }).map((_, i) => (
-            <tr key={i}>
-              <td><div className="ds-skeleton ds-skeleton--title" style={{ width: '55%' }} /><div className="ds-skeleton" style={{ width: '40%', height: 'var(--text-xs)' }} /></td>
-              <td><div className="ds-skeleton ds-skeleton--text" style={{ width: '60%' }} /></td>
-              <td><div className="ds-skeleton ds-skeleton--text" style={{ width: '45%' }} /></td>
-              <td><div className="ds-skeleton ds-skeleton--text" style={{ width: '45%' }} /></td>
-              <td><div className="ds-skeleton ds-skeleton--text" style={{ width: '55%' }} /></td>
-              <td><div className="ds-skeleton ds-skeleton--btn" /></td>
+            <tr key={i} className="ec-center-row">
+              <td style={{ padding: '16px 20px' }}>
+                <div className="ds-skeleton ds-skeleton--title" style={{ width: '55%' }} />
+                <div className="ds-skeleton" style={{ width: '35%', height: '12px', marginTop: '4px' }} />
+              </td>
+              <td style={{ padding: '16px 20px' }}>
+                <div className="ds-skeleton ds-skeleton--text" style={{ width: '60%' }} />
+              </td>
+              <td style={{ padding: '16px 20px' }}>
+                <div className="ds-skeleton" style={{ height: '6px', borderRadius: '9999px', width: '100%', marginBottom: '6px' }} />
+                <div className="ds-skeleton ds-skeleton--text" style={{ width: '50%' }} />
+              </td>
+              <td style={{ padding: '16px 20px' }}>
+                <div className="ds-skeleton" style={{ height: '24px', width: '70px', borderRadius: '9999px' }} />
+              </td>
+              <td style={{ padding: '16px 20px' }}>
+                <div className="ds-skeleton ds-skeleton--btn" style={{ width: '24px', height: '24px' }} />
+              </td>
             </tr>
           ))}
         </tbody>

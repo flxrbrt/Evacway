@@ -291,10 +291,14 @@ def get_logs():
     if current_user().role != 'admin':
         query = query.filter_by(user_id=current_user().id)
     logs = query.order_by(SystemLog.timestamp.desc()).limit(200).all()
+    user_ids = {log.user_id for log in logs if log.user_id}
+    users_by_id = {u.id: u for u in User.query.filter(User.id.in_(user_ids)).all()} if user_ids else {}
     return jsonify([
         {
             "id": log.id,
             "user_id": log.user_id,
+            "user_name": users_by_id.get(log.user_id).name if users_by_id.get(log.user_id) else None,
+            "user_role": users_by_id.get(log.user_id).role if users_by_id.get(log.user_id) else None,
             "action": log.action,
             "timestamp": (
                 log.timestamp.strftime("%Y-%m-%dT%H:%M:%S+08:00")

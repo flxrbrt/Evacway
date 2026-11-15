@@ -1,7 +1,7 @@
 import os
 from datetime import timedelta
 
-from flask import Flask, abort, jsonify, send_from_directory
+from flask import Flask, abort, jsonify, request, send_from_directory
 from flask_cors import CORS
 from flask_jwt_extended import JWTManager
 from config import Config
@@ -52,7 +52,27 @@ jwt = JWTManager(app)
 # CORS
 # =========================================================
 
-CORS(app)
+CORS(
+    app,
+    resources={r"/*": {"origins": "*"}},
+    supports_credentials=True,
+    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization", "X-Requested-With", "Accept"],
+    expose_headers=["Content-Type", "Authorization"]
+)
+
+
+@app.after_request
+def add_cors_headers(response):
+    origin = request.headers.get("Origin")
+    if origin:
+        response.headers["Access-Control-Allow-Origin"] = origin
+    else:
+        response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Requested-With, Accept"
+    response.headers["Access-Control-Allow-Credentials"] = "true"
+    return response
 
 
 # =========================================================
@@ -91,7 +111,22 @@ app.register_blueprint(reference_options_bp)
 @app.errorhandler(500)
 def handle_500_error(e):
     app.logger.exception("Internal server error: %s", e)
-    return jsonify({"error": "Internal server error"}), 500
+    resp = jsonify({"error": "Internal server error"})
+    resp.status_code = 500
+    return resp
+
+
+@app.errorhandler(Exception)
+def handle_unhandled_exception(e):
+    from werkzeug.exceptions import HTTPException
+    if isinstance(e, HTTPException):
+        resp = jsonify({"error": e.description or str(e)})
+        resp.status_code = e.code or 500
+        return resp
+    app.logger.exception("Unhandled server exception: %s", e)
+    resp = jsonify({"error": str(e) or "Internal server error"})
+    resp.status_code = 500
+    return resp
 
 
 @app.cli.command("init-db")

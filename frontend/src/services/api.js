@@ -16,16 +16,21 @@ async function request(path, options = {}) {
     headers["Content-Type"] = "application/json";
   }
 
-  const res = await fetch(`${BASE_URL}${path}`, {
-    ...options,
-    headers,
-  });
+  let res;
+  try {
+    res = await fetch(`${BASE_URL}${path}`, {
+      ...options,
+      headers,
+    });
+  } catch (networkError) {
+    throw new Error("Couldn't reach the server. Check your connection and try again.");
+  }
 
   const data = await res.json().catch(() => ({}));
 
   if (!res.ok) {
     throw new Error(
-      data.error || `Request failed (${res.status})`
+      data.error || data.message || `Request failed (${res.status})`
     );
   }
 
@@ -36,10 +41,15 @@ async function requestFile(path) {
   const headers = {};
   const token = getToken();
   if (token) headers.Authorization = `Bearer ${token}`;
-  const response = await fetch(`${BASE_URL}${path}`, { headers });
+  let response;
+  try {
+    response = await fetch(`${BASE_URL}${path}`, { headers });
+  } catch (networkError) {
+    throw new Error("Couldn't reach the server. Check your connection and try again.");
+  }
   if (!response.ok) {
     const data = await response.json().catch(() => ({}));
-    throw new Error(data.error || `Request failed (${response.status})`);
+    throw new Error(data.error || data.message || `Request failed (${response.status})`);
   }
   return response.blob();
 }

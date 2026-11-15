@@ -720,7 +720,6 @@ export default function EvacueeCheckIn() {
           <div className="checkin-stat-card-main">
             <span className="checkin-stat-card-label">Total Assigned</span>
             <span className="checkin-stat-value">{summary.total_assigned}</span>
-            <span className="checkin-stat-meta">Households assigned</span>
           </div>
           <div className="checkin-stat-icon blue">
             <FontAwesomeIcon icon={faUserGroup} />
@@ -732,7 +731,6 @@ export default function EvacueeCheckIn() {
           <div className="checkin-stat-card-main">
             <span className="checkin-stat-card-label">Fully Arrived</span>
             <span className="checkin-stat-value">{summary.total_checked_in}</span>
-            <span className="checkin-stat-meta">All members present</span>
           </div>
           <div className="checkin-stat-icon green">
             <FontAwesomeIcon icon={faCircleCheck} />
@@ -744,7 +742,6 @@ export default function EvacueeCheckIn() {
           <div className="checkin-stat-card-main">
             <span className="checkin-stat-card-label">Partially Arrived</span>
             <span className="checkin-stat-value">{summary.total_partial || 0}</span>
-            <span className="checkin-stat-meta">Some members here</span>
           </div>
           <div className="checkin-stat-icon amber">
             <FontAwesomeIcon icon={faClock} />
@@ -756,7 +753,6 @@ export default function EvacueeCheckIn() {
           <div className="checkin-stat-card-main">
             <span className="checkin-stat-card-label">Pending Arrival</span>
             <span className="checkin-stat-value">{summary.total_pending}</span>
-            <span className="checkin-stat-meta">Awaiting shelter arrival</span>
           </div>
           <div className="checkin-stat-icon slate">
             <FontAwesomeIcon icon={faCircleExclamation} />
@@ -819,7 +815,7 @@ export default function EvacueeCheckIn() {
             onClick={() => setFilterStatus("partial")}
           >
             <span>Partially Arrived</span>
-            <span className="checkin-tab-count amber">{summary.total_partial || 0}</span>
+            <span className="checkin-tab-count">{summary.total_partial || 0}</span>
           </button>
           <button
             type="button"
@@ -829,7 +825,7 @@ export default function EvacueeCheckIn() {
             onClick={() => setFilterStatus("checked_in")}
           >
             <span>Fully Arrived</span>
-            <span className="checkin-tab-count green">{summary.total_checked_in}</span>
+            <span className="checkin-tab-count">{summary.total_checked_in}</span>
           </button>
         </div>
       </section>
@@ -895,15 +891,9 @@ export default function EvacueeCheckIn() {
                             </div>
                             <div className="checkin-user-text">
                               <span className="checkin-user-name">{evacuee.head_name}</span>
-                              <span className="checkin-user-sub">
-                                <span className="checkin-code-pill">{evacuee.family_code || `#${evacuee.family_id}`}</span>
-                                {evacuee.contact_number && (
-                                  <>
-                                    <span className="checkin-sep">•</span>
-                                    <span className="checkin-contact-num">{evacuee.contact_number}</span>
-                                  </>
-                                )}
-                              </span>
+                              {evacuee.contact_number && (
+                                <span className="checkin-contact-num">{evacuee.contact_number}</span>
+                              )}
                             </div>
                           </div>
                         </td>
@@ -928,44 +918,45 @@ export default function EvacueeCheckIn() {
                             <span className="checkin-center-name">
                               {evacuee.center_name}
                             </span>
-                            <div>
-                              <span className={`checkin-room-badge ${evacuee.room_number ? "is-assigned" : ""}`}>
-                                <FontAwesomeIcon icon={faDoorOpen} />
-                                <span>{formatRoomBadge(evacuee.building_name, evacuee.room_number)}</span>
-                              </span>
-                            </div>
+                            {evacuee.room_number && (
+                              <div>
+                                <span className="checkin-room-badge is-assigned">
+                                  <span>{formatRoomBadge(evacuee.building_name, evacuee.room_number)}</span>
+                                </span>
+                              </div>
+                            )}
                           </div>
                         </td>
 
-                        {/* Family members & vulnerable chips */}
+                        {/* Family members & tags */}
                         <td className="col-members">
                           <div className="checkin-members-cell">
-                            <button
-                              type="button"
-                              className="checkin-members-chip-btn"
-                              onClick={() => handleOpenMemberModal(evacuee)}
-                              title="Click to view and check in individual members"
-                            >
-                              <FontAwesomeIcon icon={faUsers} />
-                              <span>
-                                {evacuee.member_count} {evacuee.member_count === 1 ? "person" : "people"}
-                              </span>
-                              {evacuee.checked_in_members > 0 && (
-                                <span className={`checkin-members-here-pill ${isFullyArrived ? "full" : "partial"}`}>
-                                  {evacuee.checked_in_members} here
+                            <div className="checkin-members-row">
+                              <button
+                                type="button"
+                                className="checkin-members-chip-btn"
+                                onClick={() => handleOpenMemberModal(evacuee)}
+                                title={evacuee.special_needs?.length ? `Tags: ${evacuee.special_needs.join(", ")} (click to view family roster)` : "Click to view family roster"}
+                              >
+                                <FontAwesomeIcon icon={faUsers} />
+                                <span>
+                                  {evacuee.member_count} {evacuee.member_count === 1 ? "person" : "people"}
+                                </span>
+                                {evacuee.checked_in_members > 0 && (
+                                  <span className={`checkin-members-here-pill ${isFullyArrived ? "full" : "partial"}`}>
+                                    {evacuee.checked_in_members} here
+                                  </span>
+                                )}
+                              </button>
+                              {evacuee.special_needs?.length > 0 && (
+                                <span
+                                  className="checkin-tags-muted-hint"
+                                  title={`Special Needs: ${evacuee.special_needs.join(", ")}`}
+                                >
+                                  +{evacuee.special_needs.length} {evacuee.special_needs.length === 1 ? "tag" : "tags"}
                                 </span>
                               )}
-                            </button>
-
-                            {evacuee.special_needs?.length > 0 && (
-                              <div className="checkin-special-needs-list">
-                                {evacuee.special_needs.map((flag) => (
-                                  <span key={flag} className="checkin-special-chip">
-                                    {flag}
-                                  </span>
-                                ))}
-                              </div>
-                            )}
+                            </div>
                           </div>
                         </td>
 
@@ -973,29 +964,23 @@ export default function EvacueeCheckIn() {
                         <td className="col-status">
                           <div className="checkin-status-cell">
                             {isFullyArrived ? (
-                              <span className="checkin-status-badge arrived">
-                                <FontAwesomeIcon icon={faCircleCheck} />
+                              <span
+                                className="checkin-status-badge arrived"
+                                title={evacuee.checked_in_at ? `Arrival: ${evacuee.checked_in_at_formatted || evacuee.checked_in_at}` : undefined}
+                              >
+                                <span className="checkin-status-dot green" />
                                 <span>Fully Arrived</span>
                               </span>
                             ) : isPartiallyArrived ? (
                               <span className="checkin-status-badge partial">
-                                <span className="checkin-status-dot partial" />
+                                <span className="checkin-status-dot amber" />
                                 <span>{evacuee.checked_in_members} of {evacuee.member_count} Here</span>
                               </span>
                             ) : (
                               <span className="checkin-status-badge pending">
-                                <span className="checkin-status-dot pending" />
+                                <span className="checkin-status-dot gray" />
                                 <span>Pending Arrival</span>
                               </span>
-                            )}
-                            {evacuee.checked_in_at && (
-                              <div className="checkin-timestamp arrived" title={`Recorded arrival: ${evacuee.checked_in_at_formatted || evacuee.checked_in_at}`}>
-                                <FontAwesomeIcon icon={faClock} style={{ marginRight: "3px" }} />
-                                <span>{evacuee.checked_in_time_only || formatCheckinTime(evacuee.checked_in_at)}</span>
-                                {evacuee.checked_in_date_only && (
-                                  <span className="checkin-time-date"> ({evacuee.checked_in_date_only})</span>
-                                )}
-                              </div>
                             )}
                           </div>
                         </td>

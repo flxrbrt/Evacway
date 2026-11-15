@@ -437,7 +437,7 @@ def _barangay_center_rows(barangay, include_inactive):
             "center_type": center.center_type or "campus",
             "owner_name": center.owner_name,
             "building_material": center.building_material,
-            "accessibility_notes": center.accessibility_notes,
+            "amenities": [a.name for a in center.amenities] if hasattr(center, 'amenities') and center.amenities else [],
             "hazard_exposure_score": center.hazard_exposure_score,
             "contact_number": center.contact_number,
             "is_active": center.is_active,

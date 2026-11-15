@@ -109,43 +109,6 @@ class User(BaseModel):
         nullable=True
     )
 
-    @property
-    def center_type(self):
-        return self.center_type_ref.code if self.center_type_ref else "campus"
-
-    @center_type.setter
-    def center_type(self, val):
-        if isinstance(val, int):
-            self.center_type_id = val
-        elif val:
-            ct = CenterType.query.filter_by(code=str(val).strip().lower()).first()
-            if ct:
-                self.center_type_id = ct.id
-
-    @property
-    def center_type_name(self):
-        return self.center_type_ref.name if self.center_type_ref else "Campus"
-
-    @property
-    def building_material(self):
-        return self.building_material_ref.name if self.building_material_ref else None
-
-    @building_material.setter
-    def building_material(self, val):
-        if isinstance(val, int):
-            self.building_material_id = val
-        elif val:
-            bm = BuildingMaterial.query.filter(
-                (BuildingMaterial.name.ilike(str(val).strip())) | (BuildingMaterial.code == str(val).strip().lower())
-            ).first()
-            if bm:
-                self.building_material_id = bm.id
-
-    @property
-    def accessibility_notes(self):
-        if self.amenities:
-            return ", ".join(a.name for a in self.amenities)
-        return None
 
     def to_dict(self):
         return {
@@ -531,12 +494,18 @@ class EvacuationCenter(BaseModel):
             ).first()
             if bm:
                 self.building_material_id = bm.id
+            else:
+                self.building_material_id = None
+        else:
+            self.building_material_id = None
 
     @property
-    def accessibility_notes(self):
-        if self.amenities:
-            return ", ".join(a.name for a in self.amenities)
-        return ""
+    def owner_operator(self):
+        return self.owner_name
+
+    @owner_operator.setter
+    def owner_operator(self, val):
+        self.owner_name = val
 
     def to_dict(self):
         barangays = [
@@ -567,14 +536,12 @@ class EvacuationCenter(BaseModel):
             "center_type": self.center_type_ref.code if self.center_type_ref else "campus",
             "center_type_name": self.center_type_ref.name if self.center_type_ref else "Campus",
             "owner_name": self.owner_name,
+            "owner_operator": self.owner_name,
             "max_rooms": self.max_rooms,
             "building_material_id": self.building_material_id,
             "building_material": self.building_material_ref.name if self.building_material_ref else self.building_material,
-            "amenities": [a.to_dict() for a in self.amenities],
+            "amenities": [a.name for a in self.amenities],
             "amenity_ids": [a.id for a in self.amenities],
-            "accessibility_features": [a.to_dict() for a in self.amenities],
-            "accessibility_feature_ids": [a.id for a in self.amenities],
-            "accessibility_notes": self.accessibility_notes,
             "hazard_exposure_score": self.hazard_exposure_score,
             "contact_number": self.contact_number,
             "is_active": self.is_active,

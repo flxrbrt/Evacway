@@ -483,12 +483,49 @@ function StepIcon({ kind }) {
   );
 }
 
+const isStandalone = () => {
+  if (typeof window === "undefined") return false;
+  return Boolean(
+    window.matchMedia?.("(display-mode: standalone)")?.matches ||
+      window.navigator?.standalone
+  );
+};
+
+if (typeof window !== "undefined") {
+  window.addEventListener("beforeinstallprompt", (e) => {
+    e.preventDefault();
+    window.deferredPrompt = e;
+  });
+  window.addEventListener("appinstalled", () => {
+    window.deferredPrompt = null;
+  });
+}
+
 export default function LandingPage() {
   const dialogRef = useRef(null);
   const signUpDialogRef = useRef(null);
   const rootRef = useRef(null);
   const [scrolled, setScrolled] = useState(false);
   const [signUpOpen, setSignUpOpen] = useState(false);
+  const [deferredPrompt, setDeferredPrompt] = useState(() => {
+    if (typeof window === "undefined" || isStandalone()) return null;
+    return window.deferredPrompt || null;
+  });
+
+  const handleInstallClick = async () => {
+    const promptEvent = deferredPrompt || (typeof window !== "undefined" ? window.deferredPrompt : null);
+    if (!promptEvent) return;
+    promptEvent.prompt();
+    try {
+      await promptEvent.userChoice;
+    } catch {
+      // prompt resolved or dismissed
+    }
+    setDeferredPrompt(null);
+    if (typeof window !== "undefined") {
+      window.deferredPrompt = null;
+    }
+  };
 
   const openLogin = () => {
     signUpDialogRef.current?.close();
@@ -502,6 +539,57 @@ export default function LandingPage() {
       setSignUpOpen(true);
     });
   };
+
+  useEffect(() => {
+    if (isStandalone()) {
+      setDeferredPrompt(null);
+      if (typeof window !== "undefined") {
+        window.deferredPrompt = null;
+      }
+      return undefined;
+    }
+
+    const handleBeforeInstallPrompt = (e) => {
+      e.preventDefault();
+      window.deferredPrompt = e;
+      if (!isStandalone()) {
+        setDeferredPrompt(e);
+      }
+    };
+
+    const handleAppInstalled = () => {
+      setDeferredPrompt(null);
+      if (typeof window !== "undefined") {
+        window.deferredPrompt = null;
+      }
+    };
+
+    window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
+    window.addEventListener("appinstalled", handleAppInstalled);
+
+    let mediaQuery = null;
+    let handleMediaChange = null;
+    if (typeof window.matchMedia === "function") {
+      mediaQuery = window.matchMedia("(display-mode: standalone)");
+      handleMediaChange = (e) => {
+        if (e.matches) {
+          setDeferredPrompt(null);
+          if (typeof window !== "undefined") {
+            window.deferredPrompt = null;
+          }
+        }
+      };
+      mediaQuery.addEventListener?.("change", handleMediaChange);
+    }
+
+    return () => {
+      window.removeEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
+      window.removeEventListener("appinstalled", handleAppInstalled);
+      if (mediaQuery && handleMediaChange) {
+        mediaQuery.removeEventListener?.("change", handleMediaChange);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     let rafId = 0;
@@ -561,8 +649,16 @@ export default function LandingPage() {
               <Link to="/map">Our Map</Link>
               <a href="#ew-key-title">Features</a>
               <a href="#ew-steps-title">How It Works</a>
-              <Link to="/map">Alerts</Link>
             </nav>
+            {deferredPrompt && (
+              <button
+                type="button"
+                className="ew-btn ew-btn-outline ew-install-nav ds-btn ds-btn--ghost"
+                onClick={handleInstallClick}
+              >
+                Install
+              </button>
+            )}
             <button
               type="button"
               className="ew-btn ew-btn-quiet ew-btn-login-pill ds-btn ds-btn--ghost"
