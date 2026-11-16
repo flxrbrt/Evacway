@@ -1,5 +1,4 @@
-const BASE_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:5000";
-
+const BASE_URL = import.meta.env.VITE_API_URL ?? "";
 function getToken() {
   return localStorage.getItem("evacway_token");
 }
@@ -29,9 +28,12 @@ async function request(path, options = {}) {
   const data = await res.json().catch(() => ({}));
 
   if (!res.ok) {
-    throw new Error(
+    const err = new Error(
       data.error || data.message || `Request failed (${res.status})`
     );
+    err.status = res.status;
+    err.data = data;
+    throw err;
   }
 
   return data;
@@ -102,7 +104,12 @@ export const api = {
       method: "POST",
     }),
 
-    createResidentAccount: (payload) =>
+  sendResidentResetPasswordEmail: (requestId) =>
+    request(`/api/resident-registrations/${requestId}/reset-password`, {
+      method: "POST",
+    }),
+
+  createResidentAccount: (payload) =>
 
     request("/api/resident-registrations/manual-create", {
 
@@ -321,15 +328,14 @@ export const api = {
 
   getHazardReports: (status) =>
     request(
-      `/api/hazard-reports${
-        status
-          ? `?status=${status}`
-          : ""
+      `/api/hazard-reports${status
+        ? `?status=${status}`
+        : ""
       }`
     ),
-    
+
   getPublicHazardReports: () =>
-  request("/api/hazard-reports/public"),
+    request("/api/hazard-reports/public"),
 
   validateHazardReport: (
     id,
@@ -432,8 +438,7 @@ export const api = {
 
   getEvacuationRoute: (lat, lng, centerId = null) =>
     request(
-      `/api/evacuation-route?lat=${lat}&lng=${lng}${
-        centerId != null ? `&center_id=${centerId}` : ""
+      `/api/evacuation-route?lat=${lat}&lng=${lng}${centerId != null ? `&center_id=${centerId}` : ""
       }`
     ),
 
@@ -452,10 +457,9 @@ export const api = {
 
   getResidents: (barangay) =>
     request(
-      `/api/residents${
-        barangay
-          ? `?barangay=${encodeURIComponent(barangay)}`
-          : ""
+      `/api/residents${barangay
+        ? `?barangay=${encodeURIComponent(barangay)}`
+        : ""
       }`
     ),
 
@@ -665,9 +669,12 @@ export const api = {
 
   // Stage an import: validates the file but saves nothing to live data.
   // Returns a staging token that must be presented at commit time.
-  stageFamilyImport: (file) => {
+  stageFamilyImport: (file, barangayId) => {
     const formData = new FormData();
     formData.append("file", file);
+    if (barangayId !== undefined && barangayId !== null && barangayId !== "") {
+      formData.append("barangay_id", String(barangayId));
+    }
     return request("/api/families/import/stage", {
       method: "POST",
       body: formData,
@@ -683,7 +690,13 @@ export const api = {
     });
   },
 
-  downloadFamilyTemplate: () => requestFile("/api/families/template"),
+  downloadFamilyTemplate: (barangayId) => {
+    const query =
+      barangayId !== undefined && barangayId !== null && barangayId !== ""
+        ? `?barangay_id=${encodeURIComponent(barangayId)}`
+        : "";
+    return requestFile(`/api/families/template${query}`);
+  },
 
   exportFamilies: (filters = {}) => {
     const params = new URLSearchParams();

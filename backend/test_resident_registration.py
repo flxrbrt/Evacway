@@ -482,20 +482,32 @@ class ResidentRegistrationApiTests(unittest.TestCase):
         self.assertEqual(resent.status_code, 200)
         self.assertFalse(resent.get_json()['email_sent'])
 
-    def test_rejection_requires_reason_and_keeps_request(self):
-        self._submit()
-        registration = ResidentRegistrationRequest.query.one()
-        path = f'/api/resident-registrations/{registration.id}/reject'
+    def test_rejection_allows_optional_reason_and_keeps_request(self):
+        resident = self._create_roster_resident()
+        self._submit(email='noreason@example.com', contact_number='09171112233')
+        req_no_reason = ResidentRegistrationRequest.query.filter_by(email='noreason@example.com').one()
         headers = self._staff_headers()
-        self.assertEqual(self.client.post(path, headers=headers, json={}).status_code, 400)
         with patch('routes.resident_registrations.send_resident_registration_email') as send_email:
+            empty_res = self.client.post(
+                f'/api/resident-registrations/{req_no_reason.id}/reject',
+                headers=headers,
+                json={},
+            )
+        self.assertEqual(empty_res.status_code, 200, empty_res.get_json())
+        self.assertEqual(req_no_reason.status, 'rejected')
+        self.assertIsNone(req_no_reason.rejection_reason)
+        send_email.assert_called_once()
+
+        self._submit()
+        registration = ResidentRegistrationRequest.query.filter_by(email='jose@example.com').one()
+        path = f'/api/resident-registrations/{registration.id}/reject'
+        with patch('routes.resident_registrations.send_resident_registration_email') as send_email2:
             response = self.client.post(path, headers=headers, json={'reason': 'Please verify your details.'})
         self.assertEqual(response.status_code, 200)
         self.assertEqual(registration.status, 'rejected')
         self.assertEqual(registration.rejection_reason, 'Please verify your details.')
-        self.assertEqual(ResidentRegistrationRequest.query.count(), 1)
         self.assertEqual(User.query.filter_by(email='jose@example.com').count(), 0)
-        send_email.assert_called_once()
+        send_email2.assert_called_once()
 
     def test_submission_rate_limit(self):
         statuses = [
@@ -946,6 +958,107 @@ class ResidentRegistrationApiTests(unittest.TestCase):
             self.assertEqual(len(queries), 3)
         finally:
             event.remove(db.engine, 'before_cursor_execute', before_cursor_execute)
+
+    def test_send_resident_reset_password_email_single_use_and_logged(self):
+        resident = self._create_roster_resident()
+        self._submit(email='gesulga63@gmail.com')
+        registration = ResidentRegistrationRequest.query.one()
+
+        # Pending request cannot send reset email
+        pending_res = self.client.post(
+            f'/api/resident-registrations/{registration.id}/reset-password',
+            headers=self._staff_headers(),
+        )
+        self.assertEqual(pending_res.status_code, 409)
+
+        # Resident role cannot access endpoint
+        res_forbidden = self.client.post(
+            f'/api/resident-registrations/{registration.id}/reset-password',
+            headers=self._resident_headers(),
+        )
+        self.assertEqual(res_forbidden.status_code, 403)
+
+        # Approve registration
+        with patch('routes.resident_registrations.send_resident_registration_email'):
+            approve_res = self.client.post(
+                f'/api/resident-registrations/{registration.id}/approve',
+                headers=self._staff_headers(),
+                json={'matched_resident_id': resident.id},
+            )
+        self.assertEqual(approve_res.status_code, 200)
+        self.assertTrue(approve_res.get_json()['request']['has_account'])
+
+        # List returns has_account=True for approved request with active account
+        list_res = self.client.get(
+            '/api/resident-registrations?status=approved',
+            headers=self._staff_headers(),
+        )
+        self.assertEqual(list_res.status_code, 200)
+        self.assertTrue(list_res.get_json()['requests'][0]['has_account'])
+        self.assertEqual(list_res.get_json()['requests'][0]['account_email'], 'gesulga63@gmail.com')
+
+        # SMTP failure keeps logs clean and returns 503
+        with patch(
+            'routes.resident_registrations.send_password_setup_email',
+            side_effect=RuntimeError('SMTP down'),
+        ):
+            fail_res = self.client.post(
+                f'/api/resident-registrations/{registration.id}/reset-password',
+                headers=self._staff_headers(),
+            )
+        self.assertEqual(fail_res.status_code, 503)
+        self.assertEqual(
+            SystemLog.query.filter(SystemLog.action.ilike('%reset email%')).count(),
+            0,
+        )
+
+        # Successful send logs in Activity Logs, reveals no password/token, and token is single-use
+        captured_tokens = []
+        with patch('routes.resident_registrations.send_password_setup_email') as mock_send:
+            def capture(acct, tok, purpose='reset'):
+                captured_tokens.append((acct.email, tok, purpose))
+            mock_send.side_effect = capture
+
+            ok_res = self.client.post(
+                f'/api/resident-registrations/{registration.id}/reset-password',
+                headers=self._staff_headers(),
+            )
+        self.assertEqual(ok_res.status_code, 200, ok_res.get_json())
+        body = ok_res.get_json()
+        self.assertEqual(body['message'], 'Reset link sent to gesulga63@gmail.com')
+        self.assertNotIn('password', body)
+        self.assertNotIn('password_hash', body)
+        self.assertNotIn('token', body)
+        self.assertEqual(len(captured_tokens), 1)
+        self.assertEqual(captured_tokens[0][0], 'gesulga63@gmail.com')
+        self.assertEqual(captured_tokens[0][2], 'reset')
+
+        log_entry = SystemLog.query.filter(SystemLog.action.ilike('%password reset email%')).one()
+        self.assertEqual(log_entry.user_id, self.staff['user'].id)
+        self.assertIn('gesulga63@gmail.com', log_entry.action)
+        self.assertIsNotNone(log_entry.timestamp)
+
+        reset_token = captured_tokens[0][1]
+        # First use succeeds
+        setup_res = self.client.post('/api/auth/password/setup', json={
+            'token': reset_token,
+            'password': 'NewPassword123!',
+        })
+        self.assertEqual(setup_res.status_code, 200, setup_res.get_json())
+
+        # Second use fails because link is single-use
+        reuse_res = self.client.post('/api/auth/password/setup', json={
+            'token': reset_token,
+            'password': 'AnotherPassword123!',
+        })
+        self.assertEqual(reuse_res.status_code, 400, reuse_res.get_json())
+
+        # New password works for login
+        login_res = self.client.post('/api/auth/login', json={
+            'email': 'gesulga63@gmail.com',
+            'password': 'NewPassword123!',
+        })
+        self.assertEqual(login_res.status_code, 200)
 
 if __name__ == '__main__':
     unittest.main()

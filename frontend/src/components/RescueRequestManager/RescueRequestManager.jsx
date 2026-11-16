@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
@@ -9,10 +9,10 @@ import {
   faXmark,
   faPhone,
   faClock,
-  faUsers,
   faUser,
   faCompass,
   faImages,
+  faImage,
   faCheck,
   faExpand,
   faRotateRight,
@@ -20,6 +20,7 @@ import {
   faBell,
   faTruckFast,
   faInbox,
+  faChevronLeft,
   faChevronRight,
 } from "@fortawesome/free-solid-svg-icons";
 import { api, BASE_URL } from "../../services/api";
@@ -153,10 +154,22 @@ export default function RescueRequestManager({ initialRequestId, onOpenMap }) {
   const [updatingId, setUpdatingId] = useState(null);
   const [selectedId, setSelectedId] = useState(initialRequestId || null);
   const [lightboxImage, setLightboxImage] = useState(null);
+  const [activeProofIdx, setActiveProofIdx] = useState(0);
+  const [failedProofImages, setFailedProofImages] = useState({});
   const [mapImgFailed, setMapImgFailed] = useState(false);
   const [filterStatus, setFilterStatus] = useState("all");
   const [searchQuery, setSearchQuery] = useState("");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
   const [now, setNow] = useState(Date.now());
+  const listScrollRef = useRef(null);
+  const proofTouchStartXRef = useRef(null);
+
+  useEffect(() => {
+    if (listScrollRef.current) {
+      listScrollRef.current.scrollTop = 0;
+    }
+  }, [page, pageSize]);
 
   // Periodically refresh waiting timer calculations
   useEffect(() => {
@@ -274,13 +287,6 @@ export default function RescueRequestManager({ initialRequestId, onOpenMap }) {
     },
   ];
 
-  const statusTabs = [
-    { id: "all", label: "All", count: totalCount },
-    { id: "open", label: "Open", count: openCount },
-    { id: "in_progress", label: "In progress", count: inProgressCount },
-    { id: "resolved", label: "Resolved", count: resolvedCount },
-  ];
-
   // Filter requests based on search query and selected filter
   const filteredRequests = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -351,12 +357,56 @@ export default function RescueRequestManager({ initialRequestId, onOpenMap }) {
     });
   }, [filteredRequests]);
 
+  const totalFiltered = sortedRequests.length;
+  const totalPages = Math.max(1, Math.ceil(totalFiltered / pageSize));
+  const safePage = Math.min(page, totalPages);
+
+  const paginatedRequests = useMemo(() => {
+    const start = (safePage - 1) * pageSize;
+    return sortedRequests.slice(start, start + pageSize);
+  }, [sortedRequests, safePage, pageSize]);
+
+  const paginationItems = useMemo(() => {
+    if (totalPages <= 1) return [];
+    const pages = [];
+    for (let i = 1; i <= totalPages; i += 1) {
+      if (i === 1 || i === totalPages || Math.abs(i - safePage) <= 1) {
+        pages.push(i);
+      }
+    }
+    const items = [];
+    for (let i = 0; i < pages.length; i += 1) {
+      const p = pages[i];
+      const prev = pages[i - 1];
+      if (i > 0) {
+        if (p - prev === 2) {
+          items.push(prev + 1);
+        } else if (p - prev > 2) {
+          items.push(`ellipsis-${prev}`);
+        }
+      }
+      items.push(p);
+    }
+    return items;
+  }, [totalPages, safePage]);
+
   const selected = requests.find((item) => item.id === selectedId);
   const visibleError = error || requestsQuery.error?.message || "";
+
+  function handleSearchChange(nextQuery) {
+    setSearchQuery(nextQuery);
+    setPage(1);
+  }
+
+  function handleFilterStatusChange(nextStatus) {
+    setFilterStatus(nextStatus);
+    setPage(1);
+  }
 
   function clearFilters() {
     setSearchQuery("");
     setFilterStatus("all");
+    setPage(1);
   }
 
   function handleViewOnMap() {
@@ -419,6 +469,75 @@ export default function RescueRequestManager({ initialRequestId, onOpenMap }) {
     Number.isFinite(Number(selected.latitude)) &&
     Number.isFinite(Number(selected.longitude));
 
+  const proofImages = useMemo(() => {
+    if (!selected || !Array.isArray(selected.proof_images)) return [];
+    return selected.proof_images.map(resolveProofImageUrl).filter(Boolean);
+  }, [selected]);
+
+  const safeProofIdx =
+    proofImages.length > 0 ? Math.min(activeProofIdx, proofImages.length - 1) : 0;
+
+  function openRequest(id) {
+    setSelectedId(id);
+    setActiveProofIdx(0);
+    setFailedProofImages({});
+  }
+
+  function closeRequest() {
+    setSelectedId(null);
+    setLightboxImage(null);
+  }
+
+  function handlePrevProof() {
+    if (proofImages.length <= 1) return;
+    setActiveProofIdx((prev) => (prev > 0 ? prev - 1 : proofImages.length - 1));
+  }
+
+  function handleNextProof() {
+    if (proofImages.length <= 1) return;
+    setActiveProofIdx((prev) => (prev < proofImages.length - 1 ? prev + 1 : 0));
+  }
+
+  function handleProofTouchStart(e) {
+    if (e.touches && e.touches.length === 1) {
+      proofTouchStartXRef.current = e.touches[0].clientX;
+    }
+  }
+
+  function handleProofTouchEnd(e) {
+    if (proofTouchStartXRef.current === null) return;
+    const diff = proofTouchStartXRef.current - e.changedTouches[0].clientX;
+    if (diff > 40) {
+      handleNextProof();
+    } else if (diff < -40) {
+      handlePrevProof();
+    }
+    proofTouchStartXRef.current = null;
+  }
+
+  function handleProofKeyDown(e) {
+    if (proofImages.length > 1) {
+      if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        e.stopPropagation();
+        handlePrevProof();
+        return;
+      }
+      if (e.key === "ArrowRight") {
+        e.preventDefault();
+        e.stopPropagation();
+        handleNextProof();
+        return;
+      }
+    }
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      e.stopPropagation();
+      const currentUrl = proofImages[safeProofIdx];
+      if (currentUrl) setLightboxImage(currentUrl);
+    }
+  }
+
   return (
     <main className="rescue-queue-page">
       {/* 1. HEADER */}
@@ -464,7 +583,7 @@ export default function RescueRequestManager({ initialRequestId, onOpenMap }) {
               type="button"
               key={card.id}
               className={`rescue-stat-card is-${card.variant} ${isSelected ? "is-selected" : ""}`}
-              onClick={() => setFilterStatus(card.id)}
+              onClick={() => handleFilterStatusChange(card.id)}
               aria-pressed={isSelected}
             >
               <div className="rescue-stat-card-top">
@@ -482,7 +601,7 @@ export default function RescueRequestManager({ initialRequestId, onOpenMap }) {
         })}
       </section>
 
-      {/* 3. LIST CONTROLS & STATUS TAB ROW */}
+      {/* 3. TABLE CARD: TOOLBAR + SCROLLABLE ROWS + PAGINATION */}
       <section className="rescue-list-section" aria-label="Rescue requests list">
         <div className="rescue-filter-toolbar">
           <div className="rescue-search-wrapper">
@@ -492,47 +611,24 @@ export default function RescueRequestManager({ initialRequestId, onOpenMap }) {
               className="rescue-search-input"
               placeholder="Search by requester name, contact, ID, or location…"
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              onChange={(e) => handleSearchChange(e.target.value)}
               aria-label="Search rescue requests"
             />
             {searchQuery && (
               <button
                 type="button"
                 className="rescue-search-clear"
-                onClick={() => setSearchQuery("")}
+                onClick={() => handleSearchChange("")}
                 aria-label="Clear search"
               >
                 <FontAwesomeIcon icon={faXmark} />
               </button>
             )}
           </div>
-
-          <div
-            className="rescue-status-tabs"
-            role="tablist"
-            aria-label="Filter by status"
-          >
-            {statusTabs.map((tab) => {
-              const isSelected = filterStatus === tab.id;
-              return (
-                <button
-                  type="button"
-                  key={tab.id}
-                  role="tab"
-                  aria-selected={isSelected}
-                  className={`rescue-status-tab ${isSelected ? "is-active" : ""}`}
-                  onClick={() => setFilterStatus(tab.id)}
-                >
-                  <span className="rescue-tab-label">{tab.label}</span>
-                  <span className="rescue-tab-badge">{tab.count}</span>
-                </button>
-              );
-            })}
-          </div>
         </div>
 
-        {/* REQUESTS LIST CONTAINER */}
-        <div className="rescue-request-container">
+        {/* REQUESTS LIST SCROLL CONTAINER */}
+        <div ref={listScrollRef} className="rescue-request-container">
           {loading ? (
             <div className="rescue-loading-state" role="status">
               <FontAwesomeIcon icon={faRotateRight} spin />
@@ -563,7 +659,14 @@ export default function RescueRequestManager({ initialRequestId, onOpenMap }) {
             </div>
           ) : (
             <div className="rescue-request-list" role="list">
-              {sortedRequests.map((item) => {
+              <div className="rescue-table-header" aria-hidden="true">
+                <span className="rescue-th-cell">Requester</span>
+                <span className="rescue-th-cell">Location</span>
+                <span className="rescue-th-cell">Time</span>
+                <span className="rescue-th-cell is-status">Status</span>
+              </div>
+
+              {paginatedRequests.map((item) => {
                 const requesterName =
                   item.requester_name ||
                   item.name ||
@@ -571,81 +674,75 @@ export default function RescueRequestManager({ initialRequestId, onOpenMap }) {
                   item.full_name ||
                   `Rescue Alert #${item.id}`;
                 const requesterContact =
-                  item.requester_contact || item.contact_number || null;
+                  item.requester_contact ||
+                  item.contact_number ||
+                  item.phone_number ||
+                  item.phone ||
+                  item.contact ||
+                  null;
                 const barangayText =
                   item.barangay ||
                   item.barangay_name ||
                   item.location_description ||
                   "Sogod, Southern Leyte";
-                const peopleCount =
-                  item.number_of_people ??
-                  item.people_count ??
-                  item.num_people ??
-                  item.people ??
-                  item.family_members ??
-                  null;
                 const photoCount = Array.isArray(item.proof_images)
                   ? item.proof_images.length
                   : 0;
                 const timeStatus = getAlertTimeStatus(item, now);
+                const timeText = item.created_at
+                  ? new Date(item.created_at).toLocaleTimeString([], {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })
+                  : "";
                 const isStillOpen = isOpenStatus(item.status);
                 const isResolved = isResolvedStatus(item.status);
                 const isSelected = selectedId === item.id;
+                const statusIcon = isStillOpen
+                  ? faTriangleExclamation
+                  : isResolved
+                    ? faCircleCheck
+                    : faTruckFast;
+                const statusClass = isStillOpen
+                  ? "is-open"
+                  : isResolved
+                    ? "is-resolved"
+                    : "is-in-progress";
+                const statusLabel =
+                  STATUS_LABELS[item.status] || item.status.replace("_", " ");
 
                 return (
                   <button
                     type="button"
                     key={item.id}
-                    className={`rescue-request-card ${isStillOpen ? "is-open" : isResolved ? "is-resolved" : "is-in-progress"} ${isSelected ? "is-selected" : ""}`}
-                    onClick={() => setSelectedId(item.id)}
+                    className={`rescue-request-card ${statusClass} ${isSelected ? "is-selected" : ""}`}
+                    onClick={() => openRequest(item.id)}
                     aria-label={`View details for Rescue Alert #${item.id}, requested by ${requesterName}`}
                   >
-                    {/* Status Left Pillar / Icon */}
-                    <div
-                      className={`rescue-row-icon-box ${isStillOpen ? "is-open" : isResolved ? "is-resolved" : "is-in-progress"
-                        }`}
-                      aria-hidden="true"
-                    >
-                      <FontAwesomeIcon
-                        icon={
-                          isStillOpen
-                            ? faTriangleExclamation
-                            : isResolved
-                              ? faCircleCheck
-                              : faTruckFast
-                        }
-                      />
-                    </div>
-
-                    {/* Requester Identity */}
-                    <div className="rescue-row-ident-col">
-                      <div className="rescue-row-name-line">
-                        <strong className="rescue-row-name">{requesterName}</strong>
-                        <span className="rescue-row-id">#{item.id}</span>
+                    <div className="rescue-row-desktop-content">
+                      <div className="rescue-col-requester">
+                        <span
+                          className={`rescue-row-status-icon ${statusClass}`}
+                          aria-hidden="true"
+                        >
+                          <FontAwesomeIcon icon={statusIcon} />
+                        </span>
+                        <div className="rescue-requester-stack">
+                          <div className="rescue-requester-heading">
+                            <strong className="rescue-row-name">{requesterName}</strong>
+                            <span className="rescue-row-id">#{item.id}</span>
+                          </div>
+                          <div
+                            className={`rescue-requester-phone ${!requesterContact ? "is-missing" : ""}`}
+                          >
+                            <FontAwesomeIcon icon={faPhone} />
+                            <span>{requesterContact || "Not provided"}</span>
+                          </div>
+                        </div>
                       </div>
-                      {requesterContact && (
-                        <span className="rescue-row-contact">
-                          <FontAwesomeIcon icon={faPhone} />
-                          <span>{requesterContact}</span>
-                        </span>
-                      )}
-                    </div>
 
-                    {/* Situation & Location */}
-                    <div className="rescue-row-location-col">
-                      <div className="rescue-row-pills">
-                        <span className="rescue-row-barangay">
-                          <FontAwesomeIcon icon={faLocationDot} />
-                          <span>{barangayText}</span>
-                        </span>
-                        {peopleCount != null && peopleCount !== "" && (
-                          <span className="rescue-row-people">
-                            <FontAwesomeIcon icon={faUsers} />
-                            <span>
-                              {peopleCount} {Number(peopleCount) === 1 ? "person" : "people"}
-                            </span>
-                          </span>
-                        )}
+                      <div className="rescue-col-location">
+                        <span className="rescue-row-barangay">{barangayText}</span>
                         {photoCount > 0 && (
                           <span className="rescue-row-photos">
                             <FontAwesomeIcon icon={faImages} />
@@ -655,41 +752,40 @@ export default function RescueRequestManager({ initialRequestId, onOpenMap }) {
                           </span>
                         )}
                       </div>
-                      {item.description && (
-                        <p className="rescue-row-desc">
-                          "{item.description}"
-                        </p>
-                      )}
-                    </div>
 
-                    {/* Status Badge & Dynamic Time */}
-                    <div className="rescue-row-status-col">
-                      <span className={`rescue-status-badge status-${item.status}`}>
-                        {isStillOpen && <span className="rescue-badge-dot" />}
-                        {STATUS_LABELS[item.status] || item.status.replace("_", " ")}
-                      </span>
-                      <div className="rescue-row-time-meta">
-                        <span
-                          className={`rescue-row-timer ${timeStatus.statusClass} ${timeStatus.isUrgent ? "is-urgent" : ""
-                            }`}
-                        >
-                          <FontAwesomeIcon icon={timeStatus.icon} />
-                          <span>{timeStatus.text}</span>
+                      <div className={`rescue-col-time ${!timeText ? "is-missing" : ""}`}>
+                        <FontAwesomeIcon icon={faClock} />
+                        <span>{timeText || "—"}</span>
+                      </div>
+
+                      <div className="rescue-col-status">
+                        <span className={`rescue-status-badge status-${item.status}`}>
+                          {isStillOpen && <span className="rescue-badge-dot" />}
+                          {statusLabel}
                         </span>
-                        <small className="rescue-row-date">
-                          {item.created_at
-                            ? new Date(item.created_at).toLocaleTimeString([], {
-                              hour: "2-digit",
-                              minute: "2-digit",
-                            })
-                            : ""}
-                        </small>
+                        {timeStatus.text && (
+                          <span className="rescue-row-duration">{timeStatus.text}</span>
+                        )}
                       </div>
                     </div>
 
-                    {/* Action Chevron */}
-                    <div className="rescue-row-chevron" aria-hidden="true">
-                      <FontAwesomeIcon icon={faChevronRight} />
+                    <div className="rescue-row-mobile-content">
+                      <div className="rescue-mr-line1">
+                        <span
+                          className={`rescue-row-status-icon ${statusClass}`}
+                          aria-hidden="true"
+                        >
+                          <FontAwesomeIcon icon={statusIcon} />
+                        </span>
+                        <strong className="rescue-mr-name">{requesterName}</strong>
+                        <span className={`rescue-status-badge rescue-mr-pill status-${item.status}`}>
+                          {isStillOpen && <span className="rescue-badge-dot" />}
+                          {statusLabel}
+                        </span>
+                      </div>
+                      <div className="rescue-mr-line2">
+                        {[`#${item.id}`, barangayText, timeText].filter(Boolean).join(" · ")}
+                      </div>
                     </div>
                   </button>
                 );
@@ -697,6 +793,85 @@ export default function RescueRequestManager({ initialRequestId, onOpenMap }) {
             </div>
           )}
         </div>
+
+        {!loading && totalFiltered > 0 && (
+          <nav className="rescue-pagination" aria-label="Pagination">
+            <span className="rescue-pagination-info">
+              Showing {(safePage - 1) * pageSize + 1} to{" "}
+              {Math.min(safePage * pageSize, totalFiltered)} of {totalFiltered}
+            </span>
+
+            <div className="rescue-pagination-controls">
+              <label className="rescue-pagination-size">
+                <span className="rescue-pagination-size-label">Rows per page</span>
+                <select
+                  value={pageSize}
+                  onChange={(e) => {
+                    setPageSize(Number(e.target.value));
+                    setPage(1);
+                  }}
+                  aria-label="Rows per page"
+                >
+                  <option value={10}>10</option>
+                  <option value={25}>25</option>
+                  <option value={50}>50</option>
+                </select>
+              </label>
+
+              <button
+                type="button"
+                className="rescue-page-nav-btn"
+                disabled={safePage <= 1}
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                aria-label="Previous page"
+              >
+                Previous
+              </button>
+
+              {totalPages > 1 && (
+                <div className="rescue-pagination-pages">
+                  {paginationItems.map((item) =>
+                    typeof item === "string" ? (
+                      <span
+                        key={item}
+                        className="rescue-pagination-ellipsis"
+                        aria-hidden="true"
+                      >
+                        …
+                      </span>
+                    ) : (
+                      <button
+                        key={item}
+                        type="button"
+                        className={`rescue-page-num-btn ${item === safePage ? "is-active" : ""
+                          }`}
+                        aria-label={`Page ${item}`}
+                        aria-current={item === safePage ? "page" : undefined}
+                        onClick={() => setPage(item)}
+                      >
+                        {item}
+                      </button>
+                    )
+                  )}
+                </div>
+              )}
+
+              <span className="rescue-pagination-page">
+                Page {safePage} of {totalPages}
+              </span>
+
+              <button
+                type="button"
+                className="rescue-page-nav-btn"
+                disabled={safePage >= totalPages}
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                aria-label="Next page"
+              >
+                Next
+              </button>
+            </div>
+          </nav>
+        )}
       </section>
 
       {/* 4. DETAIL MODAL & BACKDROP */}
@@ -704,7 +879,7 @@ export default function RescueRequestManager({ initialRequestId, onOpenMap }) {
         <div
           className="rescue-drawer-overlay"
           onClick={(e) => {
-            if (e.target === e.currentTarget) setSelectedId(null);
+            if (e.target === e.currentTarget) closeRequest();
           }}
         >
           <aside
@@ -713,40 +888,30 @@ export default function RescueRequestManager({ initialRequestId, onOpenMap }) {
             aria-modal="true"
             aria-labelledby="rescue-drawer-title"
           >
-            {/* STICKY HEADER */}
+            {/* FIXED HEADER */}
             <div className="rescue-drawer-header">
-              <div className="rescue-drawer-header-row">
-                <div className="rescue-drawer-title-stack">
-                  <div className="rescue-drawer-eyebrow-row">
-                    <span className="rescue-drawer-alert-id">
-                      Rescue Alert #{selected.id}
+              <div className="rescue-drawer-title-stack">
+                <div className="rescue-drawer-eyebrow-row">
+                  <span className="rescue-drawer-alert-id">
+                    Rescue Alert #{selected.id}
+                  </span>
+                  <span className={`rescue-status-badge status-${selected.status}`}>
+                    {STATUS_LABELS[selected.status] || selected.status.replace("_", " ")}
+                  </span>
+                  {selectedTimeStatus && (
+                    <span
+                      className={`rescue-drawer-wait-pill ${isOpenStatus(selected.status) && selectedTimeStatus.isUrgent
+                        ? "is-urgent"
+                        : ""
+                        }`}
+                    >
+                      <FontAwesomeIcon icon={selectedTimeStatus.icon} /> {selectedTimeStatus.text}
                     </span>
-                    <span className={`rescue-status-badge status-${selected.status}`}>
-                      {STATUS_LABELS[selected.status] || selected.status.replace("_", " ")}
-                    </span>
-                    {selectedTimeStatus && (
-                      <span
-                        className={`rescue-drawer-wait-pill ${isOpenStatus(selected.status) && selectedTimeStatus.isUrgent
-                            ? "is-urgent"
-                            : ""
-                          }`}
-                      >
-                        <FontAwesomeIcon icon={selectedTimeStatus.icon} /> {selectedTimeStatus.text}
-                      </span>
-                    )}
-                  </div>
-                  <h2 id="rescue-drawer-title">
-                    {selectedRequesterName || `Emergency Request #${selected.id}`}
-                  </h2>
+                  )}
                 </div>
-                <button
-                  type="button"
-                  className="rescue-drawer-close-btn"
-                  onClick={() => setSelectedId(null)}
-                  aria-label="Close rescue alert details"
-                >
-                  <FontAwesomeIcon icon={faXmark} />
-                </button>
+                <h2 id="rescue-drawer-title">
+                  {selectedRequesterName || `Emergency Request #${selected.id}`}
+                </h2>
               </div>
 
               {/* ONE-WAY STATUS PROGRESSION BAR */}
@@ -793,77 +958,162 @@ export default function RescueRequestManager({ initialRequestId, onOpenMap }) {
                   );
                 })}
               </div>
+
+              <button
+                type="button"
+                className="rescue-drawer-close-btn"
+                onClick={closeRequest}
+                aria-label="Close rescue alert details"
+              >
+                <FontAwesomeIcon icon={faXmark} />
+              </button>
             </div>
 
-            {/* DRAWER BODY (2-COLUMN GRID ON DESKTOP) */}
+            {/* DRAWER BODY (2x2 GRID ON DESKTOP) */}
             <div className="rescue-drawer-body">
               <div className="rescue-drawer-grid">
-                {/* LEFT COLUMN: DESCRIPTION & PHOTO PROOF */}
-                <div className="rescue-drawer-col">
-                  <div className="rescue-drawer-card">
-                    <h3 className="rescue-drawer-section-title">
-                      Emergency Situation
-                    </h3>
-                    <p className="rescue-detail-description">
-                      {selected.description || "No description provided."}
-                    </p>
-                  </div>
-
-                  <div className="rescue-drawer-card">
-                    <div className="rescue-drawer-card-head">
-                      <h3 className="rescue-drawer-section-title">
-                        Photo Proof
-                      </h3>
-                      {Array.isArray(selected.proof_images) &&
-                        selected.proof_images.length > 0 && (
-                          <span className="rescue-drawer-photo-count">
-                            {selected.proof_images.length}{" "}
-                            {selected.proof_images.length === 1 ? "photo" : "photos"}
-                          </span>
-                        )}
-                    </div>
-
-                    {Array.isArray(selected.proof_images) &&
-                      selected.proof_images.length > 0 ? (
-                      <div className="rescue-proof-gallery">
-                        {selected.proof_images.map((img, idx) => {
-                          const fullUrl = resolveProofImageUrl(img);
-                          return (
-                            <button
-                              type="button"
-                              key={idx}
-                              className="rescue-proof-thumb-btn"
-                              onClick={() => setLightboxImage(fullUrl)}
-                              aria-label={`View photo proof ${idx + 1} full size`}
-                            >
-                              <img
-                                src={fullUrl}
-                                alt={`Proof ${idx + 1}`}
-                                className="rescue-proof-img"
-                              />
-                              <span className="rescue-proof-zoom-badge">
-                                <FontAwesomeIcon icon={faExpand} />
-                              </span>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    ) : (
-                      <div className="rescue-proof-empty">
-                        <FontAwesomeIcon icon={faImages} />
-                        <span>No situation photos were attached to this alert.</span>
-                      </div>
-                    )}
-                  </div>
+                {/* TOP LEFT: EMERGENCY SITUATION */}
+                <div className="rescue-drawer-card rescue-situation-card">
+                  <h3 className="rescue-drawer-section-title">
+                    Emergency Situation
+                  </h3>
+                  <p className="rescue-detail-description">
+                    {selected.description || "No description provided."}
+                  </p>
                 </div>
 
-                {/* RIGHT COLUMN: REQUESTER INFO & LOCATION DETAILS */}
-                <div className="rescue-drawer-col">
-                  <div className="rescue-drawer-card">
+                {/* BOTTOM LEFT: PHOTO PROOF */}
+                <div className="rescue-drawer-card rescue-proof-card">
+                  <div className="rescue-drawer-card-head">
+                    <h3 className="rescue-drawer-section-title">
+                      Photo Proof
+                    </h3>
+                    {proofImages.length > 0 && (
+                      <span className="rescue-drawer-photo-count">
+                        {proofImages.length}{" "}
+                        {proofImages.length === 1 ? "photo" : "photos"}
+                      </span>
+                    )}
+                  </div>
+
+                  {proofImages.length > 0 ? (
+                    <div
+                      className="rescue-proof-carousel"
+                      role="group"
+                      aria-roledescription="carousel"
+                      aria-label="Photo proof carousel"
+                    >
+                      <div
+                        className="rescue-proof-stage"
+                        onClick={() => {
+                          const currentUrl = proofImages[safeProofIdx];
+                          if (currentUrl) setLightboxImage(currentUrl);
+                        }}
+                        onTouchStart={handleProofTouchStart}
+                        onTouchEnd={handleProofTouchEnd}
+                        onKeyDown={handleProofKeyDown}
+                        role="button"
+                        tabIndex={0}
+                        aria-label={
+                          proofImages.length > 1
+                            ? `Photo ${safeProofIdx + 1} of ${proofImages.length}. Tap to view full size.`
+                            : "View photo proof full size"
+                        }
+                      >
+                        <div className="rescue-proof-counter" aria-live="polite">
+                          {safeProofIdx + 1} / {proofImages.length}
+                        </div>
+
+                        {proofImages.length > 1 && (
+                          <button
+                            type="button"
+                            className="rescue-proof-arrow is-prev"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handlePrevProof();
+                            }}
+                            aria-label="Previous photo"
+                          >
+                            <FontAwesomeIcon icon={faChevronLeft} />
+                          </button>
+                        )}
+
+                        {failedProofImages[proofImages[safeProofIdx]] ? (
+                          <div className="rescue-proof-broken" aria-label="Photo unavailable">
+                            <FontAwesomeIcon icon={faImage} />
+                            <span>Image unavailable</span>
+                          </div>
+                        ) : (
+                          <img
+                            src={proofImages[safeProofIdx]}
+                            alt={`Proof ${safeProofIdx + 1}`}
+                            className="rescue-proof-stage-img"
+                            onError={() => {
+                              const brokenUrl = proofImages[safeProofIdx];
+                              setFailedProofImages((prev) => ({
+                                ...prev,
+                                [brokenUrl]: true,
+                              }));
+                            }}
+                          />
+                        )}
+
+                        {proofImages.length > 1 && (
+                          <button
+                            type="button"
+                            className="rescue-proof-arrow is-next"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleNextProof();
+                            }}
+                            aria-label="Next photo"
+                          >
+                            <FontAwesomeIcon icon={faChevronRight} />
+                          </button>
+                        )}
+
+                        <span className="rescue-proof-zoom-badge" aria-hidden="true">
+                          <FontAwesomeIcon icon={faExpand} />
+                        </span>
+                      </div>
+
+                      {proofImages.length > 1 && (
+                        <div
+                          className="rescue-proof-dots"
+                          role="tablist"
+                          aria-label="Photo proof slides"
+                        >
+                          {proofImages.map((_, idx) => (
+                            <button
+                              key={idx}
+                              type="button"
+                              className={`rescue-proof-dot ${safeProofIdx === idx ? "is-active" : ""}`}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setActiveProofIdx(idx);
+                              }}
+                              role="tab"
+                              aria-selected={safeProofIdx === idx}
+                              aria-label={`Go to photo ${idx + 1}`}
+                            />
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="rescue-proof-empty">
+                      <FontAwesomeIcon icon={faImages} />
+                      <span>No photos attached</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* TOP RIGHT: REQUESTER & CONTACT */}
+                <div className="rescue-drawer-card rescue-contact-card">
+                  <div className="rescue-drawer-card-head">
                     <h3 className="rescue-drawer-section-title">
                       Requester & Contact
                     </h3>
-
                     {selectedContactNumber && (
                       <a
                         href={`tel:${selectedContactNumber}`}
@@ -871,84 +1121,65 @@ export default function RescueRequestManager({ initialRequestId, onOpenMap }) {
                         aria-label={`Call contact number ${selectedContactNumber}`}
                       >
                         <FontAwesomeIcon icon={faPhone} />
-                        <span>Call {selectedContactNumber}</span>
+                        <span>Call</span>
                       </a>
                     )}
-
-                    <div className="rescue-drawer-meta-list">
-                      <div className="rescue-drawer-meta-item">
-                        <span className="rescue-meta-icon">
-                          <FontAwesomeIcon icon={faUser} />
-                        </span>
-                        <div>
-                          <strong>Requester Name</strong>
-                          <span>{selectedRequesterName || "Not provided"}</span>
-                        </div>
-                      </div>
-
-                      <div className="rescue-drawer-meta-item">
-                        <span className="rescue-meta-icon">
-                          <FontAwesomeIcon icon={faPhone} />
-                        </span>
-                        <div>
-                          <strong>Contact Number</strong>
-                          <span>{selectedContactNumber || "Not provided"}</span>
-                        </div>
-                      </div>
-
-                      {selectedPeopleCount != null && selectedPeopleCount !== "" && (
-                        <div className="rescue-drawer-meta-item">
-                          <span className="rescue-meta-icon">
-                            <FontAwesomeIcon icon={faUsers} />
-                          </span>
-                          <div>
-                            <strong>People Needing Rescue</strong>
-                            <span>
-                              {selectedPeopleCount}{" "}
-                              {Number(selectedPeopleCount) === 1 ? "person" : "people"}
-                            </span>
-                          </div>
-                        </div>
-                      )}
-
-                      <div className="rescue-drawer-meta-item">
-                        <span className="rescue-meta-icon">
-                          <FontAwesomeIcon icon={faClock} />
-                        </span>
-                        <div>
-                          <strong>Reported Time</strong>
-                          <span>
-                            {selected.created_at
-                              ? new Date(selected.created_at).toLocaleString()
-                              : "Unknown"}
-                          </span>
-                        </div>
-                      </div>
-
-                      {selected.updated_at &&
-                        selected.updated_at !== selected.created_at && (
-                          <div className="rescue-drawer-meta-item">
-                            <span className="rescue-meta-icon">
-                              <FontAwesomeIcon icon={faClock} />
-                            </span>
-                            <div>
-                              <strong>Last Updated</strong>
-                              <span>
-                                {new Date(selected.updated_at).toLocaleString()}
-                              </span>
-                            </div>
-                          </div>
-                        )}
-                    </div>
                   </div>
 
-                  {/* LOCATION DETAILS & VIEW ON MAP */}
-                  <div className="rescue-drawer-card">
-                    <div className="rescue-drawer-loc-head">
+                  <div className="rescue-drawer-meta-list">
+                    <div className="rescue-drawer-meta-item">
+                      <span className="rescue-meta-icon">
+                        <FontAwesomeIcon icon={faUser} />
+                      </span>
+                      <div>
+                        <strong>Requester Name</strong>
+                        <span>
+                          {selectedRequesterName || "Not provided"}
+                          {selectedPeopleCount != null && selectedPeopleCount !== "" && (
+                            <em className="rescue-meta-people-inline">
+                              {" "}
+                              · {selectedPeopleCount}{" "}
+                              {Number(selectedPeopleCount) === 1 ? "person" : "people"}
+                            </em>
+                          )}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="rescue-drawer-meta-item">
+                      <span className="rescue-meta-icon">
+                        <FontAwesomeIcon icon={faPhone} />
+                      </span>
+                      <div>
+                        <strong>Contact Number</strong>
+                        <span>{selectedContactNumber || "Not provided"}</span>
+                      </div>
+                    </div>
+
+                    <div className="rescue-drawer-meta-item">
+                      <span className="rescue-meta-icon">
+                        <FontAwesomeIcon icon={faClock} />
+                      </span>
+                      <div>
+                        <strong>Reported Time</strong>
+                        <span>
+                          {selected.created_at
+                            ? new Date(selected.created_at).toLocaleString()
+                            : "Unknown"}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* BOTTOM RIGHT: LOCATION DETAILS */}
+                <div className="rescue-drawer-card rescue-location-card">
+                  <div className="rescue-drawer-loc-head">
+                    <div className="rescue-drawer-loc-title-group">
                       <span className="rescue-meta-icon is-blue">
                         <FontAwesomeIcon icon={faLocationDot} />
                       </span>
-                      <div>
+                      <div className="rescue-drawer-loc-title-text">
                         <h3 className="rescue-drawer-section-title">Location Details</h3>
                         {hasSelectedCoords ? (
                           <p className="rescue-drawer-coords">
@@ -963,31 +1194,6 @@ export default function RescueRequestManager({ initialRequestId, onOpenMap }) {
                       </div>
                     </div>
 
-                    {hasSelectedCoords && MAPBOX_TOKEN && !mapImgFailed && (
-                      <div className="rescue-minimap">
-                        <img
-                          src={`https://api.mapbox.com/styles/v1/mapbox/streets-v12/static/pin-s+dc2626(${Number(selected.longitude)},${Number(selected.latitude)})/${Number(selected.longitude)},${Number(selected.latitude)},15,0/420x180@2x?access_token=${encodeURIComponent(MAPBOX_TOKEN)}`}
-                          alt="Rescue location preview map"
-                          className="rescue-minimap-img"
-                          onError={() => setMapImgFailed(true)}
-                        />
-                      </div>
-                    )}
-
-                    {selected.location_description && (
-                      <div className="rescue-drawer-loc-text">
-                        <strong>Landmark / Directions</strong>
-                        <p>{selected.location_description}</p>
-                      </div>
-                    )}
-
-                    {selected.barangay && (
-                      <div className="rescue-drawer-loc-text">
-                        <strong>Barangay</strong>
-                        <p>{selected.barangay}</p>
-                      </div>
-                    )}
-
                     {hasSelectedCoords && (
                       <button
                         type="button"
@@ -995,10 +1201,38 @@ export default function RescueRequestManager({ initialRequestId, onOpenMap }) {
                         onClick={handleViewOnMap}
                       >
                         <FontAwesomeIcon icon={faCompass} />
-                        <span>Locate on Dispatch Map</span>
+                        <span>Locate on Map</span>
                       </button>
                     )}
                   </div>
+
+                  {(selected.barangay || selected.location_description) && (
+                    <div className="rescue-drawer-loc-meta">
+                      {selected.barangay && (
+                        <div className="rescue-drawer-loc-text">
+                          <strong>Barangay</strong>
+                          <p>{selected.barangay}</p>
+                        </div>
+                      )}
+                      {selected.location_description && (
+                        <div className="rescue-drawer-loc-text">
+                          <strong>Landmark / Directions</strong>
+                          <p>{selected.location_description}</p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {hasSelectedCoords && MAPBOX_TOKEN && !mapImgFailed && (
+                    <div className="rescue-minimap">
+                      <img
+                        src={`https://api.mapbox.com/styles/v1/mapbox/streets-v12/static/pin-s+dc2626(${Number(selected.longitude)},${Number(selected.latitude)})/${Number(selected.longitude)},${Number(selected.latitude)},15,0/480x280@2x?access_token=${encodeURIComponent(MAPBOX_TOKEN)}`}
+                        alt="Rescue location preview map"
+                        className="rescue-minimap-img"
+                        onError={() => setMapImgFailed(true)}
+                      />
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

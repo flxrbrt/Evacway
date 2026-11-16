@@ -154,10 +154,6 @@ function Sidebar({
     items: section.items.filter((item) => item.roles.includes(role)),
   })).filter((section) => section.items.length > 0);
 
-  const availableTabs = visibleSections.flatMap((section) => section.items);
-
-  const activeTabObj = availableTabs.find((t) => t.key === tab) || availableTabs[0];
-
   useEffect(() => () => window.clearTimeout(logoutTimer.current), []);
 
   useEffect(() => {
@@ -546,9 +542,6 @@ function Sidebar({
             <FontAwesomeIcon icon={faShieldHalved} />
           </span>
           <span className="sidebar-mobile-brand-title">EvacWay</span>
-          {activeTabObj && (
-            <span className="sidebar-mobile-tab-tag">{activeTabObj.label}</span>
-          )}
         </div>
 
         <div className="sidebar-mobile-right">

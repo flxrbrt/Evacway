@@ -194,10 +194,27 @@ class CenterType(BaseModel):
     code = db.Column(db.String(50), nullable=False, unique=True, index=True)
     name = db.Column(db.String(100), nullable=False)
     description = db.Column(db.Text, nullable=True)
+    structure_mode = db.Column(
+        db.String(30),
+        nullable=False,
+        default='buildings_and_rooms',
+        server_default='buildings_and_rooms'
+    )
     is_active = db.Column(db.Boolean, default=True, nullable=False)
     display_order = db.Column(db.Integer, default=0, nullable=False)
     created_at = db.Column(db.DateTime, default=philippines_now)
     updated_at = db.Column(db.DateTime, default=philippines_now, onupdate=philippines_now)
+
+    def resolve_structure_mode(self):
+        val = (self.structure_mode or '').strip().lower()
+        if val in ('open_area', 'rooms_only', 'buildings_and_rooms'):
+            return val
+        code = (self.code or '').strip().lower()
+        if code == 'single_venue':
+            return 'open_area'
+        if code == 'private_property':
+            return 'rooms_only'
+        return 'buildings_and_rooms'
 
     def to_dict(self):
         return {
@@ -205,6 +222,7 @@ class CenterType(BaseModel):
             'code': self.code,
             'name': self.name,
             'description': self.description,
+            'structure_mode': self.resolve_structure_mode(),
             'is_active': self.is_active,
             'display_order': self.display_order,
             'created_at': self.created_at.isoformat() if self.created_at else None,
@@ -481,6 +499,17 @@ class EvacuationCenter(BaseModel):
         return self.center_type_ref.name if self.center_type_ref else "Campus"
 
     @property
+    def structure_mode(self):
+        if self.center_type_ref is not None:
+            return self.center_type_ref.resolve_structure_mode()
+        code = (self.center_type or '').strip().lower()
+        if code == 'single_venue':
+            return 'open_area'
+        if code == 'private_property':
+            return 'rooms_only'
+        return 'buildings_and_rooms'
+
+    @property
     def building_material(self):
         return self.building_material_ref.name if self.building_material_ref else None
 
@@ -535,6 +564,7 @@ class EvacuationCenter(BaseModel):
             "center_type_id": self.center_type_id,
             "center_type": self.center_type_ref.code if self.center_type_ref else "campus",
             "center_type_name": self.center_type_ref.name if self.center_type_ref else "Campus",
+            "structure_mode": self.structure_mode,
             "owner_name": self.owner_name,
             "owner_operator": self.owner_name,
             "max_rooms": self.max_rooms,
@@ -638,6 +668,13 @@ class RoadSegment(BaseModel):
         default=False
     )
 
+    closed_by_report_id = db.Column(
+        db.Integer,
+        db.ForeignKey('hazard_reports.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True
+    )
+
     hazard_zone_id = db.Column(
         db.Integer,
         db.ForeignKey('hazard_zones.id'),
@@ -693,6 +730,38 @@ class HazardReport(BaseModel):
         nullable=True
     )
 
+    reported_by_user_id = db.Column(
+        db.Integer,
+        db.ForeignKey('users.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True
+    )
+
+    reported_by_resident_account_id = db.Column(
+        db.Integer,
+        db.ForeignKey('resident_accounts.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True
+    )
+
+    reporter_user = db.relationship(
+        'User',
+        foreign_keys=[reported_by_user_id],
+        lazy='select'
+    )
+
+    reporter_resident_account = db.relationship(
+        'ResidentAccount',
+        foreign_keys=[reported_by_resident_account_id],
+        lazy='select'
+    )
+
+    validator_user = db.relationship(
+        'User',
+        foreign_keys=[validated_by],
+        lazy='select'
+    )
+
     geom = db.Column(
         Geometry('POINT', srid=4326),
         nullable=False
@@ -708,8 +777,64 @@ class HazardReport(BaseModel):
         nullable=True
     )
 
+    photos = db.relationship(
+        'HazardReportPhoto',
+        backref='hazard_report',
+        cascade='all, delete-orphan',
+        order_by='HazardReportPhoto.sort_order',
+        lazy='selectin'
+    )
+
     def __repr__(self):
         return f"<HazardReport {self.report_type} - {self.status}>"
+
+
+# ---------------------------------------------------------
+# HAZARD REPORT PHOTOS
+# ---------------------------------------------------------
+class HazardReportPhoto(BaseModel):
+    __tablename__ = 'hazard_report_photos'
+
+    id = db.Column(
+        db.Integer,
+        primary_key=True
+    )
+
+    hazard_report_id = db.Column(
+        db.Integer,
+        db.ForeignKey('hazard_reports.id', ondelete='CASCADE'),
+        nullable=False,
+        index=True
+    )
+
+    photo_path = db.Column(
+        db.String(255),
+        nullable=False
+    )
+
+    sort_order = db.Column(
+        db.Integer,
+        default=0,
+        nullable=False
+    )
+
+    created_at = db.Column(
+        db.DateTime,
+        default=philippines_now,
+        nullable=False
+    )
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'hazard_report_id': self.hazard_report_id,
+            'photo_path': self.photo_path,
+            'sort_order': self.sort_order,
+            'created_at': self.created_at.isoformat() if self.created_at else None
+        }
+
+    def __repr__(self):
+        return f"<HazardReportPhoto report_id={self.hazard_report_id} sort_order={self.sort_order} path='{self.photo_path}'>"
 
 
 # ---------------------------------------------------------
@@ -1122,6 +1247,11 @@ class Resident(BaseModel):
     @property
     def contact_number(self):
         return self.family.contact_number if self.family else None
+
+    @contact_number.setter
+    def contact_number(self, value):
+        if self.family is not None:
+            self.family.contact_number = value
 
     @property
     def family_members(self):

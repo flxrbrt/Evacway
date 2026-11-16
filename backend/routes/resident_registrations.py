@@ -24,8 +24,12 @@ from models import (
     User,
     philippines_now,
 )
-from services.mailer import send_resident_registration_email
+from services.mailer import (
+    send_password_setup_email,
+    send_resident_registration_email,
+)
 from services.notifications import create_staff_notifications, send_staff_push_notifications
+from services.password_setup import create_password_setup_token
 from utils import role_required
 
 
@@ -392,9 +396,60 @@ def list_resident_registrations():
         ResidentRegistrationRequest.created_at.desc(),
         ResidentRegistrationRequest.id.desc(),
     ).all()
+
+    matched_ids = {r.matched_resident_id for r in registrations if r.matched_resident_id}
+    emails = {r.email.strip().lower() for r in registrations if r.email}
+
+    accounts_by_resident_id = {}
+    accounts_by_email = {}
+    if matched_ids or emails:
+        acct_filters = []
+        if matched_ids:
+            acct_filters.append(ResidentAccount.resident_id.in_(matched_ids))
+        if emails:
+            acct_filters.append(func.lower(ResidentAccount.email).in_(emails))
+        for acct in ResidentAccount.query.filter(
+            ResidentAccount.is_active == True,
+            or_(*acct_filters),
+        ).all():
+            if acct.resident_id is not None:
+                accounts_by_resident_id[acct.resident_id] = acct
+            if acct.email:
+                accounts_by_email[acct.email.strip().lower()] = acct
+
+        user_filters = []
+        if matched_ids:
+            user_filters.append(User.resident_id.in_(matched_ids))
+        if emails:
+            user_filters.append(func.lower(User.email).in_(emails))
+        for usr in User.query.filter(
+            User.is_active == True,
+            or_(*user_filters),
+        ).all():
+            if usr.resident_id is not None and usr.resident_id not in accounts_by_resident_id:
+                accounts_by_resident_id[usr.resident_id] = usr
+            if usr.email and usr.email.strip().lower() not in accounts_by_email:
+                accounts_by_email[usr.email.strip().lower()] = usr
+
+    serialized = []
+    for registration in registrations:
+        payload = registration.to_dict()
+        matched_acct = (
+            accounts_by_resident_id.get(registration.matched_resident_id)
+            if registration.matched_resident_id
+            else None
+        ) or (
+            accounts_by_email.get(registration.email.strip().lower())
+            if registration.email
+            else None
+        )
+        payload['has_account'] = matched_acct is not None
+        payload['account_email'] = matched_acct.email if matched_acct else None
+        serialized.append(payload)
+
     return jsonify({
-        'requests': [registration.to_dict() for registration in registrations],
-        'count': len(registrations),
+        'requests': serialized,
+        'count': len(serialized),
     })
 
 
@@ -472,9 +527,12 @@ def approve_resident_registration(request_id):
         }), 409
 
     email_sent = _send_decision_email(registration)
+    req_payload = registration.to_dict()
+    req_payload['has_account'] = True
+    req_payload['account_email'] = account.email
     return jsonify({
         'message': 'Resident account approved.' if email_sent else 'Resident account approved, but the email was not sent.',
-        'request': registration.to_dict(),
+        'request': req_payload,
         'account': account.to_dict(),
         'email_sent': email_sent,
     }), 200
@@ -486,10 +544,8 @@ def reject_resident_registration(request_id):
     data = request.get_json(silent=True) or {}
     if not isinstance(data, dict):
         return jsonify({'error': 'A JSON object is required.'}), 400
-    reason = str(data.get('reason') or '').strip()
-    if not reason:
-        return jsonify({'error': 'A rejection reason is required.'}), 400
-    if len(reason) > 2000:
+    reason = str(data.get('reason') or '').strip() or None
+    if reason and len(reason) > 2000:
         return jsonify({'error': 'Rejection reason must be 2000 characters or fewer.'}), 400
 
     registration = db.session.get(ResidentRegistrationRequest, request_id)
@@ -534,6 +590,80 @@ def resend_resident_registration_email(request_id):
     return jsonify({
         'message': 'Decision email sent.' if email_sent else 'Email was not sent. Check SMTP configuration and retry.',
         'email_sent': email_sent,
+    }), 200
+
+
+def _resolve_registration_account(registration):
+    """Find the active ResidentAccount (or legacy resident User) for an approved registration."""
+    if registration.matched_resident_id:
+        acct = ResidentAccount.query.filter_by(
+            resident_id=registration.matched_resident_id,
+            is_active=True,
+        ).first()
+        if acct:
+            return acct
+        usr = User.query.filter_by(
+            resident_id=registration.matched_resident_id,
+            is_active=True,
+        ).first()
+        if usr:
+            return usr
+
+    email = str(registration.email or '').strip().lower()
+    if email:
+        acct = ResidentAccount.query.filter(
+            func.lower(ResidentAccount.email) == email,
+            ResidentAccount.is_active == True,
+        ).first()
+        if acct:
+            return acct
+        usr = User.query.filter(
+            func.lower(User.email) == email,
+            User.is_active == True,
+        ).first()
+        if usr:
+            return usr
+    return None
+
+
+@registrations_bp.route('/api/resident-registrations/<int:request_id>/reset-password', methods=['POST'])
+@role_required('admin', 'lgu_personnel')
+def send_resident_reset_password_email(request_id):
+    registration = db.session.get(ResidentRegistrationRequest, request_id)
+    if not registration:
+        return jsonify({'error': 'Registration request not found.'}), 404
+    if registration.status != 'approved':
+        return jsonify({'error': 'Password reset emails can only be sent for approved registrations.'}), 409
+
+    account = _resolve_registration_account(registration)
+    if not account or not account.email:
+        return jsonify({'error': 'No active resident account was found for this registration.'}), 404
+
+    target_email = account.email
+    try:
+        token = create_password_setup_token(account)
+        send_password_setup_email(account, token, purpose='reset')
+    except Exception:
+        current_app.logger.exception(
+            'Could not send password reset email for resident registration %s (%s)',
+            registration.id,
+            target_email,
+        )
+        return jsonify({
+            'error': 'Password reset email could not be sent. Check backend SMTP settings.'
+        }), 503
+
+    sender_id = int(get_jwt_identity())
+    db.session.add(SystemLog(
+        user_id=sender_id,
+        action=f'Sent password reset email to {target_email} (Request #{registration.id})',
+    ))
+    db.session.commit()
+
+    return jsonify({
+        'message': f'Reset link sent to {target_email}',
+        'email': target_email,
+        'email_sent': True,
     }), 200
 
 # =========================================================================

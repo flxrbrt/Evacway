@@ -15,7 +15,8 @@ def road_to_feature(road):
             "id": road.id,
             "road_name": road.road_name,
             "road_type": road.road_type,
-            "is_closed": road.is_closed
+            "is_closed": road.is_closed,
+            "closed_by_report_id": road.closed_by_report_id
         }
     }
 

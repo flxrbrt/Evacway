@@ -35,6 +35,7 @@ import {
   centerStatus,
   CENTER_TABS,
   isCenterMapped,
+  resolveCenterStructureMode,
 } from './utils'
 import { EmptyState } from './CenterList'
 import { FloatingMenuTrigger } from './FloatingMenu'
@@ -170,48 +171,58 @@ export default function CenterDetail({
   const checkedIn = Number(centerOccupied || 0)
   const spaceLeft = Math.max(0, capacity - assigned)
   const status = centerStatus(center, checkedIn, assigned, capacity)
+  const structureMode = resolveCenterStructureMode(center)
+  const isOpenArea = structureMode === 'open_area'
+  const visibleTabs = useMemo(
+    () => (isOpenArea ? CENTER_TABS.filter((t) => t.key !== 'structure') : CENTER_TABS),
+    [isOpenArea]
+  )
+  const visibleTabKeys = useMemo(() => visibleTabs.map((t) => t.key), [visibleTabs])
 
   // URL hash sync for active tab (defaults to 'overview')
   const [activeTab, setActiveTab] = useState(() => {
     const fromHash = getTabFromHash()
-    if (fromHash !== 'overview') return fromHash
-    if (section && VALID_TABS.includes(section)) return section
+    if (fromHash !== 'overview' && (!isOpenArea || fromHash !== 'structure')) return fromHash
+    if (section && VALID_TABS.includes(section) && (!isOpenArea || section !== 'structure')) return section
     return 'overview'
   })
+
+  const effectiveActiveTab = isOpenArea && activeTab === 'structure' ? 'overview' : activeTab
 
   // Listen for hash changes (browser back/forward or direct hash updates)
   useEffect(() => {
     function handleHashChange() {
-      const nextTab = getTabFromHash()
+      const rawTab = getTabFromHash()
+      const nextTab = isOpenArea && rawTab === 'structure' ? 'overview' : rawTab
       setActiveTab(nextTab)
       onSectionChange?.(nextTab)
     }
     window.addEventListener('hashchange', handleHashChange)
     return () => window.removeEventListener('hashchange', handleHashChange)
-  }, [onSectionChange])
+  }, [onSectionChange, isOpenArea])
 
   // Sync initial hash to parent on mount if not overview
   useEffect(() => {
     const initialTab = getTabFromHash()
-    if (initialTab && initialTab !== 'overview' && onSectionChange) {
+    if (initialTab && initialTab !== 'overview' && (!isOpenArea || initialTab !== 'structure') && onSectionChange) {
       onSectionChange(initialTab)
     }
-  }, [onSectionChange])
+  }, [onSectionChange, isOpenArea])
 
   // Sync section prop if changed by parent
   useEffect(() => {
-    if (section && VALID_TABS.includes(section) && section !== activeTab) {
+    if (section && visibleTabKeys.includes(section) && section !== activeTab) {
       setActiveTab(section)
       const currentHash = window.location.hash.replace(/^#/, '').toLowerCase().trim()
       if (currentHash !== section) {
         window.location.hash = section === 'overview' ? 'overview' : section
       }
     }
-  }, [section, activeTab])
+  }, [section, activeTab, visibleTabKeys])
 
   const handleSelectTab = useCallback(
     (tabKey) => {
-      if (!VALID_TABS.includes(tabKey)) return
+      if (!visibleTabKeys.includes(tabKey)) return
       setActiveTab(tabKey)
       onSectionChange?.(tabKey)
       const currentHash = window.location.hash.replace(/^#/, '').toLowerCase().trim()
@@ -219,7 +230,7 @@ export default function CenterDetail({
         window.location.hash = tabKey === 'overview' ? 'overview' : tabKey
       }
     },
-    [onSectionChange]
+    [onSectionChange, visibleTabKeys]
   )
 
   const handleBackWithHashClean = useCallback(() => {
@@ -256,7 +267,8 @@ export default function CenterDetail({
 
       {/* 2. Tab Bar: placed directly under header with 20px space, sticky on scroll */}
       <SectionTabs
-        activeKey={activeTab}
+        activeKey={effectiveActiveTab}
+        tabs={visibleTabs}
         counts={counts}
         onSelect={handleSelectTab}
       />
@@ -267,8 +279,8 @@ export default function CenterDetail({
           id="ec-tabpanel-overview"
           role="tabpanel"
           aria-labelledby="ec-tab-overview"
-          className={`ec-tab-panel ${activeTab === 'overview' ? 'is-active' : ''}`}
-          aria-hidden={activeTab !== 'overview'}
+          className={`ec-tab-panel ${effectiveActiveTab === 'overview' ? 'is-active' : ''}`}
+          aria-hidden={effectiveActiveTab !== 'overview'}
         >
           {/* Overview tab only: stat cards at the top in one row of 4, Center Info & Checklist side by side below */}
           <OverviewTab
@@ -287,40 +299,42 @@ export default function CenterDetail({
           />
         </section>
 
-        {/* Structure, Households, and Activity tabs do NOT show stat cards */}
-        <section
-          id="ec-tabpanel-structure"
-          role="tabpanel"
-          aria-labelledby="ec-tab-structure"
-          className={`ec-tab-panel ${activeTab === 'structure' ? 'is-active' : ''}`}
-          aria-hidden={activeTab !== 'structure'}
-        >
-          <StructureTab
-            center={center}
-            rooms={rooms}
-            buildings={buildings}
-            onAddBuilding={isAdmin ? onAddBuilding : undefined}
-            onEditBuilding={isAdmin ? onEditBuilding : undefined}
-            onDeleteBuilding={isAdmin ? onDeleteBuilding : undefined}
-            onAddRoomToBuilding={isAdmin ? onAddRoomToBuilding : undefined}
-            onAddRoom={onAddRoom}
-            onAssignHousehold={onAssignHousehold}
-            onEditCenter={onEditCenter}
-            onEditRoom={onEditRoom}
-            onViewBuildingMap={onViewBuildingMap}
-            onPlaceBuilding={onPlaceBuilding}
-            onLinkRoom={onLinkRoom}
-            onUnlinkRoom={isAdmin ? onUnlinkRoom : undefined}
-            onDeleteRoom={onDeleteRoom}
-          />
-        </section>
+        {/* Structure tab only shown when center is not an open area */}
+        {!isOpenArea && (
+          <section
+            id="ec-tabpanel-structure"
+            role="tabpanel"
+            aria-labelledby="ec-tab-structure"
+            className={`ec-tab-panel ${effectiveActiveTab === 'structure' ? 'is-active' : ''}`}
+            aria-hidden={effectiveActiveTab !== 'structure'}
+          >
+            <StructureTab
+              center={center}
+              rooms={rooms}
+              buildings={buildings}
+              onAddBuilding={isAdmin ? onAddBuilding : undefined}
+              onEditBuilding={isAdmin ? onEditBuilding : undefined}
+              onDeleteBuilding={isAdmin ? onDeleteBuilding : undefined}
+              onAddRoomToBuilding={isAdmin ? onAddRoomToBuilding : undefined}
+              onAddRoom={onAddRoom}
+              onAssignHousehold={onAssignHousehold}
+              onEditCenter={onEditCenter}
+              onEditRoom={onEditRoom}
+              onViewBuildingMap={onViewBuildingMap}
+              onPlaceBuilding={onPlaceBuilding}
+              onLinkRoom={onLinkRoom}
+              onUnlinkRoom={isAdmin ? onUnlinkRoom : undefined}
+              onDeleteRoom={onDeleteRoom}
+            />
+          </section>
+        )}
 
         <section
           id="ec-tabpanel-households"
           role="tabpanel"
           aria-labelledby="ec-tab-households"
-          className={`ec-tab-panel ${activeTab === 'households' ? 'is-active' : ''}`}
-          aria-hidden={activeTab !== 'households'}
+          className={`ec-tab-panel ${effectiveActiveTab === 'households' ? 'is-active' : ''}`}
+          aria-hidden={effectiveActiveTab !== 'households'}
         >
           <HouseholdsTab
             center={center}
@@ -337,8 +351,8 @@ export default function CenterDetail({
           id="ec-tabpanel-activity"
           role="tabpanel"
           aria-labelledby="ec-tab-activity"
-          className={`ec-tab-panel ${activeTab === 'activity' ? 'is-active' : ''}`}
-          aria-hidden={activeTab !== 'activity'}
+          className={`ec-tab-panel ${effectiveActiveTab === 'activity' ? 'is-active' : ''}`}
+          aria-hidden={effectiveActiveTab !== 'activity'}
         >
           <ActivityTab center={center} />
         </section>
@@ -396,14 +410,11 @@ export function CenterHeader({
     (center?.lat != null && center?.lng != null)
   )
 
-  const isSingleVenue = center?.center_type === 'single_venue'
-  const isPrivateProperty = center?.center_type === 'private_property'
-  const hasBuildings =
-    !isSingleVenue &&
-    (center?.center_type === 'campus' ||
-      (!center?.center_type && (buildings.length > 0 || Number(center?.building_count) > 0)) ||
-      (buildings.length > 0 && !isPrivateProperty))
-  const canAddBuilding = hasBuildings && !isSingleVenue && !isPrivateProperty
+  const structureMode = resolveCenterStructureMode(center)
+  const isSingleVenue = structureMode === 'open_area'
+  const isPrivateProperty = structureMode === 'rooms_only'
+  const hasBuildings = structureMode === 'buildings_and_rooms'
+  const canAddBuilding = hasBuildings
   const canAddRoom = !isSingleVenue
 
   const kebabItems = []
@@ -555,7 +566,14 @@ export function CenterHeader({
   )
 }
 
-export function KpiStrip({ capacity = 0, assigned = 0, checkedIn = 0, spaceLeft = 0 }) {
+export function KpiStrip({
+  capacity = 0,
+  assigned = 0,
+  checkedIn = 0,
+  spaceLeft = 0,
+  isOpenArea = false,
+  onEditCapacity,
+}) {
   const cap = Number(capacity || 0)
   const asg = Number(assigned || 0)
   const arrived = Number(checkedIn || 0)
@@ -569,10 +587,24 @@ export function KpiStrip({ capacity = 0, assigned = 0, checkedIn = 0, spaceLeft 
       <div className="ec-kpi-card">
         <div className="ec-kpi-card-header">
           <span className="ec-kpi-label">Capacity</span>
-          <FontAwesomeIcon icon={faBuildingColumns} className="ec-kpi-icon-muted" />
+          {isOpenArea && onEditCapacity ? (
+            <button
+              type="button"
+              className="ec-info-edit-btn"
+              onClick={onEditCapacity}
+              title="Edit center capacity"
+            >
+              <FontAwesomeIcon icon={faPen} size="xs" />
+              <span>Edit</span>
+            </button>
+          ) : (
+            <FontAwesomeIcon icon={faBuildingColumns} className="ec-kpi-icon-muted" />
+          )}
         </div>
         <div className="ec-kpi-val">{cap > 0 ? cap : '—'}</div>
-        <div className="ec-kpi-helper">Total people it can shelter</div>
+        <div className="ec-kpi-helper">
+          {isOpenArea ? 'Editable center capacity' : 'Total of room capacities'}
+        </div>
       </div>
 
       <div className="ec-kpi-card">
@@ -611,8 +643,8 @@ export function KpiStrip({ capacity = 0, assigned = 0, checkedIn = 0, spaceLeft 
   )
 }
 
-export function SectionTabs({ activeKey, counts = {}, onSelect, className = '' }) {
-  const keys = CENTER_TABS.map((t) => t.key)
+export function SectionTabs({ activeKey, tabs = CENTER_TABS, counts = {}, onSelect, className = '' }) {
+  const keys = tabs.map((t) => t.key)
 
   const handleKeyDown = useCallback(
     (e) => {
@@ -653,7 +685,7 @@ export function SectionTabs({ activeKey, counts = {}, onSelect, className = '' }
       className={`ec-underline-tabs ${className}`.trim()}
       onKeyDown={handleKeyDown}
     >
-      {CENTER_TABS.map((tab) => {
+      {tabs.map((tab) => {
         const isActive = activeKey === tab.key
         const count = counts[tab.key]
         const tabId = `ec-tab-${tab.key}`
@@ -712,16 +744,19 @@ export function OverviewTab({
   }
 
   const infoRows = [
-    { label: 'Type of place', value: TYPE_LABELS[center?.center_type || 'campus'] || 'Center' },
+    {
+      label: 'Type of place',
+      value: center?.center_type_name || TYPE_LABELS[center?.center_type || 'campus'] || 'Center',
+    },
     { label: 'Building material', value: center?.building_material || 'Concrete / Standard' },
     {
       label: 'Amenities',
       value:
         Array.isArray(center?.amenities) && center.amenities.length > 0
           ? center.amenities
-              .map((a) => (typeof a === 'string' ? a : a.name || a.code))
-              .filter(Boolean)
-              .join(', ')
+            .map((a) => (typeof a === 'string' ? a : a.name || a.code))
+            .filter(Boolean)
+            .join(', ')
           : 'None added',
     },
     { label: 'Contact', value: center?.contact_number || 'Not provided' },
@@ -734,6 +769,9 @@ export function OverviewTab({
     { label: 'Address', value: addressParts.length ? addressParts.join(' · ') : 'Not set' },
   ]
 
+  const structureMode = resolveCenterStructureMode(center)
+  const isOpenArea = structureMode === 'open_area'
+
   return (
     <div className="ec-overview-tab-content">
       {/* Mapping notice if center is unmapped */}
@@ -745,6 +783,8 @@ export function OverviewTab({
         assigned={assigned}
         checkedIn={checkedIn}
         spaceLeft={spaceLeft}
+        isOpenArea={isOpenArea}
+        onEditCapacity={isAdmin && onEdit && isOpenArea ? () => onEdit(1) : undefined}
       />
 
       {/* Center Information and Readiness Checklist side by side below */}
@@ -944,10 +984,10 @@ export function StructureTab({
   onAssignHousehold,
   onEditCenter,
 }) {
-  const isSingleVenue = center?.center_type === 'single_venue'
-  const isPrivateProperty = center?.center_type === 'private_property'
-  const hasBuildings = !isSingleVenue && buildings.length > 0
-  const canAddBuilding = hasBuildings && !isPrivateProperty
+  const structureMode = resolveCenterStructureMode(center)
+  const isSingleVenue = structureMode === 'open_area'
+  const isPrivateProperty = structureMode === 'rooms_only'
+  const canAddBuilding = structureMode === 'buildings_and_rooms'
   const canAddRoom = !isSingleVenue
 
   const [collapsedGroups, setCollapsedGroups] = useState({})
@@ -1515,6 +1555,9 @@ export function HouseholdsTab({
   rooms = [],
   buildings = [],
 }) {
+  const structureMode = resolveCenterStructureMode(center)
+  const isOpenArea = structureMode === 'open_area'
+  const showBuildingSub = structureMode === 'buildings_and_rooms'
   const [searchTerm, setSearchTerm] = useState('')
 
   const buildingById = useMemo(() => {
@@ -1589,86 +1632,88 @@ export function HouseholdsTab({
           <thead>
             <tr>
               <th scope="col" style={{ width: '38%' }}>HOUSEHOLD</th>
-              <th scope="col" style={{ width: '22%' }}>ROOM</th>
+              <th scope="col" style={{ width: '22%' }}>{isOpenArea ? 'CENTER' : 'ROOM'}</th>
               <th scope="col" style={{ width: '18%' }}>MEMBERS</th>
               <th scope="col" style={{ width: '22%' }}>STATUS</th>
             </tr>
           </thead>
-            <tbody>
-              {filteredFamilies.map((fam, idx) => {
-                const famKey =
-                  fam.id ?? fam.family_id ?? fam.family_code ?? fam.resident_id ?? `fam-${idx}`
-                const headName = fam.household_head_name || fam.head_name || 'Unnamed'
-                const initials =
-                  headName
-                    .split(' ')
-                    .filter(Boolean)
-                    .slice(0, 2)
-                    .map((n) => n[0].toUpperCase())
-                    .join('') || 'HH'
-                const memberCount = fam.member_count || fam.family_members || 1
-                const isCheckedIn = Boolean(fam.is_checked_in)
-                const roomRaw = fam.room_number || (fam.room_id ? `Room ${fam.room_id}` : null)
-                const hasRoom = roomRaw && roomRaw !== 'Not assigned'
+          <tbody>
+            {filteredFamilies.map((fam, idx) => {
+              const famKey =
+                fam.id ?? fam.family_id ?? fam.family_code ?? fam.resident_id ?? `fam-${idx}`
+              const headName = fam.household_head_name || fam.head_name || 'Unnamed'
+              const initials =
+                headName
+                  .split(' ')
+                  .filter(Boolean)
+                  .slice(0, 2)
+                  .map((n) => n[0].toUpperCase())
+                  .join('') || 'HH'
+              const memberCount = fam.member_count || fam.family_members || 1
+              const isCheckedIn = Boolean(fam.is_checked_in)
+              const roomRaw = !isOpenArea ? (fam.room_number || (fam.room_id ? `Room ${fam.room_id}` : null)) : null
+              const hasRoom = Boolean(roomRaw && roomRaw !== 'Not assigned')
 
-                let buildingName = null
-                if (hasRoom) {
-                  if (fam.room_id != null && roomBuildingMap.has(String(fam.room_id))) {
-                    buildingName = roomBuildingMap.get(String(fam.room_id))
-                  } else if (roomBuildingMap.has(String(roomRaw).toLowerCase())) {
-                    buildingName = roomBuildingMap.get(String(roomRaw).toLowerCase())
-                  }
+              let buildingName = null
+              if (hasRoom && showBuildingSub) {
+                if (fam.room_id != null && roomBuildingMap.has(String(fam.room_id))) {
+                  buildingName = roomBuildingMap.get(String(fam.room_id))
+                } else if (roomBuildingMap.has(String(roomRaw).toLowerCase())) {
+                  buildingName = roomBuildingMap.get(String(roomRaw).toLowerCase())
                 }
+              }
 
-                return (
-                  <tr key={famKey} className="ec-table-row">
-                    <td data-label="HOUSEHOLD">
-                      <div className="ec-household-user-cell">
-                        <div className="ec-avatar-circle" aria-hidden="true">
-                          {initials}
-                        </div>
-                        <div className="ec-household-text">
-                          <span className="ec-household-name">{headName}</span>
-                          <span className="ec-household-role">Household Head</span>
-                        </div>
+              return (
+                <tr key={famKey} className="ec-table-row">
+                  <td data-label="HOUSEHOLD">
+                    <div className="ec-household-user-cell">
+                      <div className="ec-avatar-circle" aria-hidden="true">
+                        {initials}
                       </div>
-                    </td>
-                    <td data-label="ROOM">
-                      {hasRoom ? (
-                        <div className="ec-hh-room-cell">
-                          <span className="ec-hh-room-name">{roomRaw}</span>
-                          {buildingName && (
-                            <span className="ec-hh-building-sub">{buildingName}</span>
-                          )}
-                        </div>
-                      ) : (
-                        <span className="ec-room-pill is-unassigned">Not assigned</span>
-                      )}
-                    </td>
-                    <td data-label="MEMBERS">
-                      <span className="ec-members-chip">
-                        <FontAwesomeIcon icon={faUsers} />
-                        <span>{memberCount}</span>
+                      <div className="ec-household-text">
+                        <span className="ec-household-name">{headName}</span>
+                        <span className="ec-household-role">Household Head</span>
+                      </div>
+                    </div>
+                  </td>
+                  <td data-label={isOpenArea ? 'CENTER' : 'ROOM'}>
+                    {isOpenArea ? (
+                      <span className="ec-hh-room-name">{center?.name || 'Evacuation Center'}</span>
+                    ) : hasRoom ? (
+                      <div className="ec-hh-room-cell">
+                        <span className="ec-hh-room-name">{roomRaw}</span>
+                        {buildingName && (
+                          <span className="ec-hh-building-sub">{buildingName}</span>
+                        )}
+                      </div>
+                    ) : (
+                      <span className="ec-room-pill is-unassigned">Not assigned</span>
+                    )}
+                  </td>
+                  <td data-label="MEMBERS">
+                    <span className="ec-members-chip">
+                      <FontAwesomeIcon icon={faUsers} />
+                      <span>{memberCount}</span>
+                    </span>
+                  </td>
+                  <td data-label="STATUS">
+                    {isCheckedIn ? (
+                      <span className="ec-status-pill is-arrived">
+                        <span className="ec-status-dot is-arrived" />
+                        <span>Arrived</span>
                       </span>
-                    </td>
-                    <td data-label="STATUS">
-                      {isCheckedIn ? (
-                        <span className="ec-status-pill is-arrived">
-                          <span className="ec-status-dot is-arrived" />
-                          <span>Arrived</span>
-                        </span>
-                      ) : (
-                        <span className="ec-status-pill is-not-arrived">
-                          <span className="ec-status-dot is-not-arrived" />
-                          <span>Not arrived</span>
-                        </span>
-                      )}
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
+                    ) : (
+                      <span className="ec-status-pill is-not-arrived">
+                        <span className="ec-status-dot is-not-arrived" />
+                        <span>Not arrived</span>
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
       )}
     </div>
   )

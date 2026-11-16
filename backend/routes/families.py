@@ -119,6 +119,42 @@ def _normalize_text(value):
     return re.sub(r'\s+', ' ', str(value or '').strip()).casefold()
 
 
+def _resolve_barangay_by_id(raw_barangay_id):
+    if raw_barangay_id is None or str(raw_barangay_id).strip() == '':
+        return None
+    try:
+        parsed_id = int(str(raw_barangay_id).strip())
+    except (TypeError, ValueError):
+        return None
+    return db.session.get(Barangay, parsed_id)
+
+
+def _strip_barangay_prefix(norm_name):
+    return re.sub(r'^(?:barangay|brgy\.?)\s+', '', norm_name).strip()
+
+
+def _barangay_names_match(raw_name, target_name, all_barangays=None):
+    norm_cell = _normalize_text(raw_name)
+    norm_target = _normalize_text(target_name)
+    if not norm_cell or not norm_target:
+        return False
+    if norm_cell == norm_target:
+        return True
+    if all_barangays:
+        exact_other = any(
+            _normalize_text(b.name) == norm_cell and _normalize_text(b.name) != norm_target
+            for b in all_barangays
+        )
+        if exact_other:
+            return False
+    return _strip_barangay_prefix(norm_cell) == _strip_barangay_prefix(norm_target)
+
+
+def _slugify_filename_part(value):
+    slug = re.sub(r'[^a-z0-9]+', '-', str(value or '').strip().lower()).strip('-')
+    return slug or 'barangay'
+
+
 def _sync_barangay_population(barangay_id):
     """
     Deprecated / No-op: Do NOT overwrite the official census population (Barangay.population)
@@ -329,7 +365,9 @@ def _family_list_rows(families):
             EvacuationCenterBuilding.name.label('building_name'),
             func.count(EvacuationAssignment.id),
             func.count(EvacuationAssignment.checked_in_at),
+            CenterType.code.label('center_type_code'),
             CenterType.name.label('center_type_name'),
+            CenterType.structure_mode.label('structure_mode'),
             BuildingMaterial.name.label('building_material_name'),
         )
         .join(EvacuationAssignment, EvacuationAssignment.resident_id == Resident.id)
@@ -354,7 +392,9 @@ def _family_list_rows(families):
             EvacuationCenterRoom.capacity,
             EvacuationCenterRoom.building_id,
             EvacuationCenterBuilding.name,
+            CenterType.code,
             CenterType.name,
+            CenterType.structure_mode,
             BuildingMaterial.name,
         )
         .all()
@@ -371,21 +411,40 @@ def _family_list_rows(families):
         building_name,
         assigned_count,
         checked_in_count,
+        center_type_code,
         center_type_name,
+        raw_structure_mode,
         building_material_name,
     ) in assignment_rows:
         c_in = int(checked_in_count or 0)
-        resolved_b_name = (building_name or f'Building #{building_id}') if building_id else None
+        resolved_code = (center_type_code or 'campus').strip().lower()
+        mode_val = (raw_structure_mode or '').strip().lower()
+        if mode_val in ('open_area', 'rooms_only', 'buildings_and_rooms'):
+            resolved_mode = mode_val
+        elif resolved_code == 'single_venue':
+            resolved_mode = 'open_area'
+        elif resolved_code == 'private_property':
+            resolved_mode = 'rooms_only'
+        else:
+            resolved_mode = 'buildings_and_rooms'
+
+        resolved_b_name = (
+            (building_name or f'Building #{building_id}')
+            if (resolved_mode == 'buildings_and_rooms' and building_id)
+            else None
+        )
         assignments_by_family[family_id].append({
             'center_id': center_id,
             'center': center_name,
-            'center_type': center_type_name or 'Campus',
+            'center_type': resolved_code,
+            'center_type_name': center_type_name or 'Campus',
+            'structure_mode': resolved_mode,
             'building_material': building_material_name or '',
-            'building_id': building_id,
+            'building_id': building_id if resolved_mode == 'buildings_and_rooms' else None,
             'building': resolved_b_name,
             'building_name': resolved_b_name,
-            'room_id': room_id,
-            'room': room_number,
+            'room_id': room_id if resolved_mode != 'open_area' else None,
+            'room': room_number if resolved_mode != 'open_area' else None,
             'room_capacity': room_capacity,
             'assigned_members': assigned_count,
             'checked_in_members': c_in,
@@ -414,11 +473,17 @@ def _family_list_rows(families):
             'remarks': (head_member.remarks if head_member and head_member.remarks else next((m.remarks for m in family_members if m.remarks), None)),
             'assignments': assignments,
             'evacuation_center': ', '.join(dict.fromkeys(item['center'] for item in assignments if item.get('center'))) or None,
-            'center_type': ', '.join(dict.fromkeys(item['center_type'] for item in assignments if item.get('center_type'))) or None,
+            'center_type': ', '.join(dict.fromkeys(item['center_type_name'] for item in assignments if item.get('center_type_name'))) or None,
             'building_material': ', '.join(dict.fromkeys(item['building_material'] for item in assignments if item.get('building_material'))) or None,
-            'buildings': ', '.join(dict.fromkeys((item['building'] or 'Unmapped') for item in assignments if item.get('building') or item.get('center'))) or None,
+            'buildings': ', '.join(dict.fromkeys(
+                (item['building'] or 'Unmapped')
+                for item in assignments
+                if item.get('structure_mode') == 'buildings_and_rooms' and (item.get('building') or item.get('center'))
+            )) or None,
             'rooms': ', '.join(dict.fromkeys(str(item['room']) for item in assignments if item.get('room'))) or None,
             'current_center_id': primary_assignment['center_id'] if primary_assignment else None,
+            'current_center_type': primary_assignment['center_type'] if primary_assignment else None,
+            'current_structure_mode': primary_assignment['structure_mode'] if primary_assignment else None,
             'current_building_id': primary_assignment['building_id'] if primary_assignment else None,
             'current_room_id': primary_assignment['room_id'] if primary_assignment else None,
             'current_center': primary_assignment['center'] if primary_assignment else None,
@@ -539,9 +604,11 @@ def list_families():
 @role_required('admin')
 def export_families():
     export_format = request.args.get('format', 'xlsx').strip().lower()
+    raw_barangay_id = request.args.get('barangay_id', '')
+    target_barangay = _resolve_barangay_by_id(raw_barangay_id)
     query = _family_query(
         request.args.get('search', ''),
-        request.args.get('barangay_id', ''),
+        raw_barangay_id,
         request.args.get('assignment_status', ''),
         request.args.get('building_id', ''),
         roster_year_id=request.args.get('roster_year_id', ''),
@@ -643,16 +710,28 @@ def export_families():
 
     output = io.BytesIO()
     wb.save(output)
+    export_filename = (
+        f'EvacWay-Resident-Masterlist-{_slugify_filename_part(target_barangay.name)}.xlsx'
+        if target_barangay
+        else 'EvacWay-Resident-Masterlist.xlsx'
+    )
     return Response(
         output.getvalue(),
         mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        headers={'Content-Disposition': 'attachment; filename="EvacWay-Resident-Masterlist.xlsx"'},
+        headers={'Content-Disposition': f'attachment; filename="{export_filename}"'},
     )
 
 
 @families_bp.route('/api/families/template', methods=['GET'])
 @role_required('admin')
 def download_family_template():
+    raw_barangay_id = request.args.get('barangay_id', '')
+    selected_barangay = _resolve_barangay_by_id(raw_barangay_id)
+    if str(raw_barangay_id or '').strip() and not selected_barangay:
+        return jsonify({'error': 'Selected barangay was not found.'}), 404
+
+    sample_barangay_name = selected_barangay.name if selected_barangay else 'Poblacion'
+
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = 'Families'
@@ -669,14 +748,14 @@ def download_family_template():
 
     # Sample rows for user guidance
     sheet.append([
-        'FAM-001', 'Juan Dela Cruz', 'Poblacion', '09171234567', 'Purok 1',
+        'FAM-001', 'Juan Dela Cruz', sample_barangay_name, '09171234567', 'Purok 1',
         'Juan', '', 'Dela Cruz', '09171234567',
         '1980-05-15', 'Male', 'Head',
         'No', '', 'No', 'No',
         'No', 'No', 'Hypertension'
     ])
     sheet.append([
-        'FAM-001', 'Juan Dela Cruz', 'Poblacion', '09171234567', 'Purok 1',
+        'FAM-001', 'Juan Dela Cruz', sample_barangay_name, '09171234567', 'Purok 1',
         'Maria', 'Santos', 'Dela Cruz', '09187654321',
         '1984-08-20', 'Female', 'Spouse',
         'Yes', 'Mobility / Wheelchair', 'No', 'No',
@@ -687,6 +766,11 @@ def download_family_template():
     instructions = workbook.create_sheet('Instructions')
     instructions.append(['EvacWay Resident Roster Import Instructions'])
     instructions.append([''])
+    if selected_barangay:
+        instructions.append([
+            f'TARGET BARANGAY: {selected_barangay.name} — Keep the Barangay column set to "{selected_barangay.name}". Rows for other barangays will be flagged and skipped during import.'
+        ])
+        instructions.append([''])
     instructions.append(['1. STRUCTURE: Each row represents one family member. Repeat family columns (Family Code, Head, Barangay, Address) for all members of the same household.'])
     instructions.append(['2. REQUIRED FIELDS: Family Code, Head of Family, Barangay, Member First Name, Member Last Name.'])
     instructions.append(['3. VULNERABILITY TRACKING (Optional but Recommended):'])
@@ -701,10 +785,15 @@ def download_family_template():
 
     output = io.BytesIO()
     workbook.save(output)
+    template_filename = (
+        f'evacway-family-template-{_slugify_filename_part(selected_barangay.name)}.xlsx'
+        if selected_barangay
+        else 'evacway-family-template.xlsx'
+    )
     return Response(
         output.getvalue(),
         mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        headers={'Content-Disposition': 'attachment; filename="evacway-family-template.xlsx"'},
+        headers={'Content-Disposition': f'attachment; filename="{template_filename}"'},
     )
 
 
@@ -983,34 +1072,40 @@ def _make_resident_model(member, family, head_name, barangay_name, default_addre
     )
 
 
-def _preview_family_workbook(file_storage):
+def _empty_preview_result(errors=None, target_barangay=None):
+    return {
+        'families': [],
+        'errors': errors or [],
+        'warnings': [],
+        'rows': 0,
+        'barangay_rows': 0,
+        'new_households': 0,
+        'updated_households': 0,
+        'skipped_households': 0,
+        'new_members_to_add': 0,
+        'members_to_fill': 0,
+        'other_barangay_rows': [],
+        'other_barangay_skipped': 0,
+        'target_barangay': {
+            'id': target_barangay.id,
+            'name': target_barangay.name,
+        } if target_barangay else None,
+        'can_import': False,
+    }
+
+
+def _preview_family_workbook(file_storage, target_barangay=None):
     filename = str(file_storage.filename or '')
     if filename.casefold().endswith('.xls'):
-        return {
-            'families': [],
-            'errors': [{'row': 0, 'message': 'Please save the file as .xlsx and upload again.'}],
-            'warnings': [],
-            'rows': 0,
-            'new_households': 0,
-            'updated_households': 0,
-            'skipped_households': 0,
-            'new_members_to_add': 0,
-            'members_to_fill': 0,
-            'can_import': False,
-        }
+        return _empty_preview_result(
+            errors=[{'row': 0, 'message': 'Please save the file as .xlsx and upload again.'}],
+            target_barangay=target_barangay,
+        )
     if not filename.casefold().endswith('.xlsx'):
-        return {
-            'families': [],
-            'errors': [{'row': 0, 'message': 'Upload an Excel (.xlsx) file.'}],
-            'warnings': [],
-            'rows': 0,
-            'new_households': 0,
-            'updated_households': 0,
-            'skipped_households': 0,
-            'new_members_to_add': 0,
-            'members_to_fill': 0,
-            'can_import': False,
-        }
+        return _empty_preview_result(
+            errors=[{'row': 0, 'message': 'Upload an Excel (.xlsx) file.'}],
+            target_barangay=target_barangay,
+        )
 
     try:
         workbook = load_workbook(io.BytesIO(file_storage.read()), read_only=True, data_only=True)
@@ -1018,30 +1113,16 @@ def _preview_family_workbook(file_storage):
         values = worksheet.iter_rows(values_only=True)
         headers = next(values, None)
     except Exception:
-        return {
-            'families': [],
-            'errors': [{'row': 0, 'message': 'The workbook could not be read.'}],
-            'warnings': [],
-            'rows': 0,
-            'new_households': 0,
-            'updated_households': 0,
-            'skipped_households': 0,
-            'new_members_to_add': 0,
-            'can_import': False,
-        }
+        return _empty_preview_result(
+            errors=[{'row': 0, 'message': 'The workbook could not be read.'}],
+            target_barangay=target_barangay,
+        )
 
     if not headers:
-        return {
-            'families': [],
-            'errors': [{'row': 1, 'message': 'The worksheet is empty.'}],
-            'warnings': [],
-            'rows': 0,
-            'new_households': 0,
-            'updated_households': 0,
-            'skipped_households': 0,
-            'new_members_to_add': 0,
-            'can_import': False,
-        }
+        return _empty_preview_result(
+            errors=[{'row': 1, 'message': 'The worksheet is empty.'}],
+            target_barangay=target_barangay,
+        )
 
     column_indexes = {}
     for index, header in enumerate(headers):
@@ -1050,25 +1131,22 @@ def _preview_family_workbook(file_storage):
             if normalized in aliases:
                 column_indexes[field] = index
 
-    required = {'head_name', 'barangay', 'first_name', 'last_name'}
+    required = {'head_name', 'first_name', 'last_name'}
+    if target_barangay is None:
+        required.add('barangay')
     missing = sorted(required - set(column_indexes))
     if missing:
-        return {
-            'families': [],
-            'errors': [{'row': 1, 'message': f'Missing required columns: {", ".join(missing)}'}],
-            'warnings': [],
-            'rows': 0,
-            'new_households': 0,
-            'updated_households': 0,
-            'skipped_households': 0,
-            'new_members_to_add': 0,
-            'can_import': False,
-        }
+        return _empty_preview_result(
+            errors=[{'row': 1, 'message': f'Missing required columns: {", ".join(missing)}'}],
+            target_barangay=target_barangay,
+        )
 
     errors = []
     warnings = []
     families_by_key = {}
+    other_barangay_rows = []
     row_count = 0
+    barangay_row_count = 0
 
     def _clean_cell(val):
         if val is None:
@@ -1147,6 +1225,22 @@ def _preview_family_workbook(file_storage):
         dob = _normalize_dob(cell_raw_at(row, idx_dob))
         raw_fam_count = cell_at(row, idx_fam_members)
 
+        if target_barangay is not None:
+            if barangay_name and not _barangay_names_match(barangay_name, target_barangay.name, all_barangays):
+                other_barangay_rows.append({
+                    'row': row_number,
+                    'barangay': barangay_name,
+                    'head_name': head_name or '',
+                    'member_name': ' '.join(
+                        part for part in (first_name, middle_name, last_name, suffix) if part
+                    ),
+                    'family_code': explicit_code or '',
+                })
+                continue
+            barangay_name = target_barangay.name
+
+        barangay_row_count += 1
+
         missing_fields = [
             label for value, label in (
                 (head_name, 'Head of Family'),
@@ -1159,10 +1253,13 @@ def _preview_family_workbook(file_storage):
             errors.append({'row': row_number, 'message': f'Missing required values: {", ".join(missing_fields)}'})
             continue
 
-        barangay = barangays_by_name.get(barangay_name.casefold())
-        if not barangay:
-            errors.append({'row': row_number, 'message': f'Barangay "{barangay_name}" has not been added yet. Add it in the Barangays tab first.'})
-            continue
+        if target_barangay is not None:
+            barangay = target_barangay
+        else:
+            barangay = barangays_by_name.get(barangay_name.casefold())
+            if not barangay:
+                errors.append({'row': row_number, 'message': f'Barangay "{barangay_name}" has not been added yet. Add it in the Barangays tab first.'})
+                continue
 
         if explicit_code:
             family_code = explicit_code
@@ -1384,6 +1481,17 @@ def _preview_family_workbook(file_storage):
             f'{skipped_households} household{"" if skipped_households == 1 else "s"} are already registered with the same members. They will be left unchanged.'
         )
 
+    if other_barangay_rows and target_barangay is not None:
+        other_names = list(dict.fromkeys(r['barangay'] for r in other_barangay_rows if r.get('barangay')))
+        warnings.insert(
+            0,
+            (
+                f'{len(other_barangay_rows)} row{"" if len(other_barangay_rows) == 1 else "s"} '
+                f'belonged to another barangay ({", ".join(other_names)}) and will be skipped. '
+                f'Only rows for Barangay {target_barangay.name} are included.'
+            )
+        )
+
     can_import = (len(errors) == 0 and (new_households > 0 or new_members_to_add > 0 or members_to_fill > 0))
 
     serialized_families = [
@@ -1410,11 +1518,18 @@ def _preview_family_workbook(file_storage):
         'errors': errors,
         'warnings': warnings,
         'rows': row_count,
+        'barangay_rows': barangay_row_count,
         'new_households': new_households,
         'updated_households': updated_households,
         'skipped_households': skipped_households,
         'new_members_to_add': new_members_to_add,
         'members_to_fill': members_to_fill,
+        'other_barangay_rows': other_barangay_rows,
+        'other_barangay_skipped': len(other_barangay_rows),
+        'target_barangay': {
+            'id': target_barangay.id,
+            'name': target_barangay.name,
+        } if target_barangay else None,
         'can_import': can_import,
     }
 
@@ -1437,7 +1552,14 @@ def import_families():
         return jsonify({'error': 'The uploaded file is empty.'}), 400
     file_storage.seek(0)
 
-    preview = _preview_family_workbook(file_storage)
+    raw_barangay_id = request.form.get('barangay_id', '').strip()
+    target_barangay = None
+    if raw_barangay_id:
+        target_barangay = _resolve_barangay_by_id(raw_barangay_id)
+        if not target_barangay:
+            return jsonify({'error': 'Selected barangay was not found.'}), 400
+
+    preview = _preview_family_workbook(file_storage, target_barangay=target_barangay)
     commit_requested = str(request.form.get('commit', '')).casefold() == 'true'
 
     if not commit_requested:
@@ -1550,6 +1672,14 @@ def import_families():
 @families_bp.route('/api/families/import/stage', methods=['POST'])
 @role_required('admin')
 def stage_family_import():
+    raw_barangay_id = request.form.get('barangay_id', '').strip()
+    if not raw_barangay_id:
+        return jsonify({'error': 'Please select a barangay before uploading.'}), 400
+
+    target_barangay = _resolve_barangay_by_id(raw_barangay_id)
+    if not target_barangay:
+        return jsonify({'error': 'Selected barangay was not found.'}), 400
+
     file_storage = request.files.get('file')
     if not file_storage:
         return jsonify({'error': 'Choose an .xlsx file to import.'}), 400
@@ -1577,7 +1707,7 @@ def stage_family_import():
 
     try:
         wrapper = _BytesFileWrapper(file_bytes, file_storage.filename or 'import.xlsx')
-        preview = _preview_family_workbook(wrapper)
+        preview = _preview_family_workbook(wrapper, target_barangay=target_barangay)
     except Exception as e:
         return jsonify({
             'error': f'The workbook could not be read: {str(e)}'
@@ -1595,6 +1725,7 @@ def stage_family_import():
         'file_bytes': file_bytes,
         'preview': preview,
         'filename': file_storage.filename or 'import.xlsx',
+        'barangay_id': target_barangay.id,
         'expires_at': time.time() + STAGING_TTL_SECONDS,
         'created_by': current_user,
     }
@@ -1633,15 +1764,19 @@ def stage_family_import():
         'staging_token': token,
         'expires_in': STAGING_TTL_SECONDS,
         'filename': file_storage.filename,
+        'target_barangay': preview.get('target_barangay'),
         'families': slim_families,
         'errors': preview['errors'],
         'warnings': preview['warnings'],
         'rows': preview['rows'],
+        'barangay_rows': preview.get('barangay_rows', preview['rows']),
         'new_households': preview['new_households'],
         'updated_households': preview['updated_households'],
         'skipped_households': preview['skipped_households'],
         'new_members_to_add': preview['new_members_to_add'],
         'members_to_fill': preview['members_to_fill'],
+        'other_barangay_rows': preview.get('other_barangay_rows', []),
+        'other_barangay_skipped': preview.get('other_barangay_skipped', 0),
         'can_import': preview['can_import'],
     }), 200
 
@@ -1677,10 +1812,17 @@ def commit_family_import():
             'error': 'This upload has expired. Please upload the file again.'
         }), 400
 
+    staged_barangay_id = staged.get('barangay_id')
+    target_barangay = None
+    if staged_barangay_id is not None:
+        target_barangay = _resolve_barangay_by_id(staged_barangay_id)
+        if not target_barangay:
+            return jsonify({'error': 'Selected barangay no longer exists.'}), 400
+
     # Re-validate on the server against the live database state
     try:
         wrapper = _BytesFileWrapper(staged['file_bytes'], staged.get('filename', 'import.xlsx'))
-        preview = _preview_family_workbook(wrapper)
+        preview = _preview_family_workbook(wrapper, target_barangay=target_barangay)
     except Exception as e:
         return jsonify({'error': f'Failed to check file before saving: {str(e)}'}), 400
 
@@ -1764,10 +1906,11 @@ def commit_family_import():
         for bid in affected_barangay_ids:
             _sync_barangay_population(bid)
 
+        barangay_scope_label = f' for Barangay {target_barangay.name}' if target_barangay else ''
         db.session.add(SystemLog(
             user_id=get_jwt_identity(),
             action=(
-                f'Imported Excel roster: {created_count} created, {updated_count} updated '
+                f'Imported Excel roster{barangay_scope_label}: {created_count} created, {updated_count} updated '
                 f'({residents_created} residents added, {members_filled_count} members with blank fields filled), '
                 f'{skipped_count} skipped'
             ),
@@ -1781,12 +1924,14 @@ def commit_family_import():
     _cleanup_staged_imports()
 
     return jsonify({
-        'message': f'Import completed: {created_count} created, {updated_count} updated, {skipped_count} skipped.',
+        'message': f'Import completed{barangay_scope_label}: {created_count} created, {updated_count} updated, {skipped_count} skipped.',
+        'barangay': preview.get('target_barangay'),
         'families_created': created_count,
         'families_updated': updated_count,
         'families_skipped': skipped_count,
         'residents_created': residents_created,
         'members_filled': members_filled_count,
+        'other_barangay_rows_skipped': preview.get('other_barangay_skipped', 0),
         'failed_rows': 0,
     }), 201
 
@@ -1956,7 +2101,7 @@ def add_family():
             'last_name': last_name,
             'suffix': suffix,
             'date_of_birth': dob,
-            'gender': str(member.get('gender') or '').strip() or None,
+            'gender': _normalize_gender(member.get('gender')),
             'relationship_to_head': str(member.get('relationship_to_head') or '').strip() or None,
             'contact_number': member_contact or None,
             'disability_type': str(member.get('disability_type') or '').strip() or None,
@@ -2035,7 +2180,10 @@ def add_family():
             return jsonify({'error': 'Cannot assign a family to an inactive center'}), 400
 
         raw_room_id = assignment.get('room_id')
+        assign_structure_mode = getattr(assignment_center, 'structure_mode', None) or 'buildings_and_rooms'
         if raw_room_id not in (None, ''):
+            if assign_structure_mode == 'open_area':
+                return jsonify({'error': 'Open area centers do not use rooms; assign directly to the center'}), 400
             try:
                 assignment_room = db.session.get(EvacuationCenterRoom, int(raw_room_id))
             except (TypeError, ValueError):
@@ -2045,16 +2193,12 @@ def add_family():
             if assignment_room.evacuation_center_id != assignment_center.id:
                 return jsonify({'error': 'Selected room does not belong to the selected center'}), 400
             occupancy = EvacuationAssignment.query.filter_by(room_id=assignment_room.id).count()
-            if occupancy + len(parsed_members) + 1 > assignment_room.capacity:
+            if (assignment_room.capacity or 0) <= 0 or occupancy + len(parsed_members) + 1 > assignment_room.capacity:
                 return jsonify({
-                    'error': f'Room does not have enough capacity. Available: {max(assignment_room.capacity - occupancy, 0)}, Needed: {len(parsed_members) + 1}'
+                    'error': f'Room does not have enough capacity. Available: {max((assignment_room.capacity or 0) - occupancy, 0)}, Needed: {len(parsed_members) + 1}'
                 }), 400
         else:
-            active_room_count = EvacuationCenterRoom.query.filter_by(
-                evacuation_center_id=assignment_center.id, is_active=True
-            ).count()
-            c_type = assignment_center.center_type or 'campus'
-            if active_room_count > 0 and c_type not in ('single_venue', 'covered_court', 'multi_purpose_hall', 'church_facility'):
+            if assign_structure_mode != 'open_area':
                 return jsonify({'error': 'Selected evacuation center requires a room assignment'}), 400
             current_center_assigned = (
                 db.session.query(func.count(EvacuationAssignment.id))
@@ -2066,7 +2210,7 @@ def add_family():
                 .scalar() or 0
             )
             effective_cap = assignment_center.capacity or 0
-            if effective_cap > 0 and current_center_assigned + len(parsed_members) + 1 > effective_cap:
+            if effective_cap <= 0 or current_center_assigned + len(parsed_members) + 1 > effective_cap:
                 return jsonify({
                     'error': f'Center does not have enough capacity. Available: {max(effective_cap - current_center_assigned, 0)}, Needed: {len(parsed_members) + 1}'
                 }), 400
@@ -2152,6 +2296,17 @@ def add_family():
     }), 201
 
 
+def _normalize_gender(raw):
+    val = str(raw or '').strip()
+    if not val or val.lower() in {'not specified', 'select gender'}:
+        return None
+    if val.lower() == 'male':
+        return 'Male'
+    if val.lower() == 'female':
+        return 'Female'
+    return val
+
+
 def _parse_member_payload(data, default_is_head=False):
     first_name = str(data.get('first_name') or '').strip()
     middle_name = str(data.get('middle_name') or '').strip() or None
@@ -2203,7 +2358,7 @@ def _parse_member_payload(data, default_is_head=False):
     if alternate_contact and len(alternate_contact) > 50:
         raise ValueError('Alternate contact must be 50 characters or fewer')
 
-    gender = str(data.get('gender') or '').strip() or None
+    gender = _normalize_gender(data.get('gender'))
     if gender and len(gender) > 20:
         raise ValueError('Gender must be 20 characters or fewer')
 
@@ -2409,7 +2564,8 @@ def update_family_member(family_id, member_id):
     resident.last_name = parsed['last_name']
     resident.suffix = parsed['suffix']
     resident.date_of_birth = parsed['date_of_birth']
-    resident.gender = parsed['gender']
+    if 'gender' in data:
+        resident.gender = parsed['gender']
     resident.relationship_to_head = (
         'Household Head'
         if resident.is_head_of_family
@@ -2417,21 +2573,25 @@ def update_family_member(family_id, member_id):
     )
     if 'contact_number' in data:
         resident.contact_number = parsed['contact_number']
+        if resident.is_head_of_family:
+            family.contact_number = parsed['contact_number']
     if 'alternate_contact' in data:
         resident.alternate_contact = parsed['alternate_contact']
     resident.is_pwd = parsed['is_pwd']
     resident.disability_type = parsed['disability_type'] if parsed['is_pwd'] else None
     resident.disability_notes = parsed['disability_notes'] if parsed['is_pwd'] else None
-    resident.is_pregnant = parsed['is_pregnant']
-    resident.is_lactating = parsed['is_lactating']
+    resident.is_pregnant = (
+        parsed['is_pregnant'] if resident.gender == 'Female' else False
+    )
+    resident.is_lactating = (
+        parsed['is_lactating'] if resident.gender == 'Female' else False
+    )
     resident.is_solo_parent = parsed['is_solo_parent']
-    resident.needs_assistance = parsed['needs_assistance']
+    if 'needs_assistance' in data:
+        resident.needs_assistance = parsed['needs_assistance']
     resident.medical_notes = parsed['medical_notes']
     resident.notes = parsed['notes']
     # Vulnerability and remarks now belong to the family level
-
-    if resident.is_head_of_family and parsed['contact_number']:
-        family.contact_number = parsed['contact_number']
 
     db.session.flush()
     _sync_household_and_barangay(family)
@@ -2569,17 +2729,13 @@ def assign_family(family_id):
     if not center.is_active:
         return jsonify({"error": "Cannot assign to an inactive evacuation center"}), 400
 
-    # Enforce center_type / room structure rules for room_id
-    center_type = center.center_type or 'campus'
-    active_room_count = EvacuationCenterRoom.query.filter_by(
-        evacuation_center_id=center.id, is_active=True
-    ).count()
-    is_direct_venue = (
-        active_room_count == 0
-        or center_type in ('single_venue', 'covered_court', 'multi_purpose_hall', 'church_facility')
-    )
+    # Enforce structure_mode rules for room_id
+    structure_mode = getattr(center, 'structure_mode', None) or 'buildings_and_rooms'
+    is_direct_venue = (structure_mode == 'open_area')
+    if is_direct_venue and room_id:
+        return jsonify({"error": "Open area centers do not use rooms; assign directly to the center"}), 400
     if not is_direct_venue and not room_id:
-        return jsonify({"error": f"Room ID is required for {center_type} type centers"}), 400
+        return jsonify({"error": f"Room ID is required for {center.center_type_name or 'room-based'} centers"}), 400
 
     room = None
     if room_id:
@@ -2591,8 +2747,8 @@ def assign_family(family_id):
         if room.evacuation_center_id != center.id:
             return jsonify({"error": "Room does not belong to the selected evacuation center"}), 400
 
-        # Check building status for campus type
-        if center_type == 'campus' and room.building:
+        # Check building status for buildings_and_rooms structure
+        if structure_mode == 'buildings_and_rooms' and room.building:
             if room.building.status != 'open':
                 return jsonify({"error": f"Cannot assign to a room in a building with status '{room.building.status}'. Only 'open' buildings can receive new assignments."}), 400
 
@@ -2611,17 +2767,18 @@ def assign_family(family_id):
 
     if room:
         current_occupancy = EvacuationAssignment.query.filter_by(room_id=room.id).count()
-        remaining = max(room.capacity - current_occupancy, 0)
-        if current_occupancy + needed_spaces > room.capacity:
+        room_cap = room.capacity or 0
+        remaining = max(room_cap - current_occupancy, 0)
+        if room_cap <= 0 or current_occupancy + needed_spaces > room_cap:
             return jsonify({
                 "error": f"Room does not have enough capacity. Available: {remaining}, Needed: {needed_spaces}",
-                "capacity": room.capacity,
+                "capacity": room_cap,
                 "occupied": current_occupancy,
                 "available": remaining,
                 "needed": needed_spaces
             }), 400
     else:
-        # Direct venue assignment (single_venue)
+        # Direct center assignment (open_area)
         current_center_assigned = (
             db.session.query(func.count(EvacuationAssignment.id))
             .outerjoin(EvacuationCenterRoom, EvacuationAssignment.room_id == EvacuationCenterRoom.id)
@@ -2631,8 +2788,8 @@ def assign_family(family_id):
             ))
             .scalar() or 0
         )
-        effective_cap = center.capacity if center.capacity is not None else sum(r.capacity or 0 for r in center.rooms)
-        if effective_cap > 0 and current_center_assigned + needed_spaces > effective_cap:
+        effective_cap = center.capacity or 0
+        if effective_cap <= 0 or current_center_assigned + needed_spaces > effective_cap:
             remaining = max(effective_cap - current_center_assigned, 0)
             return jsonify({
                 "error": f"Center does not have enough capacity. Available: {remaining}, Needed: {needed_spaces}",
@@ -2706,20 +2863,16 @@ def move_family(family_id):
         if not target_center or not target_center.is_active:
             return jsonify({"error": "Target evacuation center is inactive or not found"}), 400
 
-    # Enforce center_type / room structure rules for room_id
-    target_center_type = target_center.center_type or 'campus'
-    target_active_room_count = EvacuationCenterRoom.query.filter_by(
-        evacuation_center_id=target_center.id, is_active=True
-    ).count()
-    is_target_direct_venue = (
-        target_active_room_count == 0
-        or target_center_type in ('single_venue', 'covered_court', 'multi_purpose_hall', 'church_facility')
-    )
+    # Enforce structure_mode rules for room_id
+    target_structure_mode = getattr(target_center, 'structure_mode', None) or 'buildings_and_rooms'
+    is_target_direct_venue = (target_structure_mode == 'open_area')
+    if is_target_direct_venue and new_room:
+        return jsonify({"error": "Open area centers do not use rooms; move directly to the center"}), 400
     if not is_target_direct_venue and not new_room:
-        return jsonify({"error": f"Room ID is required for {target_center_type} type centers"}), 400
+        return jsonify({"error": f"Room ID is required for {target_center.center_type_name or 'room-based'} centers"}), 400
 
-    # Check building status for campus type
-    if target_center_type == 'campus' and new_room and new_room.building:
+    # Check building status for buildings_and_rooms structure
+    if target_structure_mode == 'buildings_and_rooms' and new_room and new_room.building:
         if new_room.building.status != 'open':
             return jsonify({"error": f"Cannot move to a room in a building with status '{new_room.building.status}'. Only 'open' buildings can receive new assignments."}), 400
 
@@ -2746,11 +2899,12 @@ def move_family(family_id):
 
     if new_room:
         target_occupancy = EvacuationAssignment.query.filter_by(room_id=new_room.id).count()
-        remaining = max(new_room.capacity - target_occupancy, 0)
-        if target_occupancy + members_count > new_room.capacity:
+        target_room_cap = new_room.capacity or 0
+        remaining = max(target_room_cap - target_occupancy, 0)
+        if target_room_cap <= 0 or target_occupancy + members_count > target_room_cap:
             return jsonify({
                 "error": f"Target room does not have enough capacity. Available: {remaining}, Needed: {members_count}",
-                "capacity": new_room.capacity,
+                "capacity": target_room_cap,
                 "occupied": target_occupancy,
                 "available": remaining,
                 "needed": members_count
@@ -2765,8 +2919,8 @@ def move_family(family_id):
             ))
             .scalar() or 0
         )
-        effective_cap = target_center.capacity if target_center.capacity is not None else sum(r.capacity or 0 for r in target_center.rooms)
-        if effective_cap > 0 and target_occupancy + members_count > effective_cap:
+        effective_cap = target_center.capacity or 0
+        if effective_cap <= 0 or target_occupancy + members_count > effective_cap:
             remaining = max(effective_cap - target_occupancy, 0)
             return jsonify({
                 "error": f"Target shelter does not have enough capacity. Available: {remaining}, Needed: {members_count}",

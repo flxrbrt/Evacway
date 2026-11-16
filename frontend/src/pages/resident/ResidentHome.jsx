@@ -25,6 +25,7 @@ import { displayEntityName } from "../../utils/displayEntityName";
 import BuildingDetailsModal from "../../components/BuildingDetailsModal/BuildingDetailsModal";
 import {
   initBuildingLayers,
+  removeBuildingTooltip,
   setSelectedBuilding,
   setBuildingsGeoJSON,
   initEntranceLayers,
@@ -77,18 +78,24 @@ import { LoginDialog, ResidentSignUpDialog } from "../../components/AuthModals/A
 
 mapboxgl.accessToken = import.meta.env.VITE_MAPBOX_TOKEN;
 
-const SOGOD_CENTER = [10.3932, 124.9886];
+export const SOGOD_CENTER = [10.3932, 124.9886];
 
-const SOGOD_BOUNDS = [
+export const SOGOD_BOUNDS = [
   [10.368, 124.912],
   [10.525, 125.078],
 ];
+
+export const DEFAULT_MAP_ZOOM = 14.5;
+export const MIN_MAP_ZOOM = 11;
+export const MAX_MAP_ZOOM = 18;
 
 /*
  * Below this zoom: centers are shown as icons with their name.
  * At this zoom and above: the building outline and room icons show.
  */
 const ROOM_MIN_ZOOM = 14;
+const HAZARD_LABEL_ZOOM = 14.5;
+const CENTER_MARKER_MAX_ZOOM = 16;
 const PUBLIC_MAP_QUERY_OPTIONS = {
   staleTime: 20000,
   refetchOnMount: "always",
@@ -317,7 +324,7 @@ function drawCanvasRoundedRect(ctx, x, y, w, h, r) {
   }
 }
 
-function createHazardMarkerImage(isBlocked, labelText, iconDef, withLabel = true) {
+export function createHazardMarkerImage(isBlocked, labelText, iconDef, withLabel = true) {
   const dpr = 2;
   const squareSize = 34;
   const squareRadius = 10;
@@ -484,7 +491,7 @@ function createHazardMarkerImage(isBlocked, labelText, iconDef, withLabel = true
   return ctx.getImageData(0, 0, canvas.width, canvas.height);
 }
 
-function ensureHazardImage(map, isBlocked, labelText, iconDef, withLabel = true) {
+export function ensureHazardImage(map, isBlocked, labelText, iconDef, withLabel = true) {
   if (!map) return "";
   const variant = withLabel ? "full" : "compact";
   const safeId = `hazard-marker-v5-${isBlocked ? "badge" : "warning"}-${variant}-${encodeURIComponent(labelText).replace(/[%._-]/g, "")}`;
@@ -499,7 +506,7 @@ function ensureHazardImage(map, isBlocked, labelText, iconDef, withLabel = true)
   return safeId;
 }
 
-function distanceBetweenPointsMeters(p1, p2) {
+export function distanceBetweenPointsMeters(p1, p2) {
   const R = 6371000;
   const dLat = ((p2[1] - p1[1]) * Math.PI) / 180;
   const dLng = ((p2[0] - p1[0]) * Math.PI) / 180;
@@ -511,6 +518,133 @@ function distanceBetweenPointsMeters(p1, p2) {
     Math.sin(dLng / 2);
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return R * c;
+}
+
+export function getLineMidpoint(coords) {
+  if (!Array.isArray(coords) || coords.length === 0) return null;
+  if (typeof coords[0] === "number" && coords.length >= 2) return coords;
+  if (coords.length === 1) return coords[0];
+  if (coords.length === 2) {
+    return [(coords[0][0] + coords[1][0]) / 2, (coords[0][1] + coords[1][1]) / 2];
+  }
+  let totalDist = 0;
+  const dists = [];
+  for (let i = 0; i < coords.length - 1; i++) {
+    const d = distanceBetweenPointsMeters(coords[i], coords[i + 1]);
+    dists.push(d);
+    totalDist += d;
+  }
+  if (totalDist === 0) return coords[Math.floor(coords.length / 2)];
+  const halfDist = totalDist / 2;
+  let accumulated = 0;
+  for (let i = 0; i < dists.length; i++) {
+    if (accumulated + dists[i] >= halfDist) {
+      const remain = halfDist - accumulated;
+      const frac = dists[i] > 0 ? remain / dists[i] : 0.5;
+      return [
+        coords[i][0] + (coords[i + 1][0] - coords[i][0]) * frac,
+        coords[i][1] + (coords[i + 1][1] - coords[i][1]) * frac,
+      ];
+    }
+    accumulated += dists[i];
+  }
+  return coords[Math.floor(coords.length / 2)];
+}
+
+export function getLineLength(coords) {
+  if (!Array.isArray(coords) || coords.length < 2) return 0;
+  let len = 0;
+  for (let i = 0; i < coords.length - 1; i++) {
+    len += distanceBetweenPointsMeters(coords[i], coords[i + 1]);
+  }
+  return len;
+}
+
+export function getPointAlongLine(coords, targetDist) {
+  if (!Array.isArray(coords) || coords.length === 0) return null;
+  if (coords.length === 1) return coords[0];
+  let accumulated = 0;
+  for (let i = 0; i < coords.length - 1; i++) {
+    const segDist = distanceBetweenPointsMeters(coords[i], coords[i + 1]);
+    if (accumulated + segDist >= targetDist || i === coords.length - 2) {
+      const remain = Math.max(0, targetDist - accumulated);
+      const frac = segDist > 0 ? Math.min(1, remain / segDist) : 0.5;
+      return [
+        coords[i][0] + (coords[i + 1][0] - coords[i][0]) * frac,
+        coords[i][1] + (coords[i + 1][1] - coords[i][1]) * frac,
+      ];
+    }
+    accumulated += segDist;
+  }
+  return coords[coords.length - 1];
+}
+
+export function getReportBlockedRoadMidpoint(report, roadFeatures) {
+  const fallbackLng = Number(report.longitude ?? report.lng);
+  const fallbackLat = Number(report.latitude ?? report.lat);
+  const fallbackCoords =
+    Number.isFinite(fallbackLng) && Number.isFinite(fallbackLat)
+      ? [fallbackLng, fallbackLat]
+      : null;
+
+  if (!roadFeatures || roadFeatures.length === 0) return fallbackCoords;
+
+  const repRoadId = report.road_segment_id ?? report.road_id;
+  const closedNames = new Set(
+    (Array.isArray(report.closed_roads) ? report.closed_roads : [report.road_name])
+      .filter(Boolean)
+      .map((n) => String(n).toLowerCase().trim())
+  );
+
+  let matched = roadFeatures.filter((feat) => {
+    const p = feat.properties || {};
+    const featRoadId = p.id ?? p.road_segment_id;
+    if (repRoadId && featRoadId && String(repRoadId) === String(featRoadId)) return true;
+    const name = String(p.road_name || "").toLowerCase().trim();
+    return name && closedNames.has(name);
+  });
+
+  if (matched.length === 0) return fallbackCoords;
+
+  if (fallbackCoords && matched.length > 1) {
+    const closedMatched = matched.filter((m) => m.properties?.is_closed);
+    const pool = closedMatched.length > 0 ? closedMatched : matched;
+    const close = pool.filter((m) => {
+      const coords = m.geometry?.coordinates;
+      if (!Array.isArray(coords) || coords.length === 0) return false;
+      const minDist = Math.min(...coords.map((pt) => distanceBetweenPointsMeters(fallbackCoords, pt)));
+      return minDist <= 400;
+    });
+    if (close.length > 0) {
+      matched = close;
+    } else if (closedMatched.length > 0) {
+      matched = closedMatched;
+    }
+  }
+
+  const validCoordsList = matched
+    .map((s) => s.geometry?.coordinates)
+    .filter((c) => Array.isArray(c) && c.length >= 2);
+
+  if (validCoordsList.length === 0) return fallbackCoords;
+  if (validCoordsList.length === 1) {
+    return getLineMidpoint(validCoordsList[0]);
+  }
+
+  const segLengths = validCoordsList.map((c) => getLineLength(c));
+  const totalLen = segLengths.reduce((a, b) => a + b, 0);
+  if (totalLen === 0) return validCoordsList[0][0];
+
+  const halfDist = totalLen / 2;
+  let accumulated = 0;
+  for (let i = 0; i < validCoordsList.length; i++) {
+    if (accumulated + segLengths[i] >= halfDist || i === validCoordsList.length - 1) {
+      const remain = halfDist - accumulated;
+      return getPointAlongLine(validCoordsList[i], remain);
+    }
+    accumulated += segLengths[i];
+  }
+  return validCoordsList[0][0];
 }
 
 function interpolatePoint(p1, p2, fraction) {
@@ -597,6 +731,71 @@ async function getWalkingDirections(start, destination) {
     distance_km: walkingRoute.distance / 1000,
     estimated_time_min: Math.ceil(walkingRoute.duration / 60),
   };
+}
+
+function distanceBetweenCoordsMeters(lat1, lng1, lat2, lng2) {
+  const R = 6371000;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLng = ((lng2 - lng1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) *
+    Math.cos((lat2 * Math.PI) / 180) *
+    Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(Math.max(0, Math.min(1, a))));
+}
+
+function minDistanceToPolylineMeters(lat, lng, polyline) {
+  if (!Array.isArray(polyline) || polyline.length === 0) return Infinity;
+  if (polyline.length === 1) {
+    return distanceBetweenCoordsMeters(lat, lng, polyline[0][0], polyline[0][1]);
+  }
+  let minDist = Infinity;
+  for (let i = 0; i < polyline.length - 1; i++) {
+    const lat1 = polyline[i][0];
+    const lng1 = polyline[i][1];
+    const lat2 = polyline[i + 1][0];
+    const lng2 = polyline[i + 1][1];
+
+    const midLat = (((lat1 + lat2) / 2) * Math.PI) / 180;
+    const cosLat = Math.cos(midLat);
+    const dx = (lng2 - lng1) * cosLat;
+    const dy = lat2 - lat1;
+    const lenSq = dx * dx + dy * dy;
+
+    let projLat = lat1;
+    let projLng = lng1;
+    if (lenSq > 1e-14) {
+      const px = (lng - lng1) * cosLat;
+      const py = lat - lat1;
+      const t = Math.max(0, Math.min(1, (px * dx + py * dy) / lenSq));
+      projLat = lat1 + t * (lat2 - lat1);
+      projLng = lng1 + t * (lng2 - lng1);
+    }
+    const d = distanceBetweenCoordsMeters(lat, lng, projLat, projLng);
+    if (d < minDist) {
+      minDist = d;
+      if (minDist <= 15.0) {
+        break;
+      }
+    }
+  }
+  return minDist;
+}
+
+export function mapboxRouteMatchesBackend(mapboxRouteCoords, backendCoords, thresholdMeters = 15.0) {
+  if (!Array.isArray(mapboxRouteCoords) || mapboxRouteCoords.length === 0) return false;
+  if (!Array.isArray(backendCoords) || backendCoords.length === 0) return false;
+
+  for (let i = 0; i < mapboxRouteCoords.length; i++) {
+    const pt = mapboxRouteCoords[i];
+    if (!Array.isArray(pt) || pt.length < 2) continue;
+    const dist = minDistanceToPolylineMeters(pt[0], pt[1], backendCoords);
+    if (dist > thresholdMeters) {
+      return false;
+    }
+  }
+  return true;
 }
 
 // --------------------------------------------------
@@ -951,14 +1150,8 @@ function createHazardPopup(properties, closedRoadNames = [], options = {}) {
 }
 
 function isBlockedRoadReport(report) {
-  if (report.blocks_road === true) return true;
-
-  if (Array.isArray(report.closed_roads) && report.closed_roads.length > 0) {
-    return true;
-  }
-
+  if (!report) return false;
   const text = `${report.report_type || ""} ${report.hazard_type || ""}`;
-
   return /block|closed|obstruct/i.test(text);
 }
 
@@ -988,7 +1181,7 @@ function resolvePhotoUrl(path) {
   return new URL(path, baseUrl).toString();
 }
 
-function findReportForRoad(properties, reports) {
+export function findReportForRoad(properties, reports) {
   const roadId =
     properties.id ?? properties.road_segment_id ?? properties.segment_id;
   const reportId =
@@ -1006,7 +1199,13 @@ function findReportForRoad(properties, reports) {
   });
 
   return (
-    matches.find((report) => report.photo_url || report.image_url || report.photo) ||
+    matches.find(
+      (report) =>
+        (Array.isArray(report.photos) && report.photos.length > 0) ||
+        report.photo_url ||
+        report.image_url ||
+        report.photo
+    ) ||
     matches[0] ||
     null
   );
@@ -1061,14 +1260,15 @@ function createBlockedRoadPopup(properties, report) {
     }
   }
 
-  const photoUrl = resolvePhotoUrl(
+  const candidateUrl =
+    (Array.isArray(report?.photos) && report.photos.length > 0 ? report.photos[0] : null) ||
     properties.photo_url ||
     properties.image_url ||
     properties.photo ||
     report?.photo_url ||
     report?.image_url ||
-    report?.photo
-  );
+    report?.photo;
+  const photoUrl = resolvePhotoUrl(candidateUrl);
   if (photoUrl) {
     const photo = document.createElement("img");
     photo.src = photoUrl;
@@ -1233,6 +1433,12 @@ const ResidentHome = () => {
   const selectedLocationMarkerRef = useRef(null);
   const savedReportHighlightRef = useRef(null);
   const hazardPopupRef = useRef(null);
+  const [isHazardPopupOpen, setIsHazardPopupOpen] = useState(false);
+  const [isMobileMap, setIsMobileMap] = useState(() =>
+    typeof window !== "undefined" && typeof window.matchMedia === "function"
+      ? window.matchMedia("(max-width: 768px)").matches
+      : false
+  );
   const accuracyCircleStateRef = useRef(null);
   const pickingPurposeRef = useRef("hazard");
 
@@ -1368,6 +1574,9 @@ const ResidentHome = () => {
     pickingLocationRef.current = pickingLocation;
     if (mapRef.current) {
       mapRef.current.__pickingLocation = pickingLocation;
+      if (pickingLocation) {
+        removeBuildingTooltip(mapRef.current);
+      }
     }
   }, [pickingLocation]);
 
@@ -1412,6 +1621,14 @@ const ResidentHome = () => {
     if (navigationWatchIdRef.current != null && navigator.geolocation) {
       navigator.geolocation.clearWatch(navigationWatchIdRef.current);
     }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return undefined;
+    const mq = window.matchMedia("(max-width: 768px)");
+    const onChange = (event) => setIsMobileMap(event.matches);
+    mq.addEventListener?.("change", onChange);
+    return () => mq.removeEventListener?.("change", onChange);
   }, []);
 
   // Keyboard close for popovers/sheets/cards
@@ -1545,16 +1762,29 @@ const ResidentHome = () => {
         closeButton: false,
         closeOnClick: true,
       });
+      popup.on("close", () => {
+        setIsHazardPopupOpen(false);
+        if (hazardPopupRef.current === popup) {
+          hazardPopupRef.current = null;
+        }
+      });
+      popup.on("open", () => {
+        setIsHazardPopupOpen(true);
+      });
       popup
         .setLngLat(event.lngLat)
         .setDOMContent(
           createHazardPopup(feature.properties || {}, [], {
-            onClose: () => popup.remove(),
+            onClose: () => {
+              popup.remove();
+              setIsHazardPopupOpen(false);
+            },
             popup,
           })
         )
         .addTo(map);
       hazardPopupRef.current = popup;
+      setIsHazardPopupOpen(true);
     };
 
     const handleMouseEnter = () => {
@@ -1602,8 +1832,14 @@ const ResidentHome = () => {
     hazardMarkersRef.current = [];
 
     const features = [];
+    const seenReportIds = new Set();
 
     hazardReports.forEach((report) => {
+      if (!report || report.id == null) return;
+      const reportIdStr = String(report.id);
+      if (seenReportIds.has(reportIdStr)) return;
+      seenReportIds.add(reportIdStr);
+
       const coordinates = getValidCoordinates([
         report.longitude ?? report.lng,
         report.latitude ?? report.lat,
@@ -1634,6 +1870,10 @@ const ResidentHome = () => {
       });
     });
 
+    console.log(
+      `[Hazard Reports] Validated reports: ${hazardReports.length}, Features drawn: ${features.length}`
+    );
+
     const geojsonData = {
       type: "FeatureCollection",
       features,
@@ -1650,31 +1890,37 @@ const ResidentHome = () => {
         });
       }
 
-      // Compact layer (zoomed out far < 15.0): badge icon ONLY, no label
+      const hazardFullMinZoom = isMobileMap ? 16 : 15;
+      const hazardCompactIconSize = isMobileMap ? 30 / 34 : 1.0;
+
+      // Compact layer (< 15 desktop, < 16 mobile): badge icon ONLY, no label
       if (!map.getLayer(layerIdCompact)) {
         map.addLayer({
           id: layerIdCompact,
           type: "symbol",
           source: sourceId,
-          maxzoom: 15.0,
+          maxzoom: hazardFullMinZoom,
           layout: {
             "icon-image": ["get", "icon_name_compact"],
             "icon-anchor": "center",
-            "icon-size": 1.0,
+            "icon-size": hazardCompactIconSize,
             "icon-allow-overlap": true,
             "icon-ignore-placement": true,
             "icon-padding": 0,
           },
         });
+      } else {
+        map.setLayerZoomRange(layerIdCompact, 0, hazardFullMinZoom);
+        map.setLayoutProperty(layerIdCompact, "icon-size", hazardCompactIconSize);
       }
 
-      // Full layer (zoomed in >= 15.0): badge icon + "Road blocked" label underneath
+      // Full layer (>= 15 desktop, >= 16 mobile): badge icon + "Road blocked" label underneath
       if (!map.getLayer(layerIdFull)) {
         map.addLayer({
           id: layerIdFull,
           type: "symbol",
           source: sourceId,
-          minzoom: 15.0,
+          minzoom: hazardFullMinZoom,
           layout: {
             "icon-image": ["get", "icon_name_full"],
             "icon-anchor": "center",
@@ -1684,6 +1930,8 @@ const ResidentHome = () => {
             "icon-padding": 0,
           },
         });
+      } else {
+        map.setLayerZoomRange(layerIdFull, hazardFullMinZoom, 24);
       }
 
       // Always hoist the hazard symbols above all road lines and route layers
@@ -1715,6 +1963,7 @@ const ResidentHome = () => {
           hazardPopupRef.current.remove();
         } catch { }
         hazardPopupRef.current = null;
+        setIsHazardPopupOpen(false);
       }
 
       const closedRoadNames = Array.isArray(targetReport.closed_roads)
@@ -1734,17 +1983,30 @@ const ResidentHome = () => {
         closeButton: false,
         closeOnClick: true,
       });
+      popup.on("close", () => {
+        setIsHazardPopupOpen(false);
+        if (hazardPopupRef.current === popup) {
+          hazardPopupRef.current = null;
+        }
+      });
+      popup.on("open", () => {
+        setIsHazardPopupOpen(true);
+      });
       popup
         .setLngLat(coordinates)
         .setDOMContent(
           createReportPopup(fullReport, {
-            onClose: () => popup.remove(),
+            onClose: () => {
+              popup.remove();
+              setIsHazardPopupOpen(false);
+            },
             popup,
           })
         )
         .addTo(map);
 
       hazardPopupRef.current = popup;
+      setIsHazardPopupOpen(true);
     }
 
     function handleHazardSymbolMouseEnter() {
@@ -1777,6 +2039,7 @@ const ResidentHome = () => {
           hazardPopupRef.current.remove();
         } catch { }
         hazardPopupRef.current = null;
+        setIsHazardPopupOpen(false);
       }
       if (savedReportHighlightRef.current) {
         savedReportHighlightRef.current.remove();
@@ -1792,7 +2055,7 @@ const ResidentHome = () => {
         });
       } catch (e) { }
     };
-  }, [hazardReports, roads, mapLoaded, mapStyle, styleVersion]);
+  }, [hazardReports, roads, mapLoaded, mapStyle, styleVersion, isMobileMap]);
 
   // Deep-link / notification opening a saved hazard report on the map
   useEffect(() => {
@@ -2358,7 +2621,10 @@ const ResidentHome = () => {
           id: layerId,
           type: "line",
           source: sourceId,
-
+          layout: {
+            "line-cap": "round",
+            "line-join": "round",
+          },
           paint: {
             "line-color": [
               "case",
@@ -2435,6 +2701,7 @@ const ResidentHome = () => {
               hazardPopupRef.current.remove();
             } catch { }
             hazardPopupRef.current = null;
+            setIsHazardPopupOpen(false);
           }
 
           const closedRoadNames = Array.isArray(report.closed_roads)
@@ -2453,17 +2720,30 @@ const ResidentHome = () => {
             closeButton: false,
             closeOnClick: true,
           });
+          popup.on("close", () => {
+            setIsHazardPopupOpen(false);
+            if (hazardPopupRef.current === popup) {
+              hazardPopupRef.current = null;
+            }
+          });
+          popup.on("open", () => {
+            setIsHazardPopupOpen(true);
+          });
           popup
             .setLngLat(coordinates)
             .setDOMContent(
               createReportPopup(fullReport, {
-                onClose: () => popup.remove(),
+                onClose: () => {
+                  popup.remove();
+                  setIsHazardPopupOpen(false);
+                },
                 popup,
               })
             )
             .addTo(map);
 
           hazardPopupRef.current = popup;
+          setIsHazardPopupOpen(true);
         }
         return;
       }
@@ -2564,7 +2844,10 @@ const ResidentHome = () => {
           id: layerId,
           type: "line",
           source: sourceId,
-
+          layout: {
+            "line-cap": "round",
+            "line-join": "round",
+          },
           paint: {
             "line-color": mapStyle === "satellite" ? "#38bdf8" : "#1e3a8a",
             "line-width": 2.5,
@@ -2675,7 +2958,7 @@ const ResidentHome = () => {
           id: "evacuation-centers-label",
           type: "symbol",
           source: sourceId,
-          minzoom: ROOM_MIN_ZOOM,
+          minzoom: CENTER_MARKER_MAX_ZOOM,
           layout: {
             "text-field": ["get", "name"],
             "text-font": ["Open Sans Bold", "Arial Unicode MS Bold"],
@@ -2692,6 +2975,10 @@ const ResidentHome = () => {
             "text-halo-width": 2.5,
           },
         });
+      }
+
+      if (map.getLayer("evacuation-centers-label")) {
+        map.setLayerZoomRange("evacuation-centers-label", CENTER_MARKER_MAX_ZOOM, 24);
       }
     } catch (err) {
       console.warn("Error updating evacuation centers layer:", err);
@@ -2821,22 +3108,88 @@ const ResidentHome = () => {
     }
 
     const myCenterId = myCenter?.evacuation_center?.id;
+    const selectedCenterId = selectedCenter?.properties?.id ?? selectedCenter?.id ?? null;
+    const markerEntries = [];
 
     function removeCenterMarkers() {
       evacuationMarkersRef.current.forEach((marker) => marker.remove());
 
       evacuationMarkersRef.current = [];
+      markerEntries.length = 0;
+    }
+
+    function updateCenterMarkerVisibility() {
+      const zoom = map.getZoom();
+      if (zoom >= CENTER_MARKER_MAX_ZOOM) {
+        markerEntries.forEach((entry) => {
+          entry.element.style.display = "none";
+          entry.element.classList.remove("show-label");
+        });
+        return;
+      }
+
+      const labelMinZoom = isMobileMap ? 15.5 : 14;
+      const allowZoomLabels = zoom >= labelMinZoom;
+      const mapCenterPt = map.project(map.getCenter());
+
+      // Prioritized label at any zoom: selected center first, otherwise assigned center (one at a time)
+      const priorityEntry =
+        markerEntries.find((entry) => entry.isSelected) ||
+        markerEntries.find((entry) => entry.isMine) ||
+        null;
+
+      const visibleLabelIds = new Set();
+      const keptRects = [];
+
+      const makeLabelRect = (entry) => {
+        const pt = map.project(entry.coordinates);
+        const maxW = isMobileMap ? 120 : 220;
+        const w = Math.min(maxW, Math.max(76, entry.name.length * 6.2 + 22));
+        const h = isMobileMap ? 22 : 24;
+        const halfW = w / 2;
+        const top = pt.y + 6;
+        return {
+          left: pt.x - halfW,
+          right: pt.x + halfW,
+          top,
+          bottom: top + h,
+          dist: Math.hypot(pt.x - mapCenterPt.x, pt.y - mapCenterPt.y),
+        };
+      };
+
+      const rectsIntersect = (a, b) =>
+        !(a.right + 6 < b.left || a.left - 6 > b.right || a.bottom + 4 < b.top || a.top - 4 > b.bottom);
+
+      if (priorityEntry) {
+        visibleLabelIds.add(priorityEntry.key);
+        keptRects.push(makeLabelRect(priorityEntry));
+      }
+
+      if (allowZoomLabels) {
+        const candidates = markerEntries
+          .filter((entry) => !visibleLabelIds.has(entry.key))
+          .map((entry) => ({ entry, rect: makeLabelRect(entry) }))
+          .sort((a, b) => a.rect.dist - b.rect.dist);
+
+        candidates.forEach(({ entry, rect }) => {
+          if (!keptRects.some((kept) => rectsIntersect(rect, kept))) {
+            visibleLabelIds.add(entry.key);
+            keptRects.push(rect);
+          }
+        });
+      }
+
+      markerEntries.forEach((entry) => {
+        entry.element.style.display = "";
+        entry.element.classList.toggle("is-selected", entry.isSelected);
+        entry.element.classList.toggle("show-label", visibleLabelIds.has(entry.key));
+      });
     }
 
     function showCenterMarkers() {
       removeCenterMarkers();
 
-      // Zoomed in: the outline and room icons are shown instead
-      if (map.getZoom() >= ROOM_MIN_ZOOM) {
-        return;
-      }
-
-      (evacCenters.features || []).forEach((center) => {
+      (evacCenters.features || []).forEach((center, idx) => {
         const properties = center.properties || center || {};
 
         const centerCoords = getCenterCoordinates(center, buildingsGeoJSON);
@@ -2846,8 +3199,11 @@ const ResidentHome = () => {
         const coordinates = [centerCoords.longitude, centerCoords.latitude];
 
         const centerId = properties.id ?? center.id;
+        const centerKey = centerId != null ? String(centerId) : `idx-${idx}`;
         const isMine =
           myCenterId != null && String(centerId) === String(myCenterId);
+        const isSelected =
+          selectedCenterId != null && String(centerId) === String(selectedCenterId);
 
         const centerName = displayEntityName(
           properties.name ?? center.name ?? properties.center_name,
@@ -2870,7 +3226,7 @@ const ResidentHome = () => {
 
         const element = document.createElement("button");
         element.type = "button";
-        element.className = `evacway-center-marker show-label${isMine ? " evacway-center-marker-mine" : ""}`;
+        element.className = `evacway-center-marker${isMine ? " evacway-center-marker-mine" : ""}${isSelected ? " is-selected" : ""}`;
         element.setAttribute(
           "aria-label",
           `Evacuation Center: ${centerName}, ${pct}% occupied`
@@ -2913,21 +3269,40 @@ const ResidentHome = () => {
           .addTo(map);
 
         evacuationMarkersRef.current.push(marker);
+        markerEntries.push({
+          key: centerKey,
+          name: centerName,
+          coordinates,
+          isMine,
+          isSelected,
+          element,
+        });
       });
+
+      updateCenterMarkerVisibility();
+    }
+
+    function handleMapBackgroundClick() {
+      if (pickingLocationRef.current) return;
+      setSelectedCenter(null);
     }
 
     showCenterMarkers();
 
-    map.on("zoom", showCenterMarkers);
-    map.on("zoomend", showCenterMarkers);
+    map.on("zoom", updateCenterMarkerVisibility);
+    map.on("zoomend", updateCenterMarkerVisibility);
+    map.on("moveend", updateCenterMarkerVisibility);
+    map.on("click", handleMapBackgroundClick);
 
     return () => {
-      map.off("zoom", showCenterMarkers);
-      map.off("zoomend", showCenterMarkers);
+      map.off("zoom", updateCenterMarkerVisibility);
+      map.off("zoomend", updateCenterMarkerVisibility);
+      map.off("moveend", updateCenterMarkerVisibility);
+      map.off("click", handleMapBackgroundClick);
 
       removeCenterMarkers();
     };
-  }, [evacCenters, mapLoaded, myCenter, buildingsGeoJSON]);
+  }, [evacCenters, mapLoaded, myCenter, buildingsGeoJSON, selectedCenter, isMobileMap]);
 
   // --------------------------------------------------
   // Native Mapbox Building Layers (clickable buildings instead of room pills)
@@ -3007,6 +3382,10 @@ const ResidentHome = () => {
       userRoomMarkerRef.current.remove();
       userRoomMarkerRef.current = null;
     }
+
+    return () => {
+      removeBuildingTooltip(map);
+    };
   }, [mapLoaded, buildingsGeoJSON, mapStyle, styleVersion, selectedBuildingId, myCenter]);
 
   // --------------------------------------------------
@@ -3553,12 +3932,22 @@ const ResidentHome = () => {
             String(assignedCenterId) === String(myCenter.evacuation_center.id)
           );
 
-          if (result.no_roads_available || result.all_blocked) {
+          if (
+            !result ||
+            result.no_roads_available ||
+            result.all_blocked ||
+            !result.route ||
+            result.route.length === 0
+          ) {
             const blockedNotice = {
               no_roads_available: true,
               all_blocked: true,
-              evacuation_center: result.evacuation_center || myCenter?.evacuation_center || { name: "Evacuation Center" },
-              message: "No roads available. All routes to your evacuation center are blocked.",
+              evacuation_center:
+                result?.evacuation_center ||
+                myCenter?.evacuation_center || { name: "Evacuation Center" },
+              message:
+                result?.message ||
+                "No roads available. All routes to your evacuation center are blocked.",
               route: [],
               distance_km: null,
               estimated_time_min: null,
@@ -3570,57 +3959,57 @@ const ResidentHome = () => {
             return;
           }
 
-          let routeToDisplay = result;
           if (result.error) {
-            const errStr = String(result.error).toLowerCase();
-            if (errStr.includes("no reachable") || errStr.includes("blocked") || errStr.includes("disconnected") || errStr.includes("no roads")) {
-              const blockedNotice = {
-                no_roads_available: true,
-                all_blocked: true,
-                evacuation_center: myCenter?.evacuation_center || { name: "Evacuation Center" },
-                message: "No roads available. All routes to your evacuation center are blocked.",
-                route: [],
-                distance_km: null,
-                estimated_time_min: null,
-              };
-              setAssistanceSent(false);
-              routeDataRef.current = blockedNotice;
-              setRoute(blockedNotice);
-              setFindingRoute(false);
-              return;
-            }
-            setRouteError(result.error);
+            const blockedNotice = {
+              no_roads_available: true,
+              all_blocked: true,
+              evacuation_center:
+                myCenter?.evacuation_center || { name: "Evacuation Center" },
+              message:
+                "No roads available. All routes to your evacuation center are blocked.",
+              route: [],
+              distance_km: null,
+              estimated_time_min: null,
+            };
+            setAssistanceSent(false);
+            routeDataRef.current = blockedNotice;
+            setRoute(blockedNotice);
             setFindingRoute(false);
             return;
           }
 
-          if (result.evacuation_center) {
+          let walkingSteps = [];
+          if (result.evacuation_center && result.route && result.route.length > 0) {
             try {
-              const walkingTarget = result.chosen_entrance || result.evacuation_center;
+              const walkingTarget =
+                result.chosen_entrance || result.evacuation_center;
               const walkingDirections = await getWalkingDirections(
                 [pos.coords.latitude, pos.coords.longitude],
                 walkingTarget
               );
-              routeToDisplay = {
-                ...result,
-                ...walkingDirections,
-                route: result.route && result.route.length > 0 ? result.route : walkingDirections.route,
-                distance_km: result.distance_km ?? walkingDirections.distance_km,
-                estimated_time_min: result.estimated_time_min ?? walkingDirections.estimated_time_min,
-                walking_steps: walkingDirections.walking_steps,
-                final_leg: result.final_leg,
-                start_leg: result.start_leg,
-                chosen_entrance: result.chosen_entrance,
-              };
-            } catch (directionsError) {
-              setRouteError(
-                directionsError.message ||
-                "Turn-by-turn directions are unavailable. Showing the available evacuation route."
+              // Mapbox directions may be used ONLY for turn-by-turn steps,
+              // and ONLY when its geometry stays within 15 m of the backend route.
+              const staysWithin15m = mapboxRouteMatchesBackend(
+                walkingDirections.route,
+                result.route,
+                15.0
               );
+              if (staysWithin15m && Array.isArray(walkingDirections.walking_steps)) {
+                walkingSteps = walkingDirections.walking_steps;
+              }
+            } catch {
+              // Mapbox directions unavailable or deviated: route safely without Mapbox steps
             }
-          } else {
-            setRouteError("Walking directions are unavailable for this route.");
           }
+
+          const routeToDisplay = {
+            ...result,
+            route: result.route, // ALWAYS keep the backend route geometry
+            walking_steps: walkingSteps,
+            final_leg: result.final_leg,
+            start_leg: result.start_leg,
+            chosen_entrance: result.chosen_entrance,
+          };
 
           activeEntranceRef.current = routeToDisplay.chosen_entrance || null;
           routeDataRef.current = routeToDisplay;
@@ -3635,23 +4024,20 @@ const ResidentHome = () => {
 
           setLocationPermission("granted");
         } catch (err) {
-          const errText = String(err?.message || "").toLowerCase();
-          if (errText.includes("no reachable") || errText.includes("blocked") || errText.includes("disconnected") || errText.includes("no roads")) {
-            const blockedNotice = {
-              no_roads_available: true,
-              all_blocked: true,
-              evacuation_center: myCenter?.evacuation_center || { name: "Evacuation Center" },
-              message: "No roads available. All routes to your evacuation center are blocked.",
-              route: [],
-              distance_km: null,
-              estimated_time_min: null,
-            };
-            setAssistanceSent(false);
-            routeDataRef.current = blockedNotice;
-            setRoute(blockedNotice);
-          } else {
-            setRouteError(err.message || "Failed to find an evacuation route.");
-          }
+          const blockedNotice = {
+            no_roads_available: true,
+            all_blocked: true,
+            evacuation_center:
+              myCenter?.evacuation_center || { name: "Evacuation Center" },
+            message:
+              "No roads available. All routes to your evacuation center are blocked.",
+            route: [],
+            distance_km: null,
+            estimated_time_min: null,
+          };
+          setAssistanceSent(false);
+          routeDataRef.current = blockedNotice;
+          setRoute(blockedNotice);
         } finally {
           setFindingRoute(false);
         }
@@ -4495,7 +4881,7 @@ const ResidentHome = () => {
               setMyCenter(match);
             }
           })
-          .catch(() => {});
+          .catch(() => { });
       }
     }
   }
@@ -4866,7 +5252,11 @@ const ResidentHome = () => {
     setFindSomeoneResults([]);
 
     try {
-      const result = await api.findMyEvacuationCenter(name);
+      const lookupParam =
+        item?.resident_id != null
+          ? { resident_id: item.resident_id }
+          : { name };
+      const result = await api.findMyEvacuationCenter(lookupParam);
       const matches = normalizeMatches(result);
       let bestMatches = matches;
       if (item.barangay) {
@@ -4937,7 +5327,7 @@ const ResidentHome = () => {
     setFindSomeoneResults([]);
 
     try {
-      const result = await api.findMyEvacuationCenter(query);
+      const result = await api.findMyEvacuationCenter({ name: query });
       const matches = normalizeMatches(result);
       setFindSomeoneResults(matches.slice(0, 5));
     } catch {
@@ -5404,7 +5794,7 @@ const ResidentHome = () => {
 
   const hasAssigned = Boolean(myCenter && (myCenter.room || myCenter.evacuation_center));
   const isRoomCardVisible = Boolean(
-    hasAssigned && !navigationActive && !hideRoomBarForSearch
+    hasAssigned && !navigationActive && !hideRoomBarForSearch && !(isMobile && isHazardPopupOpen)
   );
 
   const isRoomCardExpanded = Boolean(
@@ -5415,8 +5805,8 @@ const ResidentHome = () => {
   const roomNum = myCenter?.room?.room_name || (
     myCenter?.room?.room_number
       ? (String(myCenter.room.room_number).toLowerCase().startsWith("room")
-          ? myCenter.room.room_number
-          : `Room ${myCenter.room.room_number}`)
+        ? myCenter.room.room_number
+        : `Room ${myCenter.room.room_number}`)
       : "Room 29"
   );
   const hasBuilding = Boolean(myCenter?.room?.building_id && myCenter?.room?.building_name);
@@ -5503,7 +5893,7 @@ const ResidentHome = () => {
   return (
     <div
       className={`resident-home ${isRoomCardVisible ? "has-room-card" : ""} ${isRoomCardExpanded ? "has-room-card-expanded" : ""
-        } ${pickingLocation && pickingPurposeRef.current === "hazard" ? "picking-hazard-mode" : ""}`}
+        } ${isHazardPopupOpen ? "has-hazard-popup" : ""} ${pickingLocation && pickingPurposeRef.current === "hazard" ? "picking-hazard-mode" : ""}`}
     >
       {/* Mapbox map */}
       <div
@@ -6129,213 +6519,212 @@ const ResidentHome = () => {
             onScroll={(e) => setCenterPanelScrolled(e.currentTarget.scrollTop > 4)}
           >
             {/* BUILDINGS LIST (for campus) OR OPEN SHELTER SPACE (for single venue / private property) */}
-          {(() => {
-            const cType =
-              selectedCenter.properties?.center_type ||
-              selectedCenter.center_type ||
-              "campus";
-            const isSingleVenueOrHouse = cType !== "campus";
+            {(() => {
+              const cType =
+                selectedCenter.properties?.center_type ||
+                selectedCenter.center_type ||
+                "campus";
+              const isSingleVenueOrHouse = cType !== "campus";
 
-            if (isSingleVenueOrHouse) {
-              const cap = Number(selectedCenterCapacity || 0);
-              const occ = Number(selectedCenterOccupied || 0);
-              const spaceLeft = Math.max(0, cap - occ);
+              if (isSingleVenueOrHouse) {
+                const cap = Number(selectedCenterCapacity || 0);
+                const occ = Number(selectedCenterOccupied || 0);
+                const spaceLeft = Math.max(0, cap - occ);
+
+                return (
+                  <div className="center-card-buildings-section">
+                    <div className="center-card-buildings-header">
+                      <span className="buildings-header-title">Shelter Space</span>
+                      <span className="buildings-header-sub">
+                        {cType === "private_property"
+                          ? "Private Property"
+                          : "Single Open Space"}
+                      </span>
+                    </div>
+                    <div className="center-shelter-space-card">
+                      <div className="center-shelter-row">
+                        <span className="center-shelter-label">Capacity</span>
+                        <strong className="center-shelter-val">{cap} people</strong>
+                      </div>
+                      <div className="center-shelter-row">
+                        <span className="center-shelter-label">Space remaining</span>
+                        <strong
+                          className="center-shelter-val"
+                          style={{
+                            color: spaceLeft > 0 ? "#16a34a" : "#dc2626",
+                          }}
+                        >
+                          {spaceLeft} space{spaceLeft === 1 ? "" : "s"} left
+                        </strong>
+                      </div>
+                      {selectedCenter.properties?.building_material && (
+                        <div className="center-shelter-row">
+                          <span className="center-shelter-label">
+                            Building material
+                          </span>
+                          <span className="center-shelter-val">
+                            {selectedCenter.properties.building_material}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              }
 
               return (
                 <div className="center-card-buildings-section">
                   <div className="center-card-buildings-header">
-                    <span className="buildings-header-title">Shelter Space</span>
+                    <span className="buildings-header-title">
+                      Buildings ({selectedCenterBuildings.length})
+                    </span>
                     <span className="buildings-header-sub">
-                      {cType === "private_property"
-                        ? "Private Property"
-                        : "Single Open Space"}
+                      Tap building to view rooms
                     </span>
                   </div>
-                  <div className="center-shelter-space-card">
-                    <div className="center-shelter-row">
-                      <span className="center-shelter-label">Capacity</span>
-                      <strong className="center-shelter-val">{cap} people</strong>
-                    </div>
-                    <div className="center-shelter-row">
-                      <span className="center-shelter-label">Space remaining</span>
-                      <strong
-                        className="center-shelter-val"
-                        style={{
-                          color: spaceLeft > 0 ? "#16a34a" : "#dc2626",
-                        }}
-                      >
-                        {spaceLeft} space{spaceLeft === 1 ? "" : "s"} left
-                      </strong>
-                    </div>
-                    {selectedCenter.properties?.building_material && (
-                      <div className="center-shelter-row">
-                        <span className="center-shelter-label">
-                          Building material
-                        </span>
-                        <span className="center-shelter-val">
-                          {selectedCenter.properties.building_material}
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              );
-            }
+                  {selectedCenterBuildings.length > 0 ? (
+                    <div className="center-card-buildings-list" role="list">
+                      {selectedCenterBuildings.map((b) => {
+                        const bOcc = b.occupied || 0;
+                        const bAssigned = b.assigned ?? 0;
+                        const bCap = b.capacity || 0;
+                        const bPct =
+                          bCap > 0
+                            ? Math.min(100, Math.round((bOcc / bCap) * 100))
+                            : 0;
+                        const bAssignedPct =
+                          bCap > 0
+                            ? Math.min(100, Math.round((bAssigned / bCap) * 100))
+                            : 0;
 
-            return (
-              <div className="center-card-buildings-section">
-                <div className="center-card-buildings-header">
-                  <span className="buildings-header-title">
-                    Buildings ({selectedCenterBuildings.length})
-                  </span>
-                  <span className="buildings-header-sub">
-                    Tap building to view rooms
-                  </span>
-                </div>
-                {selectedCenterBuildings.length > 0 ? (
-                  <div className="center-card-buildings-list" role="list">
-                    {selectedCenterBuildings.map((b) => {
-                      const bOcc = b.occupied || 0;
-                      const bAssigned = b.assigned ?? 0;
-                      const bCap = b.capacity || 0;
-                      const bPct =
-                        bCap > 0
-                          ? Math.min(100, Math.round((bOcc / bCap) * 100))
-                          : 0;
-                      const bAssignedPct =
-                        bCap > 0
-                          ? Math.min(100, Math.round((bAssigned / bCap) * 100))
-                          : 0;
+                        // Unified status colors
+                        let statusKey = "available";
+                        let statusLabel = "Available";
+                        let statusDotColor = "#16a34a";
+                        let bColor = "#16a34a";
 
-                      // Unified status colors
-                      let statusKey = "available";
-                      let statusLabel = "Available";
-                      let statusDotColor = "#16a34a";
-                      let bColor = "#16a34a";
+                        if (bCap === 0) {
+                          statusKey = "no-data";
+                          statusLabel = "No data";
+                          statusDotColor = "#94a3b8";
+                          bColor = "#94a3b8";
+                        } else if (bOcc >= bCap) {
+                          statusKey = "full";
+                          statusLabel = "Full";
+                          statusDotColor = "#dc2626";
+                          bColor = "#dc2626";
+                        } else if (bAssigned >= bCap) {
+                          statusKey = "fully-assigned";
+                          statusLabel = "Fully assigned";
+                          statusDotColor = "#d97706";
+                          bColor = "#d97706";
+                        } else if (bPct >= 70) {
+                          statusKey = "filling";
+                          statusLabel = "Filling";
+                          statusDotColor = "#d97706";
+                          bColor = "#d97706";
+                        }
 
-                      if (bCap === 0) {
-                        statusKey = "no-data";
-                        statusLabel = "No data";
-                        statusDotColor = "#94a3b8";
-                        bColor = "#94a3b8";
-                      } else if (bOcc >= bCap) {
-                        statusKey = "full";
-                        statusLabel = "Full";
-                        statusDotColor = "#dc2626";
-                        bColor = "#dc2626";
-                      } else if (bAssigned >= bCap) {
-                        statusKey = "fully-assigned";
-                        statusLabel = "Fully assigned";
-                        statusDotColor = "#d97706";
-                        bColor = "#d97706";
-                      } else if (bPct >= 70) {
-                        statusKey = "filling";
-                        statusLabel = "Filling";
-                        statusDotColor = "#d97706";
-                        bColor = "#d97706";
-                      }
+                        const isUserBuilding =
+                          myCenter?.room?.building_id != null &&
+                          String(myCenter.room.building_id) === String(b.id);
 
-                      const isUserBuilding =
-                        myCenter?.room?.building_id != null &&
-                        String(myCenter.room.building_id) === String(b.id);
+                        return (
+                          <button
+                            type="button"
+                            key={b.id}
+                            className={`center-building-card ${isUserBuilding ? "is-user-building" : ""
+                              }`}
+                            onClick={() => {
+                              setSelectedBuildingId(b.id);
+                              setSelectedBuildingData(b);
+                              setBuildingModalOpen(true);
+                              closeCenterDetails();
+                            }}
+                            role="listitem"
+                            aria-label={`${b.name || "Building"}, ${b.room_count || 0} rooms, ${statusLabel}, ${bOcc} of ${bCap} here, ${bAssigned} assigned`}
+                          >
+                            <div className="center-building-card-main">
+                              {/* 40px soft-tinted rounded icon square */}
+                              <div className="center-building-icon-square" aria-hidden="true">
+                                <FontAwesomeIcon icon={faBuilding} />
+                              </div>
 
-                      return (
-                        <button
-                          type="button"
-                          key={b.id}
-                          className={`center-building-card ${
-                            isUserBuilding ? "is-user-building" : ""
-                          }`}
-                          onClick={() => {
-                            setSelectedBuildingId(b.id);
-                            setSelectedBuildingData(b);
-                            setBuildingModalOpen(true);
-                            closeCenterDetails();
-                          }}
-                          role="listitem"
-                          aria-label={`${b.name || "Building"}, ${b.room_count || 0} rooms, ${statusLabel}, ${bOcc} of ${bCap} here, ${bAssigned} assigned`}
-                        >
-                          <div className="center-building-card-main">
-                            {/* 40px soft-tinted rounded icon square */}
-                            <div className="center-building-icon-square" aria-hidden="true">
-                              <FontAwesomeIcon icon={faBuilding} />
-                            </div>
-
-                            {/* Building Name & Subtitle */}
-                            <div className="center-building-card-info">
-                              <div className="center-building-name-line">
-                                <span className="center-building-card-name">
-                                  {b.name || `Building #${b.id}`}
-                                </span>
-                                {isUserBuilding && (
-                                  <span className="bldg-badge-yours">
-                                    Your building
+                              {/* Building Name & Subtitle */}
+                              <div className="center-building-card-info">
+                                <div className="center-building-name-line">
+                                  <span className="center-building-card-name">
+                                    {b.name || `Building #${b.id}`}
                                   </span>
-                                )}
+                                  {isUserBuilding && (
+                                    <span className="bldg-badge-yours">
+                                      Your building
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="center-building-card-sub">
+                                  {bOcc} of {bCap} here · {bAssigned} assigned
+                                </div>
                               </div>
-                              <div className="center-building-card-sub">
-                                {bOcc} of {bCap} here · {bAssigned} assigned
+
+                              {/* Right: room count + chevron and status pill */}
+                              <div className="center-building-card-right">
+                                <div className="center-building-rooms-wrap">
+                                  <span className="center-building-rooms-text">
+                                    {b.room_count || 0}{" "}
+                                    {b.room_count === 1 ? "room" : "rooms"}
+                                  </span>
+                                  <FontAwesomeIcon
+                                    icon={faChevronRight}
+                                    className="center-building-chevron"
+                                  />
+                                </div>
+                                <span className={`center-bldg-badge is-${statusKey}`}>
+                                  <span
+                                    className="center-bldg-dot"
+                                    style={{ backgroundColor: statusDotColor }}
+                                  />
+                                  {statusLabel}
+                                </span>
                               </div>
                             </div>
 
-                            {/* Right: room count + chevron and status pill */}
-                            <div className="center-building-card-right">
-                              <div className="center-building-rooms-wrap">
-                                <span className="center-building-rooms-text">
-                                  {b.room_count || 0}{" "}
-                                  {b.room_count === 1 ? "room" : "rooms"}
-                                </span>
-                                <FontAwesomeIcon
-                                  icon={faChevronRight}
-                                  className="center-building-chevron"
+                            {/* Thin 4px progress bar with percentage */}
+                            <div className="center-building-bar-row">
+                              <div className="center-building-bar-track" aria-hidden="true">
+                                {bAssignedPct > 0 && (
+                                  <div
+                                    className="center-building-bar-assigned"
+                                    style={{ width: `${Math.min(100, bAssignedPct)}%` }}
+                                  />
+                                )}
+                                <div
+                                  className="center-building-bar-fill"
+                                  style={{
+                                    width: `${Math.min(100, bPct)}%`,
+                                    backgroundColor: bColor,
+                                  }}
                                 />
                               </div>
-                              <span className={`center-bldg-badge is-${statusKey}`}>
-                                <span
-                                  className="center-bldg-dot"
-                                  style={{ backgroundColor: statusDotColor }}
-                                />
-                                {statusLabel}
+                              <span className="center-building-pct-text">
+                                {bPct}%
                               </span>
                             </div>
-                          </div>
-
-                          {/* Thin 4px progress bar with percentage */}
-                          <div className="center-building-bar-row">
-                            <div className="center-building-bar-track" aria-hidden="true">
-                              {bAssignedPct > 0 && (
-                                <div
-                                  className="center-building-bar-assigned"
-                                  style={{ width: `${Math.min(100, bAssignedPct)}%` }}
-                                />
-                              )}
-                              <div
-                                className="center-building-bar-fill"
-                                style={{
-                                  width: `${Math.min(100, bPct)}%`,
-                                  backgroundColor: bColor,
-                                }}
-                              />
-                            </div>
-                            <span className="center-building-pct-text">
-                              {bPct}%
-                            </span>
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <div className="center-buildings-empty">
-                    <span>No buildings mapped for this center yet.</span>
-                  </div>
-                )}
-              </div>
-            );
-          })()}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="center-buildings-empty">
+                      <span>No buildings mapped for this center yet.</span>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+          </div>
         </div>
-      </div>
-    )}
+      )}
 
       {/* Bottom Action Bar: Google Earth-style round icon button row in bottom-right corner */}
       <div
@@ -6925,28 +7314,28 @@ const ResidentHome = () => {
                   {(myCenter?.room?.building_name ||
                     user?.building_name ||
                     user?.room?.building_name) && (
-                    <div className="mc-result-row">
-                      <span>Building</span>
-                      <strong>
-                        {myCenter?.room?.building_name ||
-                          user?.building_name ||
-                          user?.room?.building_name}
-                      </strong>
-                    </div>
-                  )}
+                      <div className="mc-result-row">
+                        <span>Building</span>
+                        <strong>
+                          {myCenter?.room?.building_name ||
+                            user?.building_name ||
+                            user?.room?.building_name}
+                        </strong>
+                      </div>
+                    )}
 
                   {(myCenter?.room?.room_number ||
                     user?.room_number ||
                     user?.room?.room_number) && (
-                    <div className="mc-result-row">
-                      <span>Assigned room</span>
-                      <strong>
-                        {myCenter?.room?.room_number ||
-                          user?.room_number ||
-                          user?.room?.room_number}
-                      </strong>
-                    </div>
-                  )}
+                      <div className="mc-result-row">
+                        <span>Assigned room</span>
+                        <strong>
+                          {myCenter?.room?.room_number ||
+                            user?.room_number ||
+                            user?.room?.room_number}
+                        </strong>
+                      </div>
+                    )}
                 </div>
 
                 <div className="mc-actions">
@@ -7240,9 +7629,8 @@ const ResidentHome = () => {
                               id={`fs-suggest-item-${idx}`}
                               role="option"
                               aria-selected={isSelected}
-                              className={`find-someone-suggest-item ${
-                                isSelected ? "is-active" : ""
-                              }`}
+                              className={`find-someone-suggest-item ${isSelected ? "is-active" : ""
+                                }`}
                               onClick={() => handleSelectFindSomeoneSuggestion(item)}
                               onMouseEnter={() => setFindSomeoneAutosuggestIndex(idx)}
                             >

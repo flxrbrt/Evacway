@@ -1065,7 +1065,6 @@ function Dashboard() {
 
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [barangayMetric, setBarangayMetric] = useState("households");
-  const [barangaySearch, setBarangaySearch] = useState("");
   const [activeBarangayPopover, setActiveBarangayPopover] = useState(null);
 
   // Month Switcher State for Incident Trends (shared across Hazard Reports & Rescue Requests)
@@ -1448,11 +1447,6 @@ function Dashboard() {
       }));
   }, [barangaysData, barangayMetric]);
 
-  const filteredBarangays = useMemo(() => {
-    if (!barangaySearch.trim()) return allBarangays;
-    const q = barangaySearch.trim().toLowerCase();
-    return allBarangays.filter((b) => b.name?.toLowerCase().includes(q));
-  }, [allBarangays, barangaySearch]);
 
   const maxBarangayVal = useMemo(() => {
     if (!allBarangays.length) return 1;
@@ -1742,8 +1736,8 @@ function Dashboard() {
 
               {/* 6. DEMOGRAPHICS BY BARANGAY COMPARATIVE ANALYTICS (ALL BARANGAYS) */}
               <section className="dashboard-card p-5 sm:p-6" aria-label="Demographic distribution">
-                <div className="mb-5 flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-4">
-                  <div>
+                <div className="mb-5 flex flex-col items-start gap-3 border-b border-slate-100 pb-4 min-[769px]:flex-row min-[769px]:items-center min-[769px]:justify-between">
+                  <div className="min-w-0">
                     <div className="flex items-center gap-2">
                       <FontAwesomeIcon icon={faLocationDot} className="text-blue-600 text-sm" />
                       <h2 className="dashboard-heading text-lg font-black text-slate-900 tracking-tight">
@@ -1752,22 +1746,7 @@ function Dashboard() {
                     </div>
                   </div>
 
-                  <div className="flex flex-wrap items-center gap-2.5">
-                    {/* Live Search input */}
-                    <div className="relative">
-                      <FontAwesomeIcon
-                        icon={faMagnifyingGlass}
-                        className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs pointer-events-none"
-                      />
-                      <input
-                        type="text"
-                        value={barangaySearch}
-                        onChange={(e) => setBarangaySearch(e.target.value)}
-                        placeholder="Search barangay..."
-                        className="pl-8 pr-3 py-1.5 rounded-xl border border-slate-200 bg-slate-50 text-xs font-semibold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:bg-white w-40 sm:w-48 transition"
-                      />
-                    </div>
-
+                  <div className="flex items-center min-[769px]:ml-auto min-[769px]:shrink-0">
                     {/* Metric Switch */}
                     <div className="flex items-center p-1 rounded-xl bg-slate-100 border border-slate-200/60 text-xs font-bold">
                       <button
@@ -1796,10 +1775,10 @@ function Dashboard() {
                   </div>
                 </div>
 
-                {filteredBarangays.length > 0 ? (
+                {allBarangays.length > 0 ? (
                   <div className="dashboard-scrollbar max-h-[520px] overflow-y-auto pr-1">
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                      {filteredBarangays.map((barangay) => {
+                      {allBarangays.map((barangay) => {
                         const barWidth = Math.round((barangay.val / maxBarangayVal) * 100);
 
                         return (
@@ -1855,7 +1834,7 @@ function Dashboard() {
                   </div>
                 ) : (
                   <p className="rounded-xl bg-slate-50 px-4 py-8 text-center text-xs text-slate-500 font-medium">
-                    {barangaySearch ? `No barangays found matching "${barangaySearch}".` : "No barangay census records registered yet."}
+                    No barangay census records registered yet.
                   </p>
                 )}
 

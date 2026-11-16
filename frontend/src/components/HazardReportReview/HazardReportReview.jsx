@@ -11,6 +11,7 @@ import {
   faCheck,
   faXmark,
   faImage,
+  faCamera,
   faLocationDot,
   faClock,
   faMagnifyingGlassPlus,
@@ -29,18 +30,9 @@ import {
   faFilter,
   faUser,
 } from "@fortawesome/free-solid-svg-icons";
-import { highlightAndOpenSavedReport } from "../../utils/mapLocationIndicators";
 import "./HazardReportReview.css";
 
 mapboxgl.accessToken = import.meta.env.VITE_MAPBOX_TOKEN;
-
-const STATUS_FILTERS = [
-  { key: "all", label: "All" },
-  { key: "pending", label: "Pending" },
-  { key: "validated", label: "Validated" },
-  { key: "resolved", label: "Resolved" },
-  { key: "rejected", label: "Rejected" },
-];
 
 const HAZARD_TYPE_FILTERS = [
   { key: "all", label: "All Types" },
@@ -112,28 +104,6 @@ function distanceInMeters(lat1, lon1, lat2, lon2) {
   return R * c;
 }
 
-function createGeoJSONCircle(centerLng, centerLat, radiusInMeters = 100, points = 64) {
-  const km = radiusInMeters / 1000;
-  const distanceX = km / (111.32 * Math.cos((centerLat * Math.PI) / 180));
-  const distanceY = km / 110.574;
-  const ret = [];
-  for (let i = 0; i < points; i++) {
-    const theta = (i / points) * (2 * Math.PI);
-    const x = distanceX * Math.cos(theta);
-    const y = distanceY * Math.sin(theta);
-    ret.push([centerLng + x, centerLat + y]);
-  }
-  ret.push(ret[0]);
-  return {
-    type: "Feature",
-    geometry: {
-      type: "Polygon",
-      coordinates: [ret],
-    },
-    properties: {},
-  };
-}
-
 function getReportStreetOrPlace(report, roadSegmentsData) {
   if (report?.street) return report.street;
   if (report?.place_name) return report.place_name;
@@ -182,14 +152,21 @@ function getReportBarangay(report, resolvedBarangay) {
   );
 }
 
-function getReportReporter(report) {
-  return (
-    report?.reporter_name ||
-    report?.reporter ||
-    report?.submitted_by_name ||
-    report?.resident_name ||
-    "Citizen Reporter"
-  );
+function getReportReporter(report, currentUserRole) {
+  if (
+    currentUserRole &&
+    currentUserRole !== "admin" &&
+    currentUserRole !== "lgu_personnel"
+  ) {
+    return { text: "Deleted user", isDeleted: true };
+  }
+  const username = String(
+    report?.reporter_username || report?.reporter_name || ""
+  ).trim();
+  if (username && !report?.reporter_deleted) {
+    return { text: username, isDeleted: false };
+  }
+  return { text: "Deleted user", isDeleted: true };
 }
 
 function HazardReportReview({ focusReportId, onOpenMap }) {
@@ -200,6 +177,14 @@ function HazardReportReview({ focusReportId, onOpenMap }) {
   const [statusFilter, setStatusFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
   const [searchQuery, setSearchQuery] = useState("");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  const [isMobileViewport, setIsMobileViewport] = useState(() =>
+    typeof window !== "undefined" ? window.innerWidth <= 768 : false
+  );
+  const [mobileTypeSheetOpen, setMobileTypeSheetOpen] = useState(false);
+  const [draftTypeFilter, setDraftTypeFilter] = useState("all");
+  const listScrollRef = useRef(null);
 
   const reportsQuery = useHazardReports("all");
   const reports = reportsQuery.data || [];
@@ -210,31 +195,19 @@ function HazardReportReview({ focusReportId, onOpenMap }) {
 
   const [selected, setSelected] = useState(null);
   const [activePhotoIdx, setActivePhotoIdx] = useState(0);
+  const [failedImages, setFailedImages] = useState({});
   const [responseNotes, setResponseNotes] = useState("");
   const [lightbox, setLightbox] = useState(false);
   const [reopening, setReopening] = useState(false);
   const [barangayName, setBarangayName] = useState("");
   const [barangayLoading, setBarangayLoading] = useState(false);
 
+  const touchStartXRef = useRef(null);
+
   // Drawer accessibility refs
   const drawerRef = useRef(null);
   const closeBtnRef = useRef(null);
   const lastActiveRowRef = useRef(null);
-
-  const dynamicStatusFilters = useMemo(() => {
-    const base = [...STATUS_FILTERS];
-    const knownKeys = new Set(base.map((b) => b.key));
-    reports.forEach((r) => {
-      if (r.status && !knownKeys.has(r.status)) {
-        knownKeys.add(r.status);
-        base.push({
-          key: r.status,
-          label: r.status.charAt(0).toUpperCase() + r.status.slice(1),
-        });
-      }
-    });
-    return base;
-  }, [reports]);
 
   const dynamicTypeFilters = useMemo(() => {
     const base = [...HAZARD_TYPE_FILTERS];
@@ -256,6 +229,57 @@ function HazardReportReview({ focusReportId, onOpenMap }) {
     setStatusFilter("all");
     setTypeFilter("all");
     setSearchQuery("");
+    setPage(1);
+  }
+
+  function handleStatusFilterChange(nextStatus) {
+    setStatusFilter(nextStatus);
+    setPage(1);
+  }
+
+  function handleTypeFilterChange(nextType) {
+    setTypeFilter(nextType);
+    setPage(1);
+  }
+
+  function handleSearchChange(nextSearch) {
+    setSearchQuery(nextSearch);
+    setPage(1);
+  }
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return undefined;
+    const mq = window.matchMedia("(max-width: 768px)");
+    const onChange = (event) => setIsMobileViewport(event.matches);
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, []);
+
+  useEffect(() => {
+    if (!mobileTypeSheetOpen) return undefined;
+    const onKeyDown = (event) => {
+      if (event.key === "Escape") {
+        setMobileTypeSheetOpen(false);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [mobileTypeSheetOpen]);
+
+  function openMobileTypeSheet() {
+    setDraftTypeFilter(typeFilter);
+    setMobileTypeSheetOpen(true);
+  }
+
+  function applyMobileTypeSheet() {
+    handleTypeFilterChange(draftTypeFilter);
+    setMobileTypeSheetOpen(false);
+  }
+
+  function resetMobileTypeSheet() {
+    setDraftTypeFilter("all");
+    handleTypeFilterChange("all");
+    setMobileTypeSheetOpen(false);
   }
 
   // Mapbox mini-map refs
@@ -263,29 +287,11 @@ function HazardReportReview({ focusReportId, onOpenMap }) {
   const mapInstanceRef = useRef(null);
   const mapMarkerRef = useRef(null);
 
-  // Top header section measurement for desktop height calc
-  const topSectionRef = useRef(null);
-  const [headerOffset, setHeaderOffset] = useState(280);
-
   useEffect(() => {
-    if (!topSectionRef.current) return;
-    const updateOffset = () => {
-      if (topSectionRef.current) {
-        const rect = topSectionRef.current.getBoundingClientRect();
-        const offset = Math.round(rect.bottom + 16);
-        setHeaderOffset(offset > 0 ? offset : 280);
-      }
-    };
-
-    updateOffset();
-    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(updateOffset) : null;
-    if (ro && topSectionRef.current) ro.observe(topSectionRef.current);
-    window.addEventListener("resize", updateOffset);
-    return () => {
-      if (ro) ro.disconnect();
-      window.removeEventListener("resize", updateOffset);
-    };
-  }, []);
+    if (listScrollRef.current) {
+      listScrollRef.current.scrollTop = 0;
+    }
+  }, [page, pageSize]);
 
   // Auto-select focused report if provided from notification
   useEffect(() => {
@@ -379,10 +385,59 @@ function HazardReportReview({ focusReportId, onOpenMap }) {
   const selectedPhotos = useMemo(() => {
     if (!selected) return [];
     if (Array.isArray(selected.photos) && selected.photos.length > 0) {
-      return selected.photos;
+      return selected.photos
+        .map((p) => (typeof p === "string" ? p : p?.photo_path || p?.url || ""))
+        .filter(Boolean);
     }
     return selected.photo_url ? [selected.photo_url] : [];
   }, [selected]);
+
+  function handlePrevPhoto() {
+    if (selectedPhotos.length <= 1) return;
+    setActivePhotoIdx((prev) => (prev > 0 ? prev - 1 : selectedPhotos.length - 1));
+  }
+
+  function handleNextPhoto() {
+    if (selectedPhotos.length <= 1) return;
+    setActivePhotoIdx((prev) => (prev < selectedPhotos.length - 1 ? prev + 1 : 0));
+  }
+
+  function handleTouchStart(e) {
+    if (e.touches && e.touches.length === 1) {
+      touchStartXRef.current = e.touches[0].clientX;
+    }
+  }
+
+  function handleTouchEnd(e) {
+    if (touchStartXRef.current === null) return;
+    const touchEndX = e.changedTouches[0].clientX;
+    const diff = touchStartXRef.current - touchEndX;
+    if (diff > 40) {
+      handleNextPhoto();
+    } else if (diff < -40) {
+      handlePrevPhoto();
+    }
+    touchStartXRef.current = null;
+  }
+
+  function handleCarouselKeyDown(e) {
+    if (selectedPhotos.length > 1) {
+      if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        e.stopPropagation();
+        handlePrevPhoto();
+      } else if (e.key === "ArrowRight") {
+        e.preventDefault();
+        e.stopPropagation();
+        handleNextPhoto();
+      }
+    }
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      e.stopPropagation();
+      setLightbox(true);
+    }
+  }
 
   // Nearby affected road segments (within 100 meters)
   const nearbyRoads = useMemo(() => {
@@ -423,7 +478,21 @@ function HazardReportReview({ focusReportId, onOpenMap }) {
     const lng = Number(selected.longitude);
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) return undefined;
 
+    const placeStaticPin = (targetMap) => {
+      if (mapMarkerRef.current) {
+        mapMarkerRef.current.remove();
+        mapMarkerRef.current = null;
+      }
+      mapMarkerRef.current = new mapboxgl.Marker({
+        color: "#dc2626",
+        anchor: "bottom",
+      })
+        .setLngLat([lng, lat])
+        .addTo(targetMap);
+    };
+
     let map = mapInstanceRef.current;
+    let resizeTimer;
 
     if (!map) {
       map = new mapboxgl.Map({
@@ -437,49 +506,22 @@ function HazardReportReview({ focusReportId, onOpenMap }) {
       mapInstanceRef.current = map;
 
       map.on("load", () => {
-        const circleGeoJSON = createGeoJSONCircle(lng, lat, 100);
-        map.addSource("hazard-buffer", {
-          type: "geojson",
-          data: circleGeoJSON,
-        });
-
-        map.addLayer({
-          id: "hazard-buffer-fill",
-          type: "fill",
-          source: "hazard-buffer",
-          paint: {
-            "fill-color": "#ef4444",
-            "fill-opacity": 0.15,
-          },
-        });
-
-        map.addLayer({
-          id: "hazard-buffer-line",
-          type: "line",
-          source: "hazard-buffer",
-          paint: {
-            "line-color": "#dc2626",
-            "line-width": 2,
-            "line-dasharray": [2, 2],
-          },
-        });
-
         map.resize();
-        highlightAndOpenSavedReport(map, mapMarkerRef, selected, false);
+        map.jumpTo({ center: [lng, lat], zoom: 15.5 });
+        placeStaticPin(map);
       });
     } else {
-      try {
-        if (typeof map.isStyleLoaded === "function" && map.isStyleLoaded() && map.getSource("hazard-buffer")) {
-          map.getSource("hazard-buffer").setData(createGeoJSONCircle(lng, lat, 100));
-        }
-      } catch (err) {
-        // ignore
-      }
-      highlightAndOpenSavedReport(map, mapMarkerRef, selected, false);
-      setTimeout(() => map.resize(), 100);
+      map.jumpTo({ center: [lng, lat], zoom: 15.5 });
+      placeStaticPin(map);
+      resizeTimer = setTimeout(() => {
+        map.resize();
+        map.jumpTo({ center: [lng, lat], zoom: 15.5 });
+      }, 100);
     }
 
-    return () => {};
+    return () => {
+      if (resizeTimer) clearTimeout(resizeTimer);
+    };
   }, [selected]);
 
   // Cleanup map instance on drawer close or unmount
@@ -496,7 +538,7 @@ function HazardReportReview({ focusReportId, onOpenMap }) {
     }
   }, [selected]);
 
-  // Keyboard navigation for Lightbox and Drawer Escape
+  // Keyboard navigation for Lightbox and Drawer Escape / Arrow navigation
   useEffect(() => {
     function handleKeyDown(e) {
       if (e.key === "Escape") {
@@ -509,12 +551,14 @@ function HazardReportReview({ focusReportId, onOpenMap }) {
           closeDrawer();
         }
       }
-      if (lightbox && selectedPhotos.length > 1) {
-        if (e.key === "ArrowLeft") {
-          setActivePhotoIdx((prev) => (prev > 0 ? prev - 1 : selectedPhotos.length - 1));
-        }
-        if (e.key === "ArrowRight") {
-          setActivePhotoIdx((prev) => (prev < selectedPhotos.length - 1 ? prev + 1 : 0));
+      if (selectedPhotos.length > 1) {
+        const isEditing = ["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement?.tagName);
+        if (!isEditing && (lightbox || drawerRef.current?.contains(document.activeElement))) {
+          if (e.key === "ArrowLeft") {
+            setActivePhotoIdx((prev) => (prev > 0 ? prev - 1 : selectedPhotos.length - 1));
+          } else if (e.key === "ArrowRight") {
+            setActivePhotoIdx((prev) => (prev < selectedPhotos.length - 1 ? prev + 1 : 0));
+          }
         }
       }
     }
@@ -547,6 +591,7 @@ function HazardReportReview({ focusReportId, onOpenMap }) {
     setLightbox(false);
     setSelected(report);
     setActivePhotoIdx(0);
+    setFailedImages({});
     setResponseNotes(report.response_notes || "");
   }
 
@@ -659,19 +704,36 @@ function HazardReportReview({ focusReportId, onOpenMap }) {
   }
 
   function exportCSV() {
-    if (!reports.length) return;
-    const headers = ["ID", "Type", "Status", "Description", "Latitude", "Longitude", "Submitted At", "Validated By", "Validated At"];
-    const rows = reports.map((r) => [
-      r.id,
-      `"${r.report_type || ""}"`,
-      r.status,
-      `"${(r.description || "").replace(/"/g, '""')}"`,
-      r.latitude,
-      r.longitude,
-      r.submitted_at || "",
-      `"${r.validated_by_name || r.validated_by || ""}"`,
-      r.validated_at || "",
-    ]);
+    const rowsToExport = filteredReports;
+    if (!rowsToExport.length) return;
+    const headers = [
+      "ID",
+      "Type",
+      "Status",
+      "Reporter",
+      "Description",
+      "Latitude",
+      "Longitude",
+      "Submitted At",
+      "Validated By",
+      "Validated At",
+    ];
+    const rows = rowsToExport.map((r) => {
+      const reporterText = getReportReporter(r, user?.role).text.replace(/"/g, '""');
+      const validatorText = String(r.validated_by_name || r.validated_by || "").replace(/"/g, '""');
+      return [
+        r.id,
+        `"${String(r.report_type || "").replace(/"/g, '""')}"`,
+        r.status,
+        `"${reporterText}"`,
+        `"${String(r.description || "").replace(/"/g, '""')}"`,
+        r.latitude,
+        r.longitude,
+        r.submitted_at || "",
+        `"${validatorText}"`,
+        r.validated_at || "",
+      ];
+    });
     const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows.map((e) => e.join(","))].join("\n");
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement("a");
@@ -682,11 +744,21 @@ function HazardReportReview({ focusReportId, onOpenMap }) {
     document.body.removeChild(link);
   }
 
-  // KPI counts
+  // KPI & status counts
+  const statusCounts = useMemo(() => {
+    const counts = { all: reports.length };
+    for (const r of reports) {
+      if (r.status) {
+        counts[r.status] = (counts[r.status] || 0) + 1;
+      }
+    }
+    return counts;
+  }, [reports]);
+
   const totalCount = reports.length;
-  const pendingCount = reports.filter((r) => r.status === "pending").length;
-  const validatedCount = reports.filter((r) => r.status === "validated").length;
-  const resolvedCount = reports.filter((r) => r.status === "resolved").length;
+  const pendingCount = statusCounts.pending || 0;
+  const validatedCount = statusCounts.validated || 0;
+  const resolvedCount = statusCounts.resolved || 0;
 
   // Filtered reports list
   const filteredReports = useMemo(() => {
@@ -698,23 +770,107 @@ function HazardReportReview({ focusReportId, onOpenMap }) {
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
         const matchesId = String(r.id).includes(q);
+        const matchesStreet = getReportStreetOrPlace(r, roadSegmentsData).toLowerCase().includes(q);
+        const matchesReporter = getReportReporter(r, user?.role).text.toLowerCase().includes(q);
         const matchesType = String(r.report_type || "").toLowerCase().includes(q);
         const matchesDesc = String(r.description || "").toLowerCase().includes(q);
         const matchesNotes = String(r.response_notes || "").toLowerCase().includes(q);
         const matchesValidator = String(r.validated_by_name || "").toLowerCase().includes(q);
-        if (!matchesId && !matchesType && !matchesDesc && !matchesNotes && !matchesValidator) {
+        if (
+          !matchesId &&
+          !matchesStreet &&
+          !matchesReporter &&
+          !matchesType &&
+          !matchesDesc &&
+          !matchesNotes &&
+          !matchesValidator
+        ) {
           return false;
         }
       }
       return true;
     });
-  }, [reports, statusFilter, typeFilter, searchQuery]);
+  }, [reports, statusFilter, typeFilter, searchQuery, roadSegmentsData, user?.role]);
+
+  const totalFiltered = filteredReports.length;
+  const totalPages = Math.max(1, Math.ceil(totalFiltered / pageSize));
+  const safePage = Math.min(page, totalPages);
+
+  const paginatedReports = useMemo(() => {
+    const start = (safePage - 1) * pageSize;
+    return filteredReports.slice(start, start + pageSize);
+  }, [filteredReports, safePage, pageSize]);
+
+  const paginationItems = useMemo(() => {
+    if (totalPages <= 5) {
+      return Array.from({ length: totalPages }, (_, i) => i + 1);
+    }
+    const pages = Array.from(
+      new Set(
+        [1, totalPages, safePage - 1, safePage, safePage + 1].filter(
+          (p) => p >= 1 && p <= totalPages
+        )
+      )
+    ).sort((a, b) => a - b);
+
+    const items = [];
+    for (let i = 0; i < pages.length; i++) {
+      const p = pages[i];
+      const prev = pages[i - 1];
+      if (i > 0) {
+        if (p - prev === 2) {
+          items.push(prev + 1);
+        } else if (p - prev > 2) {
+          items.push(`ellipsis-${prev}`);
+        }
+      }
+      items.push(p);
+    }
+    return items;
+  }, [totalPages, safePage]);
+
+  const drawerActionButtons = selected ? (
+    <>
+      <button
+        type="button"
+        onClick={() => handleValidate("validated")}
+        className="hr-drawer-btn is-validate"
+        disabled={selected.status === "validated"}
+        title="Validate hazard report"
+      >
+        <FontAwesomeIcon icon={faCheck} />
+        <span>Validate</span>
+      </button>
+
+      <button
+        type="button"
+        onClick={() => handleValidate("rejected")}
+        className="hr-drawer-btn is-reject"
+        disabled={selected.status === "rejected"}
+        title="Reject report as invalid"
+      >
+        <FontAwesomeIcon icon={faXmark} />
+        <span>Reject</span>
+      </button>
+
+      <button
+        type="button"
+        onClick={handleResolve}
+        className="hr-drawer-btn is-resolve"
+        disabled={selected.status === "resolved" || reopening}
+        title="Mark incident resolved"
+      >
+        <FontAwesomeIcon icon={reopening ? faXmark : faCircleCheck} />
+        <span>{reopening ? "Reopening…" : "Resolve"}</span>
+      </button>
+    </>
+  ) : null;
 
   return (
     <div className="hr-page">
-      <div className="hr-container" style={{ "--hr-header": `${headerOffset}px` }}>
+      <div className="hr-container">
         {/* TOP COMMAND HEADER & METRIC KPI CARDS */}
-        <div ref={topSectionRef} className="hr-top-section">
+        <div className="hr-top-section">
           <header className="hr-top-header">
             <div className="hr-header-titles">
               <div className="hr-badge-ticker">
@@ -727,9 +883,15 @@ function HazardReportReview({ focusReportId, onOpenMap }) {
               </p>
             </div>
             <div className="hr-header-actions">
-              <button type="button" onClick={exportCSV} className="hr-export-btn" title="Export incident reports to CSV">
+              <button
+                type="button"
+                onClick={exportCSV}
+                className="hr-export-btn"
+                title="Export matching incident reports to CSV"
+                aria-label="Export CSV"
+              >
                 <FontAwesomeIcon icon={faFileCsv} />
-                <span>Export CSV</span>
+                <span className="hr-export-label">Export CSV</span>
               </button>
             </div>
           </header>
@@ -738,12 +900,30 @@ function HazardReportReview({ focusReportId, onOpenMap }) {
           <section className="hr-kpi-grid" aria-label="Incident Overview Statistics">
             <button
               type="button"
-              onClick={() => setStatusFilter("pending")}
+              onClick={() => handleStatusFilterChange("all")}
+              className={`hr-kpi-card is-total ${statusFilter === "all" ? "is-selected-card" : ""}`}
+              aria-pressed={statusFilter === "all"}
+            >
+              <div className="hr-kpi-info">
+                <span className="hr-kpi-label hr-kpi-label-desktop">Total Submissions</span>
+                <span className="hr-kpi-label-mobile">Total</span>
+                <strong className="hr-kpi-num">{totalCount}</strong>
+                <small className="hr-kpi-hint">All historical incident logs</small>
+              </div>
+              <span className="hr-kpi-icon-pill">
+                <FontAwesomeIcon icon={faLayerGroup} />
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleStatusFilterChange("pending")}
               className={`hr-kpi-card is-pending ${statusFilter === "pending" ? "is-selected-card" : ""} ${pendingCount > 0 ? "has-amber-accent" : ""}`}
               aria-pressed={statusFilter === "pending"}
             >
               <div className="hr-kpi-info">
-                <span className="hr-kpi-label">Pending Review</span>
+                <span className="hr-kpi-label hr-kpi-label-desktop">Pending Review</span>
+                <span className="hr-kpi-label-mobile">Pending</span>
                 <strong className="hr-kpi-num">{pendingCount}</strong>
                 <small className="hr-kpi-hint">
                   {pendingCount > 0 ? "⚠️ Requires staff triage" : "All reports triaged"}
@@ -756,12 +936,13 @@ function HazardReportReview({ focusReportId, onOpenMap }) {
 
             <button
               type="button"
-              onClick={() => setStatusFilter("validated")}
+              onClick={() => handleStatusFilterChange("validated")}
               className={`hr-kpi-card is-active ${statusFilter === "validated" ? "is-selected-card" : ""}`}
               aria-pressed={statusFilter === "validated"}
             >
               <div className="hr-kpi-info">
-                <span className="hr-kpi-label">Active Hazards</span>
+                <span className="hr-kpi-label hr-kpi-label-desktop">Active Hazards</span>
+                <span className="hr-kpi-label-mobile">Active</span>
                 <strong className="hr-kpi-num">{validatedCount}</strong>
                 <small className="hr-kpi-hint">Confirmed & affecting routes</small>
               </div>
@@ -772,33 +953,18 @@ function HazardReportReview({ focusReportId, onOpenMap }) {
 
             <button
               type="button"
-              onClick={() => setStatusFilter("resolved")}
+              onClick={() => handleStatusFilterChange("resolved")}
               className={`hr-kpi-card is-resolved ${statusFilter === "resolved" ? "is-selected-card" : ""}`}
               aria-pressed={statusFilter === "resolved"}
             >
               <div className="hr-kpi-info">
-                <span className="hr-kpi-label">Hazards Cleared</span>
+                <span className="hr-kpi-label hr-kpi-label-desktop">Hazards Cleared</span>
+                <span className="hr-kpi-label-mobile">Cleared</span>
                 <strong className="hr-kpi-num">{resolvedCount}</strong>
                 <small className="hr-kpi-hint">Roads safely reopened</small>
               </div>
               <span className="hr-kpi-icon-pill">
                 <FontAwesomeIcon icon={faCircleCheck} />
-              </span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setStatusFilter("all")}
-              className={`hr-kpi-card is-total ${statusFilter === "all" ? "is-selected-card" : ""}`}
-              aria-pressed={statusFilter === "all"}
-            >
-              <div className="hr-kpi-info">
-                <span className="hr-kpi-label">Total Submissions</span>
-                <strong className="hr-kpi-num">{totalCount}</strong>
-                <small className="hr-kpi-hint">All historical incident logs</small>
-              </div>
-              <span className="hr-kpi-icon-pill">
-                <FontAwesomeIcon icon={faLayerGroup} />
               </span>
             </button>
           </section>
@@ -813,15 +979,16 @@ function HazardReportReview({ focusReportId, onOpenMap }) {
                 <FontAwesomeIcon icon={faSearch} className="hr-search-icon" />
                 <input
                   type="text"
-                  placeholder="Search ID, street, keywords..."
+                  placeholder={isMobileViewport ? "Search reports" : "Search ID, street, reporter, keywords..."}
                   value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onChange={(e) => handleSearchChange(e.target.value)}
                   className="hr-search-input"
+                  aria-label="Search hazard reports"
                 />
                 {searchQuery && (
                   <button
                     type="button"
-                    onClick={() => setSearchQuery("")}
+                    onClick={() => handleSearchChange("")}
                     className="hr-search-clear"
                     aria-label="Clear search input"
                   >
@@ -830,53 +997,36 @@ function HazardReportReview({ focusReportId, onOpenMap }) {
                 )}
               </div>
 
-              {/* FILTERS WRAP OR SCROLL HORIZONTALLY */}
-              <div className="hr-controls-filters-row">
-                <div className="hr-status-tabs" role="tablist" aria-label="Filter hazard reports by status">
-                  {dynamicStatusFilters.map((s) => {
-                    const active = statusFilter === s.key;
-                    const count =
-                      s.key === "all"
-                        ? reports.length
-                        : reports.filter((r) => r.status === s.key).length;
-                    return (
-                      <button
-                        key={s.key}
-                        type="button"
-                        onClick={() => setStatusFilter(s.key)}
-                        className={`hr-tab-btn ${active ? "is-active" : ""}`}
-                        role="tab"
-                        aria-selected={active}
-                      >
-                        <span>{s.label}</span>
-                        <span className="hr-tab-count">{count}</span>
-                      </button>
-                    );
-                  })}
-                </div>
+              <select
+                id="hr-type-select"
+                value={typeFilter}
+                onChange={(e) => handleTypeFilterChange(e.target.value)}
+                className="hr-filter-select hr-desktop-type-select"
+                aria-label="Filter by hazard type"
+              >
+                {dynamicTypeFilters.map((t) => (
+                  <option key={t.key} value={t.key}>
+                    {t.label}
+                  </option>
+                ))}
+              </select>
 
-                <div className="hr-type-select-wrap">
-                  <label htmlFor="hr-type-select" className="hr-type-select-label">
-                    Type
-                  </label>
-                  <select
-                    id="hr-type-select"
-                    value={typeFilter}
-                    onChange={(e) => setTypeFilter(e.target.value)}
-                    className="hr-type-select"
-                  >
-                    {dynamicTypeFilters.map((t) => (
-                      <option key={t.key} value={t.key}>
-                        {t.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
+              <button
+                type="button"
+                className="hr-mobile-type-btn"
+                onClick={openMobileTypeSheet}
+                aria-label="Filter by hazard type"
+                aria-expanded={mobileTypeSheetOpen}
+              >
+                <FontAwesomeIcon icon={faFilter} />
+                {typeFilter !== "all" && (
+                  <span className="hr-mfilter-dot" aria-hidden="true" />
+                )}
+              </button>
             </div>
 
             {/* SCROLLABLE LIST */}
-            <div className="hr-list-scroll">
+            <div ref={listScrollRef} className="hr-list-scroll">
               {loading && <div className="hr-loading">Loading reports…</div>}
 
               {/* EMPTY STATE 1: No reports in system at all */}
@@ -904,12 +1054,15 @@ function HazardReportReview({ focusReportId, onOpenMap }) {
               )}
 
               {/* FULL-WIDTH REPORT ROWS */}
-              {filteredReports.map((r) => {
+              {paginatedReports.map((r) => {
                 const meta = statusMeta(r.status);
                 const isSelected = selected?.id === r.id;
                 const streetOrPlace = getReportStreetOrPlace(r, roadSegmentsData);
                 const barangay = getReportBarangay(r, isSelected ? barangayName : null);
-                const reporter = getReportReporter(r);
+                const reporter = getReportReporter(r, user?.role);
+                const photoCount = Array.isArray(r.photos) && r.photos.length > 0
+                  ? r.photos.length
+                  : (r.photo_url ? 1 : 0);
 
                 return (
                   <button
@@ -920,41 +1073,236 @@ function HazardReportReview({ focusReportId, onOpenMap }) {
                     style={{ borderLeftColor: meta.color }}
                     aria-selected={isSelected}
                   >
-                    <div className="hr-row-main-group">
-                      <span className="hr-row-type-icon" style={{ color: meta.color }}>
-                        <FontAwesomeIcon icon={reportIcon(r.report_type)} />
-                      </span>
-                      <div className="hr-row-place-wrap">
-                        <strong className="hr-row-street">{streetOrPlace}</strong>
-                        <span className="hr-row-id">#{r.id}</span>
+                    <div className="hr-row-desktop-content">
+                      <div className="hr-row-main-group">
+                        <span className="hr-row-type-icon" style={{ color: meta.color }}>
+                          <FontAwesomeIcon icon={reportIcon(r.report_type)} />
+                        </span>
+                        <div className="hr-row-place-wrap">
+                          <strong className="hr-row-street">{streetOrPlace}</strong>
+                          <span className="hr-row-id">#{r.id}</span>
+                        </div>
+                        <span className="hr-row-barangay">{barangay}</span>
                       </div>
-                      <span className="hr-row-barangay">{barangay}</span>
+
+                      <div className="hr-row-meta-group">
+                        {photoCount > 1 && (
+                          <span className="hr-row-photos-badge" title={`${photoCount} photos attached`}>
+                            <FontAwesomeIcon icon={faCamera} />
+                            <span>{photoCount} photos</span>
+                          </span>
+                        )}
+
+                        <span
+                          className={`hr-row-reporter ${reporter.isDeleted ? "is-deleted" : ""}`}
+                          title={`Reporter: ${reporter.text}`}
+                        >
+                          <FontAwesomeIcon icon={faUser} />
+                          <span className="hr-row-reporter-name">{reporter.text}</span>
+                        </span>
+
+                        <span className="hr-row-time">
+                          <FontAwesomeIcon icon={faClock} />
+                          <span>{formatRelativeTime(r.submitted_at)}</span>
+                        </span>
+
+                        <span
+                          className="hr-pill"
+                          style={{ background: meta.bg, color: meta.color }}
+                        >
+                          {meta.label}
+                        </span>
+                      </div>
                     </div>
 
-                    <div className="hr-row-meta-group">
-                      <span className="hr-row-reporter" title={`Reporter: ${reporter}`}>
-                        <FontAwesomeIcon icon={faUser} />
-                        <span>{reporter}</span>
-                      </span>
+                    <div className="hr-row-mobile-content">
+                      <div className="hr-mr-row1">
+                        <span className="hr-row-type-icon" style={{ color: meta.color }}>
+                          <FontAwesomeIcon icon={reportIcon(r.report_type)} />
+                        </span>
+                        <strong className="hr-mr-street">{streetOrPlace}</strong>
+                        <span
+                          className="hr-pill hr-mr-pill"
+                          style={{ background: meta.bg, color: meta.color }}
+                        >
+                          {meta.label}
+                        </span>
+                      </div>
 
-                      <span className="hr-row-time">
-                        <FontAwesomeIcon icon={faClock} />
+                      <div className="hr-mr-row2">
+                        <span>{[ `#${r.id}`, barangay ].filter(Boolean).join(" · ")}</span>
+                        {" · "}
+                        <span className={reporter.isDeleted ? "hr-mr-deleted" : undefined}>
+                          {reporter.text}
+                        </span>
+                        {" · "}
                         <span>{formatRelativeTime(r.submitted_at)}</span>
-                      </span>
+                      </div>
 
-                      <span
-                        className="hr-pill"
-                        style={{ background: meta.bg, color: meta.color }}
-                      >
-                        {meta.label}
-                      </span>
+                      {photoCount > 0 && (
+                        <div className="hr-mr-row3">
+                          <span className="hr-row-photos-badge">
+                            <FontAwesomeIcon icon={faCamera} />
+                            <span>{photoCount} {photoCount === 1 ? "photo" : "photos"}</span>
+                          </span>
+                        </div>
+                      )}
                     </div>
                   </button>
                 );
               })}
             </div>
+
+            {!loading && filteredReports.length > 0 && (
+              <nav className="hr-pagination" aria-label="Pagination">
+                <span className="hr-pagination-info">
+                  Showing {(safePage - 1) * pageSize + 1} to{" "}
+                  {Math.min(safePage * pageSize, totalFiltered)} of {totalFiltered}
+                </span>
+
+                <div className="hr-pagination-controls">
+                  <label className="hr-pagination-size">
+                    <span className="hr-pagination-size-label">Rows per page</span>
+                    <select
+                      value={pageSize}
+                      onChange={(e) => {
+                        setPageSize(Number(e.target.value));
+                        setPage(1);
+                      }}
+                      aria-label="Rows per page"
+                    >
+                      <option value={10}>10</option>
+                      <option value={25}>25</option>
+                      <option value={50}>50</option>
+                    </select>
+                  </label>
+
+                  <button
+                    type="button"
+                    className="hr-page-nav-btn"
+                    disabled={safePage <= 1}
+                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                    aria-label="Previous page"
+                  >
+                    Previous
+                  </button>
+
+                  {totalPages > 1 && (
+                    <div className="hr-pagination-pages">
+                      {paginationItems.map((item) =>
+                        typeof item === "string" ? (
+                          <span
+                            key={item}
+                            className="hr-pagination-ellipsis"
+                            aria-hidden="true"
+                          >
+                            …
+                          </span>
+                        ) : (
+                          <button
+                            key={item}
+                            type="button"
+                            className={`hr-page-num-btn ${
+                              item === safePage ? "is-active" : ""
+                            }`}
+                            aria-label={`Page ${item}`}
+                            aria-current={item === safePage ? "page" : undefined}
+                            onClick={() => setPage(item)}
+                          >
+                            {item}
+                          </button>
+                        )
+                      )}
+                    </div>
+                  )}
+
+                  <span className="hr-pagination-page">
+                    Page {safePage} of {totalPages}
+                  </span>
+
+                  <button
+                    type="button"
+                    className="hr-page-nav-btn"
+                    disabled={safePage >= totalPages}
+                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                    aria-label="Next page"
+                  >
+                    Next
+                  </button>
+                </div>
+              </nav>
+            )}
           </aside>
         </div>
+
+        {mobileTypeSheetOpen && (
+          <div
+            className="hr-mobile-sheet-backdrop"
+            role="presentation"
+            onClick={(e) => {
+              if (e.target === e.currentTarget) {
+                setMobileTypeSheetOpen(false);
+              }
+            }}
+          >
+            <div
+              className="hr-mobile-sheet"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="hr-msheet-title"
+            >
+              <div className="hr-msheet-header">
+                <h3 id="hr-msheet-title" className="hr-msheet-title">
+                  Filter by Hazard Type
+                </h3>
+                <button
+                  type="button"
+                  className="hr-msheet-close"
+                  onClick={() => setMobileTypeSheetOpen(false)}
+                  aria-label="Close type filter"
+                >
+                  <FontAwesomeIcon icon={faXmark} />
+                </button>
+              </div>
+
+              <div className="hr-msheet-body" role="listbox" aria-label="Hazard types">
+                {dynamicTypeFilters.map((t) => {
+                  const isActive = draftTypeFilter === t.key;
+                  return (
+                    <button
+                      key={t.key}
+                      type="button"
+                      role="option"
+                      aria-selected={isActive}
+                      className={`hr-msheet-option ${isActive ? "is-active" : ""}`}
+                      onClick={() => setDraftTypeFilter(t.key)}
+                    >
+                      <span>{t.label}</span>
+                      {isActive && <FontAwesomeIcon icon={faCheck} />}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="hr-msheet-footer">
+                <button
+                  type="button"
+                  className="hr-msheet-btn is-secondary"
+                  onClick={resetMobileTypeSheet}
+                >
+                  Reset
+                </button>
+                <button
+                  type="button"
+                  className="hr-msheet-btn is-primary"
+                  onClick={applyMobileTypeSheet}
+                >
+                  Apply
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* DETAIL DRAWER OVER DIMMED BACKDROP */}
@@ -998,38 +1346,7 @@ function HazardReportReview({ focusReportId, onOpenMap }) {
 
               {/* ACTION BUTTONS: VALIDATE, REJECT, RESOLVE (EACH >= 44PX) */}
               <div className="hr-drawer-header-actions">
-                <button
-                  type="button"
-                  onClick={() => handleValidate("validated")}
-                  className="hr-drawer-btn is-validate"
-                  disabled={selected.status === "validated"}
-                  title="Validate hazard report"
-                >
-                  <FontAwesomeIcon icon={faCheck} />
-                  <span>Validate</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => handleValidate("rejected")}
-                  className="hr-drawer-btn is-reject"
-                  disabled={selected.status === "rejected"}
-                  title="Reject report as invalid"
-                >
-                  <FontAwesomeIcon icon={faXmark} />
-                  <span>Reject</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={handleResolve}
-                  className="hr-drawer-btn is-resolve"
-                  disabled={selected.status === "resolved" || reopening}
-                  title="Mark incident resolved"
-                >
-                  <FontAwesomeIcon icon={reopening ? faXmark : faCircleCheck} />
-                  <span>{reopening ? "Reopening…" : "Resolve"}</span>
-                </button>
+                {drawerActionButtons}
               </div>
             </div>
 
@@ -1039,32 +1356,88 @@ function HazardReportReview({ focusReportId, onOpenMap }) {
                 {/* LEFT COLUMN: EVIDENCE, DESCRIPTION, DISPATCH NOTES */}
                 <div className="hr-drawer-col">
                     {/* PHOTO SECTION */}
-                    <div className="hr-drawer-section">
+                    <div className="hr-drawer-section hr-sec-photos">
                       <span className="hr-drawer-section-title">Photographic Evidence</span>
                       {selectedPhotos.length > 0 ? (
-                        <div className="hr-photo-view-box">
+                        <div
+                          className="hr-photo-view-box"
+                          role="group"
+                          aria-roledescription="carousel"
+                          aria-label="Hazard report photos carousel"
+                        >
                           <div
                             className="hr-photo-main"
                             onClick={(e) => {
                               e.stopPropagation();
                               setLightbox(true);
                             }}
+                            onTouchStart={handleTouchStart}
+                            onTouchEnd={handleTouchEnd}
+                            onKeyDown={handleCarouselKeyDown}
                             role="button"
                             tabIndex={0}
-                            aria-label="View photo in full size lightbox"
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter" || e.key === " ") {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                setLightbox(true);
-                              }
-                            }}
+                            aria-label={
+                              selectedPhotos.length > 1
+                                ? `Photo ${activePhotoIdx + 1} of ${selectedPhotos.length}. Click or press Enter to view in full size lightbox.`
+                                : "View photo in full size lightbox"
+                            }
                           >
-                            <img
-                              src={reportPhotoUrl(selectedPhotos[activePhotoIdx])}
-                              alt={`${selected.report_type} evidence ${activePhotoIdx + 1}`}
-                              className="hr-photo-img"
-                            />
+                            {/* Counter pill for multiple photos */}
+                            {selectedPhotos.length > 1 && (
+                              <div className="hr-carousel-counter-pill" aria-live="polite">
+                                {activePhotoIdx + 1} / {selectedPhotos.length}
+                              </div>
+                            )}
+
+                            {/* Previous Arrow Button */}
+                            {selectedPhotos.length > 1 && (
+                              <button
+                                type="button"
+                                className="hr-carousel-arrow is-prev"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handlePrevPhoto();
+                                }}
+                                aria-label="Previous photo"
+                              >
+                                <FontAwesomeIcon icon={faChevronLeft} />
+                              </button>
+                            )}
+
+                            {/* Main photo image or fallback */}
+                            {failedImages[selectedPhotos[activePhotoIdx]] ? (
+                              <div className="hr-photo-placeholder" aria-label="Photo could not be loaded">
+                                <FontAwesomeIcon icon={faImage} className="hr-photo-placeholder-icon" />
+                                <span>Image unavailable</span>
+                              </div>
+                            ) : (
+                              <img
+                                src={reportPhotoUrl(selectedPhotos[activePhotoIdx])}
+                                alt={`${selected.report_type || "Hazard"} evidence ${activePhotoIdx + 1}`}
+                                className="hr-photo-img"
+                                onError={() => {
+                                  const url = selectedPhotos[activePhotoIdx];
+                                  setFailedImages((prev) => ({ ...prev, [url]: true }));
+                                }}
+                              />
+                            )}
+
+                            {/* Next Arrow Button */}
+                            {selectedPhotos.length > 1 && (
+                              <button
+                                type="button"
+                                className="hr-carousel-arrow is-next"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleNextPhoto();
+                                }}
+                                aria-label="Next photo"
+                              >
+                                <FontAwesomeIcon icon={faChevronRight} />
+                              </button>
+                            )}
+
+                            {/* Full Size button */}
                             <button
                               type="button"
                               className="hr-photo-zoom-tag"
@@ -1074,23 +1447,64 @@ function HazardReportReview({ focusReportId, onOpenMap }) {
                               }}
                               aria-label="Open full size photo viewer"
                             >
-                              <FontAwesomeIcon icon={faMagnifyingGlassPlus} /> Full Size ({activePhotoIdx + 1}/{selectedPhotos.length})
+                              <FontAwesomeIcon icon={faMagnifyingGlassPlus} />{" "}
+                              {selectedPhotos.length > 1
+                                ? `Full Size (${activePhotoIdx + 1}/${selectedPhotos.length})`
+                                : "Full Size"}
                             </button>
                           </div>
 
+                          {/* Pagination Dots */}
+                          {selectedPhotos.length > 1 && (
+                            <div
+                              className="hr-carousel-dots"
+                              role="tablist"
+                              aria-label="Photo carousel pagination"
+                            >
+                              {selectedPhotos.map((_, idx) => (
+                                <button
+                                  key={idx}
+                                  type="button"
+                                  className={`hr-carousel-dot ${activePhotoIdx === idx ? "is-active" : ""}`}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setActivePhotoIdx(idx);
+                                  }}
+                                  role="tab"
+                                  aria-selected={activePhotoIdx === idx}
+                                  aria-label={`Go to photo ${idx + 1}`}
+                                />
+                              ))}
+                            </div>
+                          )}
+
+                          {/* Thumbnail strip */}
                           {selectedPhotos.length > 1 && (
                             <div className="hr-thumbnail-row">
                               {selectedPhotos.map((url, idx) => (
                                 <button
-                                  key={url}
+                                  key={url + idx}
                                   type="button"
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     setActivePhotoIdx(idx);
                                   }}
                                   className={`hr-thumb-btn ${activePhotoIdx === idx ? "is-active" : ""}`}
+                                  aria-label={`Thumbnail ${idx + 1}`}
                                 >
-                                  <img src={reportPhotoUrl(url)} alt={`Thumbnail ${idx + 1}`} />
+                                  {failedImages[url] ? (
+                                    <div className="hr-thumb-placeholder">
+                                      <FontAwesomeIcon icon={faImage} />
+                                    </div>
+                                  ) : (
+                                    <img
+                                      src={reportPhotoUrl(url)}
+                                      alt={`Thumbnail ${idx + 1}`}
+                                      onError={() => {
+                                        setFailedImages((prev) => ({ ...prev, [url]: true }));
+                                      }}
+                                    />
+                                  )}
                                 </button>
                               ))}
                             </div>
@@ -1099,13 +1513,13 @@ function HazardReportReview({ focusReportId, onOpenMap }) {
                       ) : (
                         <div className="hr-no-photo-box">
                           <FontAwesomeIcon icon={faImage} />
-                          <span>No photo attached to this report</span>
+                          <span>No photo provided</span>
                         </div>
                       )}
                     </div>
 
                   {/* CITIZEN DESCRIPTION */}
-                  <div className="hr-drawer-section">
+                  <div className="hr-drawer-section hr-sec-description">
                     <span className="hr-drawer-section-title">Citizen Description</span>
                     <p className="hr-drawer-description-text">
                       {selected.description || "No specific details provided by resident."}
@@ -1113,7 +1527,7 @@ function HazardReportReview({ focusReportId, onOpenMap }) {
                   </div>
 
                   {/* RESPONSE NOTES & LOG */}
-                  <div className="hr-drawer-section">
+                  <div className="hr-drawer-section hr-sec-notes">
                     <div className="hr-canned-row">
                       <span className="hr-canned-label">Quick Response Notes:</span>
                       <div className="hr-chips-wrap">
@@ -1146,7 +1560,7 @@ function HazardReportReview({ focusReportId, onOpenMap }) {
                 {/* RIGHT COLUMN: LOCATION, MINI-MAP, AFFECTED ROADS, AUDIT */}
                 <div className="hr-drawer-col">
                   {/* LOCATION AS TEXT */}
-                  <div className="hr-drawer-section">
+                  <div className="hr-drawer-section hr-sec-location">
                     <span className="hr-drawer-section-title">
                       <FontAwesomeIcon icon={faLocationDot} /> Location Details
                     </span>
@@ -1183,13 +1597,10 @@ function HazardReportReview({ focusReportId, onOpenMap }) {
                     </button>
                   </div>
 
-                  {/* INTERACTIVE MINI-MAP PREVIEW & 100M IMPACT ZONE */}
-                  <div className="hr-drawer-section">
+                  {/* MINI-MAP PREVIEW */}
+                  <div className="hr-drawer-section hr-sec-minimap">
                     <div className="hr-minimap-wrap">
                       <div ref={mapContainerRef} className="hr-minimap-container" />
-                      <div className="hr-minimap-legend">
-                        <span className="hr-legend-dot" /> 100m Impact & Road Closure Zone
-                      </div>
                     </div>
 
                     {nearbyRoads.length > 0 && (
@@ -1209,14 +1620,20 @@ function HazardReportReview({ focusReportId, onOpenMap }) {
                   </div>
 
                   {/* REPORTER INFO & VERIFICATION AUDIT */}
-                  <div className="hr-drawer-section">
+                  <div className="hr-drawer-section hr-sec-audit">
                     <span className="hr-drawer-section-title">
                       <FontAwesomeIcon icon={faUser} /> Reporter & Audit
                     </span>
                     <div className="hr-reporter-info-card">
                       <div className="hr-reporter-row">
-                        <span className="hr-reporter-label">Reported By:</span>
-                        <strong className="hr-reporter-val">{getReportReporter(selected)}</strong>
+                        <span className="hr-reporter-label">Reported by:</span>
+                        <strong
+                          className={`hr-reporter-val ${
+                            getReportReporter(selected, user?.role).isDeleted ? "is-deleted" : ""
+                          }`}
+                        >
+                          {getReportReporter(selected, user?.role).text}
+                        </strong>
                       </div>
                       <div className="hr-reporter-row">
                         <span className="hr-reporter-label">Submission Channel:</span>
@@ -1261,6 +1678,13 @@ function HazardReportReview({ focusReportId, onOpenMap }) {
                 </div>
               </div>
             </div>
+
+            {/* FIXED MOBILE ACTION BAR (BOTTOM) */}
+            <div className="hr-drawer-mobile-footer">
+              <div className="hr-drawer-footer-actions">
+                {drawerActionButtons}
+              </div>
+            </div>
           </aside>
         </div>
       )}
@@ -1292,6 +1716,8 @@ function HazardReportReview({ focusReportId, onOpenMap }) {
           <div
             className="hr-lightbox-dialog"
             onClick={(e) => e.stopPropagation()}
+            onTouchStart={handleTouchStart}
+            onTouchEnd={handleTouchEnd}
           >
             {selectedPhotos.length > 1 && (
               <div className="hr-lightbox-bar">
@@ -1308,7 +1734,7 @@ function HazardReportReview({ focusReportId, onOpenMap }) {
                   className="hr-lightbox-arrow is-prev"
                   onClick={(e) => {
                     e.stopPropagation();
-                    setActivePhotoIdx((prev) => (prev > 0 ? prev - 1 : selectedPhotos.length - 1));
+                    handlePrevPhoto();
                   }}
                   aria-label="Previous photo"
                 >
@@ -1316,11 +1742,22 @@ function HazardReportReview({ focusReportId, onOpenMap }) {
                 </button>
               )}
 
-              <img
-                src={reportPhotoUrl(selectedPhotos[activePhotoIdx])}
-                alt={`Hazard report high resolution ${activePhotoIdx + 1}`}
-                className="hr-lightbox-img"
-              />
+              {failedImages[selectedPhotos[activePhotoIdx]] ? (
+                <div className="hr-lightbox-placeholder">
+                  <FontAwesomeIcon icon={faImage} />
+                  <span>Photo could not be loaded</span>
+                </div>
+              ) : (
+                <img
+                  src={reportPhotoUrl(selectedPhotos[activePhotoIdx])}
+                  alt={`Hazard report high resolution ${activePhotoIdx + 1}`}
+                  className="hr-lightbox-img"
+                  onError={() => {
+                    const url = selectedPhotos[activePhotoIdx];
+                    setFailedImages((prev) => ({ ...prev, [url]: true }));
+                  }}
+                />
+              )}
 
               {selectedPhotos.length > 1 && (
                 <button
@@ -1328,7 +1765,7 @@ function HazardReportReview({ focusReportId, onOpenMap }) {
                   className="hr-lightbox-arrow is-next"
                   onClick={(e) => {
                     e.stopPropagation();
-                    setActivePhotoIdx((prev) => (prev < selectedPhotos.length - 1 ? prev + 1 : 0));
+                    handleNextPhoto();
                   }}
                   aria-label="Next photo"
                 >

@@ -102,6 +102,12 @@ def create_room(center_id):
             "error": "Cannot add rooms to an inactive evacuation center"
         }), 400
 
+    structure_mode = getattr(center, 'structure_mode', None) or 'buildings_and_rooms'
+    if structure_mode == 'open_area':
+        return jsonify({
+            "error": "Rooms cannot be added to an open area evacuation center"
+        }), 400
+
     data = request.get_json() or {}
 
     room_number = data.get('room_number')
@@ -181,12 +187,12 @@ def create_room(center_id):
     parsed_building_id = None
     raw_building_id = data.get('building_id')
 
-    # Enforce building_id rules based on center_type
-    center_type = center.center_type or 'campus'
-    if center_type in ('private_property', 'single_venue'):
-        # private_property and single_venue: building_id MUST BE NULL
+    # Enforce building_id rules based on center structure_mode
+    structure_mode = getattr(center, 'structure_mode', None) or 'buildings_and_rooms'
+    if structure_mode != 'buildings_and_rooms':
+        # open_area and rooms_only: building_id MUST BE NULL
         if raw_building_id is not None and str(raw_building_id).strip() != "":
-            return jsonify({"error": f"building_id must not be provided for {center_type} type centers"}), 400
+            return jsonify({"error": f"building_id must not be provided for {structure_mode} structure"}), 400
         parsed_building_id = None
     else:
         # Campus or other: building_id is optional (can be assigned to building or unassigned)
@@ -310,12 +316,12 @@ def update_room(room_id):
 
     if 'building_id' in data:
         raw_building_id = data.get('building_id')
-        center_type = room.evacuation_center.center_type or 'campus'
+        structure_mode = getattr(room.evacuation_center, 'structure_mode', None) or 'buildings_and_rooms'
 
-        if center_type in ('private_property', 'single_venue'):
-            # private_property and single_venue: building_id MUST BE NULL
+        if structure_mode != 'buildings_and_rooms':
+            # open_area and rooms_only: building_id MUST BE NULL
             if raw_building_id is not None and str(raw_building_id).strip() != "":
-                return jsonify({"error": f"building_id must not be provided for {center_type} type centers"}), 400
+                return jsonify({"error": f"building_id must not be provided for {structure_mode} structure"}), 400
             room.building_id = None
         else:
             # Campus or other: None/empty unlinks the room from building

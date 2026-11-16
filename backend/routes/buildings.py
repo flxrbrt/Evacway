@@ -264,9 +264,10 @@ def create_building(center_id):
     if not center:
         return jsonify({"error": "Evacuation center not found"}), 404
 
-    # Only campus type centers can have buildings
-    if center.center_type != 'campus':
-        return jsonify({"error": f"Buildings can only be created for 'campus' type centers. This center is '{center.center_type}'."}), 400
+    # Only buildings_and_rooms centers can have buildings
+    structure_mode = getattr(center, 'structure_mode', None) or 'buildings_and_rooms'
+    if structure_mode != 'buildings_and_rooms':
+        return jsonify({"error": f"Buildings can only be created for 'Buildings and rooms' centers. This center uses '{structure_mode}'."}), 400
 
     data = request.get_json() or {}
     name = (data.get('name') or '').strip() or None

@@ -2,8 +2,7 @@ import { useState, useMemo, useEffect, useRef } from 'react';
 import { api } from '../../services/api';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faCircleNotch, faXmark, faTriangleExclamation, faTrash, faCheck } from '@fortawesome/free-solid-svg-icons';
-import { stripDigits } from './utils';
-import { centerNeedsMapping } from './utils';
+import { stripDigits, centerNeedsMapping, resolveCenterStructureMode } from './utils';
 import { formatRoomLabel } from '../../utils/formatRoomLabel';
 import { displayEntityName } from '../../utils/displayEntityName';
 import BarangaysServedPicker from '../BarangaysServedPicker/BarangaysServedPicker';
@@ -100,9 +99,15 @@ export const AMENITY_OPTIONS = AMENITIES_LIST;
 const WIZARD_STEPS = [
   { id: 1, title: 'Basic info' },
   { id: 2, title: 'Location' },
-  { id: 3, title: 'Capacity & contact' },
+  { id: 3, title: 'Details & contact' },
   { id: 4, title: 'Amenities' },
 ];
+
+const STRUCTURE_PILL_LABELS = {
+  open_area: 'Open area',
+  rooms_only: 'Rooms only',
+  buildings_and_rooms: 'Buildings and rooms',
+};
 
 export function CenterFormModal({
   mode = 'add',
@@ -294,9 +299,34 @@ export function CenterFormModal({
     }
   }, [currentStep]);
 
-  const isPrivateProperty = centerForm.center_type === 'private_property';
-  const isSingleVenue = centerForm.center_type === 'single_venue';
-  const isCampus = centerForm.center_type === 'campus' || !centerForm.center_type;
+  const dynamicCenterTypes = useMemo(() => {
+    if (refMetadata.center_type && refMetadata.center_type.length > 0) {
+      return refMetadata.center_type.map((t) => ({
+        id: t.id,
+        value: t.code,
+        label: t.name,
+        description: t.description || '',
+        structure_mode: t.structure_mode || 'buildings_and_rooms',
+      }));
+    }
+    return CENTER_TYPES.map((t) => ({
+      ...t,
+      structure_mode:
+        t.value === 'single_venue'
+          ? 'open_area'
+          : t.value === 'private_property'
+            ? 'rooms_only'
+            : 'buildings_and_rooms',
+    }));
+  }, [refMetadata.center_type]);
+
+  const selectedCenterTypeOption = dynamicCenterTypes.find(
+    (t) => t.value === centerForm.center_type
+  );
+  const currentStructureMode =
+    selectedCenterTypeOption?.structure_mode ||
+    resolveCenterStructureMode(centerForm);
+  const isSingleVenue = currentStructureMode === 'open_area';
 
   function clearFieldError(field) {
     setFieldErrors((prev) => {
@@ -306,35 +336,35 @@ export function CenterFormModal({
     });
   }
 
-  function setFieldError(field, message) {
-    setFieldErrors((prev) => ({ ...prev, [field]: message }));
-  }
-
   function validateStep(step) {
     let valid = true;
     const newErrors = {};
 
     if (step === 1) {
-      if (!centerForm.name || !centerForm.name.trim()) {
-        newErrors.name = 'Evacuation center name is required.';
-        valid = false;
-      }
       if (!centerForm.center_type) {
         newErrors.center_type = 'Center type is required.';
+        valid = false;
+      } else if (
+        mode === 'edit' &&
+        allowedCenterTypes &&
+        allowedCenterTypes[centerForm.center_type]?.allowed === false
+      ) {
+        newErrors.center_type =
+          allowedCenterTypes[centerForm.center_type]?.reason ||
+          'This center type cannot be selected due to existing structure or assigned households.';
+        valid = false;
+      }
+      if (isSingleVenue && (!centerForm.capacity || Number(centerForm.capacity) < 1)) {
+        newErrors.capacity = 'Capacity is required for Open area centers (minimum 1).';
+        valid = false;
+      }
+      if (!centerForm.name || !centerForm.name.trim()) {
+        newErrors.name = 'Evacuation center name is required.';
         valid = false;
       }
     } else if (step === 2) {
       if (!centerForm.barangay_ids || centerForm.barangay_ids.length === 0) {
         newErrors.barangays = 'Select at least one barangay served by this center.';
-        valid = false;
-      }
-    } else if (step === 3) {
-      if (isPrivateProperty && (!centerForm.max_rooms || Number(centerForm.max_rooms) < 1)) {
-        newErrors.max_rooms = 'Max rooms is required for Private Property centers (minimum 1).';
-        valid = false;
-      }
-      if (isSingleVenue && (!centerForm.capacity || Number(centerForm.capacity) < 1)) {
-        newErrors.capacity = 'Capacity is required for Single Venue centers (minimum 1).';
         valid = false;
       }
     }
@@ -344,11 +374,9 @@ export function CenterFormModal({
       if (step === 1) {
         delete next.name;
         delete next.center_type;
+        delete next.capacity;
       } else if (step === 2) {
         delete next.barangays;
-      } else if (step === 3) {
-        delete next.max_rooms;
-        delete next.capacity;
       }
       return { ...next, ...newErrors };
     });
@@ -356,21 +384,17 @@ export function CenterFormModal({
     if (!valid) {
       setTimeout(() => {
         if (step === 1) {
-          if (newErrors.name) {
-            document.getElementById('center-name')?.focus();
-          } else if (newErrors.center_type) {
+          if (newErrors.center_type) {
             document.getElementById('center-type')?.focus();
+          } else if (newErrors.capacity) {
+            document.getElementById('center-capacity')?.focus();
+          } else if (newErrors.name) {
+            document.getElementById('center-name')?.focus();
           }
         } else if (step === 2) {
           const searchInput = document.querySelector('.cfm-dialog .bsp-search-input');
           if (searchInput) {
             searchInput.focus();
-          }
-        } else if (step === 3) {
-          if (newErrors.capacity) {
-            document.getElementById('center-capacity')?.focus();
-          } else if (newErrors.max_rooms) {
-            document.getElementById('center-max-rooms')?.focus();
           }
         }
       }, 50);
@@ -472,25 +496,37 @@ export function CenterFormModal({
     }
   }
 
-  const dynamicCenterTypes = useMemo(() => {
-    if (refMetadata.center_type && refMetadata.center_type.length > 0) {
-      return refMetadata.center_type.map((t) => ({
-        value: t.code,
-        label: t.name,
-        description: t.description || '',
-      }));
-    }
-    return CENTER_TYPES;
-  }, [refMetadata.center_type]);
-
-  const availableCenterTypes = allowedCenterTypes
-    ? dynamicCenterTypes.filter((t) => allowedCenterTypes[t.value]?.allowed)
-    : dynamicCenterTypes;
+  const selectedTypeRule =
+    mode === 'edit' && allowedCenterTypes && centerForm.center_type
+      ? allowedCenterTypes[centerForm.center_type]
+      : null;
 
   const currentTypeAllowed =
-    centerForm.center_type &&
-    allowedCenterTypes &&
-    allowedCenterTypes[centerForm.center_type]?.allowed;
+    mode !== 'edit' ||
+    !allowedCenterTypes ||
+    !centerForm.center_type ||
+    selectedTypeRule?.allowed !== false;
+
+  const blockedTypeMessages =
+    mode === 'edit' && allowedCenterTypes
+      ? dynamicCenterTypes
+          .filter((t) => allowedCenterTypes[t.value] && allowedCenterTypes[t.value].allowed === false)
+          .map((t) => ({
+            code: t.value,
+            label: t.label,
+            reason: allowedCenterTypes[t.value].reason,
+          }))
+      : [];
+
+  const typeUsage = selectedTypeRule?.usage || null;
+  const hasExistingStructureOrFamilies = Boolean(
+    mode === 'edit' &&
+      typeUsage &&
+      (typeUsage.buildings > 0 ||
+        typeUsage.rooms > 0 ||
+        typeUsage.room_assigned_families > 0 ||
+        typeUsage.venue_assigned_families > 0)
+  );
 
   const stepperElement = (
     <div className="cfm-stepper-container">
@@ -652,6 +688,112 @@ export function CenterFormModal({
             </h3>
 
             <div className="cfm-field">
+              <div className="cfm-label-row">
+                <label htmlFor="center-type" className="cfm-label">
+                  Center Type <span className="cfm-required">*</span>
+                </label>
+                <span className="cfm-structure-pill">
+                  {STRUCTURE_PILL_LABELS[currentStructureMode] || 'Buildings and rooms'}
+                </span>
+              </div>
+              <select
+                id="center-type"
+                className={`cfm-select ${fieldErrors.center_type ? 'is-invalid' : ''}`}
+                value={centerForm.center_type || 'campus'}
+                onChange={(e) => {
+                  clearFieldError('center_type');
+                  clearFieldError('capacity');
+                  const newType = e.target.value;
+                  const matchedType = dynamicCenterTypes.find((t) => t.value === newType);
+                  const nextStructure = matchedType?.structure_mode || 'buildings_and_rooms';
+
+                  if (nextStructure === 'open_area') {
+                    onChange({
+                      ...centerForm,
+                      center_type: newType,
+                      center_type_id: matchedType?.id ?? centerForm.center_type_id ?? null,
+                      structure_mode: nextStructure,
+                      max_rooms: null,
+                    });
+                  } else {
+                    onChange({
+                      ...centerForm,
+                      center_type: newType,
+                      center_type_id: matchedType?.id ?? centerForm.center_type_id ?? null,
+                      structure_mode: nextStructure,
+                      capacity: null,
+                      max_rooms: null,
+                    });
+                  }
+                }}
+              >
+                {dynamicCenterTypes.map((type) => {
+                  const rule = mode === 'edit' && allowedCenterTypes ? allowedCenterTypes[type.value] : null;
+                  const isBlockedOption = Boolean(rule && rule.allowed === false && type.value !== centerForm.center_type);
+                  return (
+                    <option key={type.value} value={type.value} disabled={isBlockedOption}>
+                      {type.label}{isBlockedOption ? ' (Blocked)' : ''}
+                    </option>
+                  );
+                })}
+              </select>
+              {fieldErrors.center_type && <p className="cfm-field-error">{fieldErrors.center_type}</p>}
+              {mode === 'edit' && !currentTypeAllowed && selectedTypeRule?.reason && (
+                <div className="cfm-type-callout is-blocked" role="alert">
+                  <FontAwesomeIcon icon={faTriangleExclamation} style={{ marginTop: '2px' }} />
+                  <span>{selectedTypeRule.reason}</span>
+                </div>
+              )}
+              {mode === 'edit' && (selectedTypeRule?.warning || hasExistingStructureOrFamilies) && (
+                <div className="cfm-type-callout is-warning" role="status">
+                  <FontAwesomeIcon icon={faTriangleExclamation} style={{ marginTop: '2px' }} />
+                  <div>
+                    <div>
+                      {selectedTypeRule?.warning ||
+                        'Changing center type affects how buildings, rooms, and households are organized.'}
+                    </div>
+                    {blockedTypeMessages.length > 0 && (
+                      <ul className="cfm-type-callout-list">
+                        {blockedTypeMessages.map((b) => (
+                          <li key={b.code}>
+                            <strong>{b.label}:</strong> {b.reason}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </div>
+              )}
+              {!selectedTypeRule?.warning && !hasExistingStructureOrFamilies && (
+                <p className="cfm-helper-text">
+                  {selectedCenterTypeOption?.description || 'Select a center type to set its structure.'}
+                </p>
+              )}
+            </div>
+
+            {isSingleVenue && (
+              <div className="cfm-field">
+                <label htmlFor="center-capacity" className="cfm-label">
+                  Capacity <span className="cfm-required">*</span>
+                </label>
+                <input
+                  id="center-capacity"
+                  type="number"
+                  min="1"
+                  className={`cfm-input ${fieldErrors.capacity ? 'is-invalid' : ''}`}
+                  placeholder="e.g. 250"
+                  value={centerForm.capacity ?? ''}
+                  onChange={(e) => {
+                    clearFieldError('capacity');
+                    onChange({ ...centerForm, capacity: e.target.value || null });
+                  }}
+                  required
+                />
+                {fieldErrors.capacity && <p className="cfm-field-error">{fieldErrors.capacity}</p>}
+              </div>
+            )}
+
+            <div className="cfm-field">
               <label htmlFor="center-name" className="cfm-label">
                 Center Name <span className="cfm-required">*</span>
               </label>
@@ -667,47 +809,6 @@ export function CenterFormModal({
                 }}
               />
               {fieldErrors.name && <p className="cfm-field-error">{fieldErrors.name}</p>}
-            </div>
-
-            <div className="cfm-field">
-              <label htmlFor="center-type" className="cfm-label">
-                Center Type <span className="cfm-required">*</span>
-              </label>
-              <select
-                id="center-type"
-                className={`cfm-select ${fieldErrors.center_type ? 'is-invalid' : ''}`}
-                value={centerForm.center_type || 'campus'}
-                onChange={(e) => {
-                  clearFieldError('center_type');
-                  const newType = e.target.value;
-                  onChange({ ...centerForm, center_type: newType });
-
-                  // Reset type-specific fields when type changes
-                  if (newType === 'private_property') {
-                    onChange({ ...centerForm, center_type: newType, capacity: null });
-                  } else if (newType === 'single_venue') {
-                    onChange({ ...centerForm, center_type: newType, max_rooms: null });
-                  } else {
-                    onChange({ ...centerForm, center_type: newType, max_rooms: null });
-                  }
-                }}
-                disabled={mode === 'edit' && allowedCenterTypes && !currentTypeAllowed}
-              >
-                {availableCenterTypes.map((type) => (
-                  <option key={type.value} value={type.value}>
-                    {type.label}
-                  </option>
-                ))}
-              </select>
-              {allowedCenterTypes && mode === 'edit' && !currentTypeAllowed && (
-                <p className="cfm-field-error">
-                  Current center type cannot be changed. {allowedCenterTypes[centerForm.center_type]?.reason}
-                </p>
-              )}
-              {fieldErrors.center_type && <p className="cfm-field-error">{fieldErrors.center_type}</p>}
-              <p className="cfm-helper-text">
-                {availableCenterTypes.find((t) => t.value === centerForm.center_type)?.description || 'Select a center type to see description.'}
-              </p>
             </div>
           </div>
         )}
@@ -736,62 +837,12 @@ export function CenterFormModal({
           </div>
         )}
 
-        {/* Step 3: Capacity & contact */}
+        {/* Step 3: Details & contact */}
         {currentStep === 3 && (
           <div key={3} className="cfm-step-panel">
             <h3 ref={stepHeadingRef} tabIndex={-1} className="cfm-step-title">
-              Capacity & contact
+              Details &amp; contact
             </h3>
-
-            <div className="cfm-field">
-              <label htmlFor="center-capacity" className="cfm-label">
-                Total Capacity {isSingleVenue && <span className="cfm-required">*</span>}
-              </label>
-              <input
-                id="center-capacity"
-                type="number"
-                min="0"
-                className={`cfm-input ${fieldErrors.capacity ? 'is-invalid' : ''}`}
-                placeholder={isSingleVenue ? 'e.g. 250 (required for Single Venue)' : 'e.g. 250'}
-                value={centerForm.capacity ?? ''}
-                onChange={(e) => {
-                  clearFieldError('capacity');
-                  onChange({ ...centerForm, capacity: e.target.value || null });
-                }}
-                required={isSingleVenue}
-              />
-              <p className="cfm-helper-text">
-                Max evacuees. {isSingleVenue
-                  ? 'Required for Single Venue centers. This is the total capacity of the venue.'
-                  : isPrivateProperty
-                  ? 'Optional for Private Property. Total capacity is derived from rooms.'
-                  : 'Optional for Campus. Total capacity is derived from rooms.'}
-              </p>
-              {fieldErrors.capacity && <p className="cfm-field-error">{fieldErrors.capacity}</p>}
-            </div>
-
-            {isPrivateProperty && (
-              <div className="cfm-field">
-                <label htmlFor="center-max-rooms" className="cfm-label">
-                  Max Rooms <span className="cfm-required">*</span>
-                </label>
-                <input
-                  id="center-max-rooms"
-                  type="number"
-                  min="1"
-                  className={`cfm-input ${fieldErrors.max_rooms ? 'is-invalid' : ''}`}
-                  placeholder="e.g. 20"
-                  value={centerForm.max_rooms ?? ''}
-                  onChange={(e) => {
-                    clearFieldError('max_rooms');
-                    onChange({ ...centerForm, max_rooms: e.target.value || null });
-                  }}
-                  required
-                />
-                <p className="cfm-helper-text">Maximum number of rooms this private property can have.</p>
-                {fieldErrors.max_rooms && <p className="cfm-field-error">{fieldErrors.max_rooms}</p>}
-              </div>
-            )}
 
             <div className="cfm-field">
               <label htmlFor="center-building-material" className="cfm-label">
@@ -1038,8 +1089,7 @@ export function CenterRoomModal({
     });
   }, [buildings]);
 
-  const hasBuildings =
-    selectedCenter?.center_type !== 'single_venue' && buildingOptions.length > 0;
+  const hasBuildings = resolveCenterStructureMode(selectedCenter) === 'buildings_and_rooms';
 
   const modalFooter = (
     <div className="crm-footer">
@@ -1398,73 +1448,195 @@ export function EditBuildingModal(props) {
 }
 
 export function AssignFamilyModal({ open = false, selectedCenter, selectedRoom, availableFamilies = [], loadingAvailableFamilies = false, selectedFamilyIdToAssign = '', assigningFamily = false, onClose, onFamilyChange, onConfirm }) {
-  const isSingleVenue = selectedCenter?.center_type === 'single_venue' || (!selectedRoom && (!selectedCenter?.rooms || selectedCenter.rooms.length === 0));
+  const isSingleVenue = resolveCenterStructureMode(selectedCenter) === 'open_area';
 
-  // For single_venue or centers without rooms, we don't need a room - just the center
+  // Open area assigns directly to the center; rooms_only & buildings_and_rooms require a room
   if (!open || (!selectedRoom && !isSingleVenue)) return null;
 
   const selectedFamily = availableFamilies.find((f) => String(f.id) === String(selectedFamilyIdToAssign)) || null;
   const memCount = selectedFamily ? selectedFamily.member_count || selectedFamily.family_members || 1 : 0;
 
+  const centerCapacity = Number(selectedCenter?.capacity || 0);
   const centerAssigned = Number(selectedCenter?.assigned ?? selectedCenter?.total_assigned ?? selectedCenter?.occupied ?? selectedCenter?.current_occupancy ?? 0);
-  const remaining = isSingleVenue || !selectedRoom
-    ? Math.max((selectedCenter?.capacity || 0) - centerAssigned, 0)
-    : (selectedRoom?.available ?? ((selectedRoom?.capacity || 0) - (selectedRoom?.occupied || 0)));
+  const roomCapacity = Number(selectedRoom?.capacity || 0);
+  const roomAssigned = Number(selectedRoom?.occupied || selectedRoom?.assigned || 0);
 
-  const isOverCapacity = selectedFamily && (selectedCenter?.capacity || selectedRoom?.capacity) && memCount > remaining;
+  const remaining = isSingleVenue || !selectedRoom
+    ? Math.max(centerCapacity - centerAssigned, 0)
+    : (selectedRoom?.available ?? Math.max(roomCapacity - roomAssigned, 0));
+
+  const targetCapacity = isSingleVenue || !selectedRoom ? centerCapacity : roomCapacity;
+  const isTargetFull = targetCapacity <= 0 || remaining <= 0;
+  const isOverCapacity = Boolean(selectedFamily && memCount > remaining);
 
   const title = isSingleVenue || !selectedRoom
-    ? 'Assign Household to ' + (selectedCenter?.name || 'the venue')
+    ? 'Assign Household to ' + (selectedCenter?.name || 'the center')
     : 'Assign Household to ' + formatRoomLabel(selectedRoom?.room_number);
   const subtitle = selectedCenter?.name || '';
 
   return (
-    <ModalShell open={open} title={title} subtitle={subtitle} onClose={onClose} onPrimary={onConfirm} loading={assigningFamily} primaryLabel={assigningFamily ? 'Assigning...' : 'Confirm Assignment'} primaryDisabled={!selectedFamilyIdToAssign || assigningFamily}>
+    <ModalShell open={open} title={title} subtitle={subtitle} onClose={onClose} onPrimary={onConfirm} loading={assigningFamily} primaryLabel={assigningFamily ? 'Assigning...' : 'Confirm Assignment'} primaryDisabled={!selectedFamilyIdToAssign || assigningFamily || isOverCapacity || isTargetFull}>
       <p className="intro">Select an unassigned registered household. EvacWay verifies capacity before allocating.</p>
-      <div className="form-group"><label htmlFor="assign-household">Select Unassigned Household</label><select id="assign-household" className="form-select" value={selectedFamilyIdToAssign} onChange={(e) => onFamilyChange(e.target.value)} disabled={loadingAvailableFamilies}><option value="">{loadingAvailableFamilies ? 'Loading unassigned households...' : availableFamilies.length === 0 ? 'No unassigned households available' : 'Choose household...'}</option>{availableFamilies.map((f) => (<option key={f.id} value={f.id}>{displayEntityName(f.household_head_name || f.head_name)} ({f.family_code}) · {f.member_count || f.family_members || 1} members · {f.barangay || 'No barangay'}</option>))}</select></div>
+      <div className="form-group"><label htmlFor="assign-household">Select Unassigned Household</label><select id="assign-household" className="form-select" value={selectedFamilyIdToAssign} onChange={(e) => onFamilyChange(e.target.value)} disabled={loadingAvailableFamilies || isTargetFull}><option value="">{loadingAvailableFamilies ? 'Loading unassigned households...' : availableFamilies.length === 0 ? 'No unassigned households available' : 'Choose household...'}</option>{availableFamilies.map((f) => (<option key={f.id} value={f.id}>{displayEntityName(f.household_head_name || f.head_name)} ({f.family_code}) · {f.member_count || f.family_members || 1} members · {f.barangay || 'No barangay'}</option>))}</select></div>
       {isSingleVenue || !selectedRoom ? (
-        <div className="form-group"><label>Venue</label><p className="room-value">{selectedCenter?.name}</p></div>
+        <div className="form-group"><label>Evacuation Center</label><p className="room-value">{selectedCenter?.name}</p></div>
       ) : (
         <div className="form-group"><label>Room</label><p className="room-value">{formatRoomLabel(selectedRoom?.room_number)}</p></div>
       )}
       <div className="capacity-summary">
         {isSingleVenue || !selectedRoom ? (
           <>
-            <div className="capacity-row"><span className="capacity-label">Venue capacity</span><span className="capacity-value">{selectedCenter?.capacity || 0} people</span></div>
+            <div className="capacity-row"><span className="capacity-label">Center capacity</span><span className="capacity-value">{centerCapacity} people</span></div>
             <div className="capacity-row"><span className="capacity-label">Currently assigned</span><span className="capacity-value">{centerAssigned} people</span></div>
-            <div className="capacity-row"><span className="capacity-label">Remaining capacity</span><span className="capacity-value" style={{ color: isOverCapacity ? 'var(--ew-danger-text)' : 'var(--ew-safe-text)' }}>{remaining} spaces left</span></div>
+            <div className="capacity-row"><span className="capacity-label">Space left</span><span className="capacity-value" style={{ color: isOverCapacity || isTargetFull ? 'var(--ew-danger-text)' : 'var(--ew-safe-text)' }}>{remaining} spaces left</span></div>
           </>
         ) : (
           <>
-            <div className="capacity-row"><span className="capacity-label">Room capacity</span><span className="capacity-value">{selectedRoom?.capacity} people</span></div>
-            <div className="capacity-row"><span className="capacity-label">Currently assigned</span><span className="capacity-value">{selectedRoom?.occupied || 0} people</span></div>
-            <div className="capacity-row"><span className="capacity-label">Remaining capacity</span><span className="capacity-value" style={{ color: isOverCapacity ? 'var(--ew-danger-text)' : 'var(--ew-safe-text)' }}>{remaining} spaces left</span></div>
+            <div className="capacity-row"><span className="capacity-label">Room capacity</span><span className="capacity-value">{roomCapacity} people</span></div>
+            <div className="capacity-row"><span className="capacity-label">Currently assigned</span><span className="capacity-value">{roomAssigned} people</span></div>
+            <div className="capacity-row"><span className="capacity-label">Space left</span><span className="capacity-value" style={{ color: isOverCapacity || isTargetFull ? 'var(--ew-danger-text)' : 'var(--ew-safe-text)' }}>{remaining} spaces left</span></div>
           </>
         )}
         {selectedFamily && (<div className="capacity-row"><span className="capacity-label">Household to assign</span><span className="capacity-value">{memCount} members</span></div>)}
-        {isOverCapacity && selectedFamily && (<p className="capacity-warning"><FontAwesomeIcon icon={faTriangleExclamation} /> Warning: this household has {memCount} members but only {remaining} space left. Assigning would exceed capacity.</p>)}
+        {isTargetFull && (<p className="capacity-warning"><FontAwesomeIcon icon={faTriangleExclamation} /> {isSingleVenue ? 'This center is at full capacity and cannot accept more households.' : 'This room is at full capacity and cannot accept more households.'}</p>)}
+        {!isTargetFull && isOverCapacity && selectedFamily && (<p className="capacity-warning"><FontAwesomeIcon icon={faTriangleExclamation} /> Cannot assign: this household has {memCount} members, but only {remaining} spaces left.</p>)}
       </div>
     </ModalShell>
   );
 }
 
-export function MoveFamilyModal({ open = false, movingFamily, selectedRoom, centers = [], targetCenterRooms = [], targetCenterId = '', targetRoomId = '', loadingTargetRooms = false, moving = false, onClose, onTargetCenterChange, onTargetRoomChange, onConfirmMove }) {
+export function MoveFamilyModal({ open = false, movingFamily, selectedRoom, centers = [], targetCenterRooms = [], targetCenterBuildings = [], targetCenterId = '', targetRoomId = '', loadingTargetRooms = false, moving = false, onClose, onTargetCenterChange, onTargetRoomChange, onConfirmMove }) {
+  const [selectedBuildingId, setSelectedBuildingId] = useState('');
+
   if (!open || !movingFamily) return null;
   const needed = movingFamily.assigned_members || movingFamily.family_members || movingFamily.member_count || 1;
-  const dest = targetRoomId ? targetCenterRooms.find((r) => String(r.id) === String(targetRoomId)) : null;
-  const destRemaining = dest ? (dest.available ?? (dest.capacity - (dest.occupied || 0))) : null;
-  const isOver = dest != null && destRemaining != null && needed > destRemaining;
-  const title = 'Move Household to Another Room / Center';
-  const subtitle = selectedRoom ? formatRoomLabel(selectedRoom.room_number) : 'Current room';
+
+  const targetFeature = (centers?.features || []).find((feature) => String((feature.properties || feature).id) === String(targetCenterId));
+  const targetCenter = targetFeature ? (targetFeature.properties || targetFeature) : null;
+  const targetStructure = targetCenter ? resolveCenterStructureMode(targetCenter) : 'buildings_and_rooms';
+  const isTargetOpenArea = Boolean(targetCenter && targetStructure === 'open_area');
+  const isTargetBuildings = Boolean(targetCenter && targetStructure === 'buildings_and_rooms');
+
+  const buildingList = isTargetBuildings ? (Array.isArray(targetCenterBuildings) ? targetCenterBuildings : []) : [];
+  const hasBuildings = isTargetBuildings && (buildingList.length > 0 || targetCenterRooms.some((r) => r.building_id != null));
+
+  const roomsForDropdown = hasBuildings && selectedBuildingId
+    ? targetCenterRooms.filter((r) =>
+        selectedBuildingId === 'unlinked' ? r.building_id == null : String(r.building_id) === String(selectedBuildingId)
+      )
+    : targetCenterRooms;
+
+  const dest = !isTargetOpenArea && targetRoomId ? targetCenterRooms.find((r) => String(r.id) === String(targetRoomId)) : null;
+  const destRemaining = dest ? (dest.available ?? Math.max((dest.capacity || 0) - (dest.occupied || dest.assigned || 0), 0)) : null;
+
+  const targetCenterCap = Number(targetCenter?.capacity || 0);
+  const targetCenterAssigned = Number(targetCenter?.assigned ?? targetCenter?.total_assigned ?? targetCenter?.occupied ?? 0);
+  const targetCenterRemaining = Math.max(targetCenterCap - targetCenterAssigned, 0);
+
+  const isTargetFull = isTargetOpenArea
+    ? (targetCenterCap <= 0 || targetCenterRemaining <= 0)
+    : Boolean(dest && ((dest.capacity || 0) <= 0 || destRemaining <= 0));
+  const isOver = isTargetOpenArea
+    ? needed > targetCenterRemaining
+    : Boolean(dest != null && destRemaining != null && needed > destRemaining);
+
+  const canSubmit = Boolean(targetCenterId) && !moving && !isOver && !isTargetFull && (isTargetOpenArea || Boolean(targetRoomId));
+  const title = isTargetOpenArea ? 'Move Household to Another Center' : 'Move Household to Another Room / Center';
+  const subtitle = selectedRoom ? formatRoomLabel(selectedRoom.room_number) : 'Current center';
+
   return (
-    <ModalShell open={open} title={title} subtitle={subtitle} onClose={onClose} onPrimary={onConfirmMove} loading={moving} primaryLabel={moving ? 'Moving...' : 'Confirm Move'} primaryDisabled={!targetRoomId || moving || isOver}>
+    <ModalShell open={open} title={title} subtitle={subtitle} onClose={onClose} onPrimary={onConfirmMove} loading={moving} primaryLabel={moving ? 'Moving...' : 'Confirm Move'} primaryDisabled={!canSubmit}>
       <div className="form-group"><label>Household</label><p className="room-value">{movingFamily.household_head_name || movingFamily.head_name || 'Unnamed'}</p></div>
       <div className="form-group"><label>Members to move</label><p className="room-value">{needed} people</p></div>
-      <div className="form-group"><label>Current room</label><p className="room-value">{selectedRoom ? formatRoomLabel(selectedRoom.room_number) : 'Assigned'}</p></div>
-      <div className="form-group"><label htmlFor="move-target-center">Target Evacuation Center</label><select id="move-target-center" className="form-select" value={targetCenterId} onChange={(e) => onTargetCenterChange(e.target.value)} disabled={loadingTargetRooms || moving}><option value="">Select destination center...</option>{(centers?.features || []).filter((c) => (c.properties || c).is_active).map((feature) => { const c = feature.properties || feature; const barangayNames = (c.barangays || []).map((barangay) => barangay.name).join(', '); return (<option key={c.id} value={c.id}>{c.name} (' + barangayNames + 'No barangay')</option>); }) }</select></div>
-      <div className="form-group"><label htmlFor="move-target-room">Target Room</label><select id="move-target-room" className="form-select" value={targetRoomId} onChange={(e) => onTargetRoomChange(e.target.value)} disabled={!targetCenterId || loadingTargetRooms || moving}><option value="">Select target room...</option>{targetCenterRooms.map((r) => { const isCurrent = selectedRoom && String(r.id) === String(selectedRoom.id); return (<option key={r.id} value={r.id}>{formatRoomLabel(r.room_number)} &middot; Capacity: {r.capacity} &middot; Assigned: {r.occupied || 0} &middot; Remaining: {r.available ?? (r.capacity - (r.occupied || 0))}{isCurrent ? ' (Current)' : ''}</option>); }) }</select></div>
-      {dest && (<div className="capacity-summary"><div className="capacity-row"><span className="capacity-label">Target room capacity</span><span className="capacity-value">{dest.capacity} people</span></div><div className="capacity-row"><span className="capacity-label">Target available spaces</span><span className="capacity-value" style={{ color: isOver ? 'var(--ew-danger-text)' : 'var(--ew-safe-text)' }}>{destRemaining} spaces</span></div><div className="capacity-row"><span className="capacity-label">Remaining after transfer</span><span className="capacity-value" style={{ color: isOver ? 'var(--ew-danger-text)' : 'var(--ew-safe-text)' }}>{destRemaining - needed} {isOver ? '(exceeds capacity)' : 'spaces'}</span></div></div>)}
-      {isOver && dest && (<p className="capacity-warning"><FontAwesomeIcon icon={faXmark} /> Warning: this household needs {needed} spaces but the target room only has {destRemaining} available. The move would exceed capacity.</p>)}
+      <div className="form-group"><label>Current location</label><p className="room-value">{selectedRoom ? formatRoomLabel(selectedRoom.room_number) : (movingFamily.center_name || 'Assigned directly')}</p></div>
+      <div className="form-group">
+        <label htmlFor="move-target-center">Target Evacuation Center</label>
+        <select
+          id="move-target-center"
+          className="form-select"
+          value={targetCenterId}
+          onChange={(e) => {
+            setSelectedBuildingId('');
+            onTargetCenterChange(e.target.value);
+          }}
+          disabled={loadingTargetRooms || moving}
+        >
+          <option value="">Select destination center...</option>
+          {(centers?.features || []).filter((c) => (c.properties || c).is_active).map((feature) => {
+            const c = feature.properties || feature;
+            const cCap = Number(c.capacity || 0);
+            const cAss = Number(c.assigned ?? c.total_assigned ?? c.occupied ?? 0);
+            const cRem = Math.max(cCap - cAss, 0);
+            const barangayNames = (c.barangays || []).map((barangay) => barangay.name).join(', ');
+            return (
+              <option key={c.id} value={c.id} disabled={cRem <= 0}>
+                {c.name} ({barangayNames || 'No barangay'}) — {cRem <= 0 ? 'Full' : `${cRem} spaces left`}
+              </option>
+            );
+          })}
+        </select>
+      </div>
+
+      {hasBuildings && !isTargetOpenArea && (
+        <div className="form-group">
+          <label htmlFor="move-target-building">Target Building</label>
+          <select
+            id="move-target-building"
+            className="form-select"
+            value={selectedBuildingId}
+            onChange={(e) => {
+              setSelectedBuildingId(e.target.value);
+              onTargetRoomChange('');
+            }}
+            disabled={!targetCenterId || loadingTargetRooms || moving}
+          >
+            <option value="">All buildings...</option>
+            {buildingList.map((b) => (
+              <option key={b.id} value={b.id}>{b.name || b.properties?.name}</option>
+            ))}
+            {targetCenterRooms.some((r) => r.building_id == null) && (
+              <option value="unlinked">Unlinked rooms</option>
+            )}
+          </select>
+        </div>
+      )}
+
+      {!isTargetOpenArea && (
+        <div className="form-group">
+          <label htmlFor="move-target-room">Target Room</label>
+          <select id="move-target-room" className="form-select" value={targetRoomId} onChange={(e) => onTargetRoomChange(e.target.value)} disabled={!targetCenterId || loadingTargetRooms || moving}>
+            <option value="">Select target room...</option>
+            {roomsForDropdown.map((r) => {
+              const isCurrent = selectedRoom && String(r.id) === String(selectedRoom.id);
+              const rRem = r.available ?? Math.max((r.capacity || 0) - (r.occupied || r.assigned || 0), 0);
+              const isRoomFull = (r.capacity || 0) <= 0 || rRem <= 0;
+              return (
+                <option key={r.id} value={r.id} disabled={isRoomFull || isCurrent}>
+                  {formatRoomLabel(r.room_number)} &middot; Cap: {r.capacity} &middot; {isRoomFull ? 'Full' : `Space left: ${rRem}`}{isCurrent ? ' (Current)' : ''}
+                </option>
+              );
+            })}
+          </select>
+        </div>
+      )}
+
+      {isTargetOpenArea && targetCenter && (
+        <div className="capacity-summary">
+          <div className="capacity-row"><span className="capacity-label">Target center capacity</span><span className="capacity-value">{targetCenterCap} people</span></div>
+          <div className="capacity-row"><span className="capacity-label">Space left</span><span className="capacity-value" style={{ color: isOver || isTargetFull ? 'var(--ew-danger-text)' : 'var(--ew-safe-text)' }}>{targetCenterRemaining} spaces</span></div>
+          <div className="capacity-row"><span className="capacity-label">Remaining after transfer</span><span className="capacity-value" style={{ color: isOver || isTargetFull ? 'var(--ew-danger-text)' : 'var(--ew-safe-text)' }}>{targetCenterRemaining - needed} {isOver ? '(exceeds capacity)' : 'spaces'}</span></div>
+        </div>
+      )}
+      {!isTargetOpenArea && dest && (
+        <div className="capacity-summary">
+          <div className="capacity-row"><span className="capacity-label">Target room capacity</span><span className="capacity-value">{dest.capacity} people</span></div>
+          <div className="capacity-row"><span className="capacity-label">Space left</span><span className="capacity-value" style={{ color: isOver || isTargetFull ? 'var(--ew-danger-text)' : 'var(--ew-safe-text)' }}>{destRemaining} spaces</span></div>
+          <div className="capacity-row"><span className="capacity-label">Remaining after transfer</span><span className="capacity-value" style={{ color: isOver || isTargetFull ? 'var(--ew-danger-text)' : 'var(--ew-safe-text)' }}>{destRemaining - needed} {isOver ? '(exceeds capacity)' : 'spaces'}</span></div>
+        </div>
+      )}
+      {(isOver || isTargetFull) && (isTargetOpenArea ? targetCenter : dest) && (
+        <p className="capacity-warning"><FontAwesomeIcon icon={faXmark} /> Cannot move: this household needs {needed} spaces, but only {isTargetOpenArea ? targetCenterRemaining : destRemaining} spaces are available.</p>
+      )}
     </ModalShell>
   );
 }

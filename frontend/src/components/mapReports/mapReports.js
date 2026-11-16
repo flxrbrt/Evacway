@@ -136,9 +136,12 @@ function renderPhotoCarousel(photos, container) {
   carouselWrap.setAttribute("aria-label", "Hazard report photos");
   carouselWrap.setAttribute("tabindex", "0");
 
+  const stage = document.createElement("div");
+  stage.className = "map-report-carousel-stage";
+
   const track = document.createElement("div");
   track.className = "map-report-carousel-track";
-  carouselWrap.appendChild(track);
+  stage.appendChild(track);
 
   photos.forEach((photoUrl, idx) => {
     const slide = document.createElement("div");
@@ -219,7 +222,7 @@ function renderPhotoCarousel(photos, container) {
     counter.className = "map-report-carousel-counter";
     counter.setAttribute("aria-live", "polite");
     counter.textContent = `1 / ${photos.length}`;
-    carouselWrap.appendChild(counter);
+    stage.appendChild(counter);
 
     // Prev Button
     prevBtn = document.createElement("button");
@@ -232,7 +235,7 @@ function renderPhotoCarousel(photos, container) {
       e.stopPropagation();
       goToSlide(currentIndex - 1);
     });
-    carouselWrap.appendChild(prevBtn);
+    stage.appendChild(prevBtn);
 
     // Next Button
     nextBtn = document.createElement("button");
@@ -244,7 +247,7 @@ function renderPhotoCarousel(photos, container) {
       e.stopPropagation();
       goToSlide(currentIndex + 1);
     });
-    carouselWrap.appendChild(nextBtn);
+    stage.appendChild(nextBtn);
 
     // Pagination dots (bottom center)
     const dotsWrap = document.createElement("div");
@@ -266,7 +269,7 @@ function renderPhotoCarousel(photos, container) {
       dotElements.push(dot);
       dotsWrap.appendChild(dot);
     });
-    carouselWrap.appendChild(dotsWrap);
+    stage.appendChild(dotsWrap);
 
     // Keyboard navigation when carousel is focused
     carouselWrap.addEventListener("keydown", (e) => {
@@ -284,7 +287,7 @@ function renderPhotoCarousel(photos, container) {
     let touchStartY = 0;
     let isSwiping = false;
 
-    carouselWrap.addEventListener(
+    stage.addEventListener(
       "touchstart",
       (e) => {
         if (e.touches.length === 1) {
@@ -296,7 +299,7 @@ function renderPhotoCarousel(photos, container) {
       { passive: true }
     );
 
-    carouselWrap.addEventListener(
+    stage.addEventListener(
       "touchmove",
       (e) => {
         if (!isSwiping || e.touches.length !== 1) return;
@@ -309,7 +312,7 @@ function renderPhotoCarousel(photos, container) {
       { passive: false }
     );
 
-    carouselWrap.addEventListener("touchend", (e) => {
+    stage.addEventListener("touchend", (e) => {
       if (!isSwiping) return;
       isSwiping = false;
       const diffX = e.changedTouches[0].clientX - touchStartX;
@@ -322,7 +325,9 @@ function renderPhotoCarousel(photos, container) {
     });
   }
 
-  // "View full photo" button (bottom right)
+  carouselWrap.appendChild(stage);
+
+  // "View full photo" button (below photo on mobile, absolute overlay on desktop)
   const viewFullBtn = document.createElement("button");
   viewFullBtn.type = "button";
   viewFullBtn.className = "map-report-view-full-btn";
@@ -563,6 +568,10 @@ export function createReportPopup(report, options = {}) {
   header.appendChild(closeBtn);
   popup.appendChild(header);
 
+  // Scrollable body container (fixed header remains above)
+  const body = document.createElement("div");
+  body.className = "map-report-body";
+
   // Content Section: Alert Banner (Avoid this road)
   if (isBlocked) {
     const alertBanner = document.createElement("div");
@@ -578,10 +587,10 @@ export function createReportPopup(report, options = {}) {
     alertText.textContent = "Avoid this road";
 
     alertBanner.append(alertIcon, alertText);
-    popup.appendChild(alertBanner);
+    body.appendChild(alertBanner);
   }
 
-  // Affected Roads
+  // Affected Roads (wrapping row of small pills)
   let roadNames = [];
   if (Array.isArray(report?.closed_roads) && report.closed_roads.length > 0) {
     roadNames = report.closed_roads;
@@ -600,26 +609,19 @@ export function createReportPopup(report, options = {}) {
     roadsLabel.textContent = "AFFECTED ROADS";
     roadsSection.appendChild(roadsLabel);
 
-    if (roadNames.length === 1) {
-      const singleRoad = document.createElement("div");
-      singleRoad.className = "map-report-single-road";
-      singleRoad.textContent = roadNames[0];
-      roadsSection.appendChild(singleRoad);
-    } else {
-      const pillsWrap = document.createElement("div");
-      pillsWrap.className = "map-report-roads-pills";
-      roadNames.forEach((name) => {
-        const pill = document.createElement("span");
-        pill.className = "map-report-road-pill";
-        pill.textContent = name;
-        pillsWrap.appendChild(pill);
-      });
-      roadsSection.appendChild(pillsWrap);
-    }
-    popup.appendChild(roadsSection);
+    const pillsWrap = document.createElement("div");
+    pillsWrap.className = "map-report-roads-pills";
+    roadNames.forEach((name) => {
+      const pill = document.createElement("span");
+      pill.className = "map-report-road-pill";
+      pill.textContent = name;
+      pillsWrap.appendChild(pill);
+    });
+    roadsSection.appendChild(pillsWrap);
+    body.appendChild(roadsSection);
   }
 
-  // Description with clamp and "Read more" toggle
+  // Description with clamp (2 lines on mobile) and "Read more" toggle
   const descriptionText =
     report?.description ||
     report?.details ||
@@ -633,7 +635,7 @@ export function createReportPopup(report, options = {}) {
     descElem.textContent = descriptionText;
     descWrap.appendChild(descElem);
 
-    if (descriptionText.length > 100) {
+    if (descriptionText.length > 60) {
       let isExpanded = false;
       const readMoreBtn = document.createElement("button");
       readMoreBtn.type = "button";
@@ -653,10 +655,14 @@ export function createReportPopup(report, options = {}) {
       descWrap.appendChild(readMoreBtn);
     }
 
-    popup.appendChild(descWrap);
+    body.appendChild(descWrap);
   }
 
-  // Time reported
+  // Photo Carousel (appended to scrollable body)
+  const photos = extractPhotoUrls(report);
+  renderPhotoCarousel(photos, body);
+
+  // Time reported (small muted text under the photo)
   const submittedAt =
     report?.submitted_at || report?.created_at || report?.validated_at;
   if (submittedAt) {
@@ -672,13 +678,104 @@ export function createReportPopup(report, options = {}) {
         hour: "numeric",
         minute: "2-digit",
       })}`;
-      popup.appendChild(timeElem);
+      body.appendChild(timeElem);
     }
   }
 
-  // Photo Carousel
-  const photos = extractPhotoUrls(report);
-  renderPhotoCarousel(photos, popup);
+  // Staff action row at the bottom (verify, resolve, edit, delete)
+  if (options.isStaff) {
+    const actionRow = document.createElement("div");
+    actionRow.className = "map-report-staff-actions";
+
+    const isBlocked = isBlockedRoadReport(report);
+    const statusVal = String(report.status || "").toLowerCase();
+    const isResolved = statusVal === "resolved";
+    const isValidated = statusVal === "validated";
+
+    // Verify / Validate button
+    if (!isValidated && !isResolved && typeof options.onVerify === "function") {
+      const verifyBtn = document.createElement("button");
+      verifyBtn.type = "button";
+      verifyBtn.className = "map-report-btn-secondary";
+      verifyBtn.textContent = "Verify";
+      verifyBtn.addEventListener("click", async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        verifyBtn.disabled = true;
+        try {
+          await options.onVerify(report);
+          statusPill.className = "map-report-status-pill status-validated";
+          statusPill.innerHTML = "";
+          const newDot = document.createElement("span");
+          newDot.className = "map-report-status-dot";
+          statusPill.append(newDot, document.createTextNode("Validated"));
+          verifyBtn.remove();
+        } catch (err) {
+          verifyBtn.disabled = false;
+        }
+      });
+      actionRow.appendChild(verifyBtn);
+    }
+
+    // Resolve / Reopen road button
+    if (!isResolved && typeof options.onResolve === "function") {
+      const resolveBtn = document.createElement("button");
+      resolveBtn.type = "button";
+      resolveBtn.className = "map-report-btn-secondary";
+      resolveBtn.textContent = isBlocked ? "Reopen road" : "Resolve";
+      resolveBtn.addEventListener("click", async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        resolveBtn.disabled = true;
+        try {
+          await options.onResolve(report);
+          statusPill.className = "map-report-status-pill status-resolved";
+          statusPill.innerHTML = "";
+          const newDot = document.createElement("span");
+          newDot.className = "map-report-status-dot";
+          statusPill.append(newDot, document.createTextNode("Resolved"));
+          resolveBtn.remove();
+        } catch (err) {
+          resolveBtn.disabled = false;
+        }
+      });
+      actionRow.appendChild(resolveBtn);
+    }
+
+    // Edit button (secondary/ghost)
+    if (typeof options.onEdit === "function") {
+      const editBtn = document.createElement("button");
+      editBtn.type = "button";
+      editBtn.className = "map-report-btn-ghost";
+      editBtn.textContent = "Edit";
+      editBtn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        options.onEdit(report);
+      });
+      actionRow.appendChild(editBtn);
+    }
+
+    // Delete button (admin-only ghost danger button)
+    if (options.isAdmin && typeof options.onDelete === "function") {
+      const deleteBtn = document.createElement("button");
+      deleteBtn.type = "button";
+      deleteBtn.className = "map-report-btn-ghost map-report-btn-danger";
+      deleteBtn.textContent = "Delete";
+      deleteBtn.addEventListener("click", async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        await options.onDelete(report);
+      });
+      actionRow.appendChild(deleteBtn);
+    }
+
+    if (actionRow.children.length > 0) {
+      body.appendChild(actionRow);
+    }
+  }
+
+  popup.appendChild(body);
 
   return popup;
 }

@@ -101,4 +101,22 @@ export const CENTER_TABS = [
   { key: 'activity', label: 'Activity', icon: 'faClockRotateLeft' },
 ]
 
+export function resolveCenterStructureMode(center) {
+  const props = center?.properties || center || {}
+  const rawMode = String(props.structure_mode || props.center_structure || '')
+    .trim()
+    .toLowerCase()
+  if (
+    rawMode === 'open_area' ||
+    rawMode === 'rooms_only' ||
+    rawMode === 'buildings_and_rooms'
+  ) {
+    return rawMode
+  }
+  const typeCode = String(props.center_type || '').trim().toLowerCase()
+  if (typeCode === 'single_venue') return 'open_area'
+  if (typeCode === 'private_property') return 'rooms_only'
+  return 'buildings_and_rooms'
+}
+
 export const MAPPING_BANNER_STORAGE_KEY = 'evacway:dismissed-mapping-banner'

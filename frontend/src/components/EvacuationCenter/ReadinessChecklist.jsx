@@ -4,6 +4,7 @@ import {
   faTriangleExclamation,
   faArrowRight,
 } from '@fortawesome/free-solid-svg-icons'
+import { resolveCenterStructureMode } from './utils'
 
 /**
  * ReadinessChecklist - High-elevation operational readiness checklist for evacuation centers
@@ -19,10 +20,11 @@ export default function ReadinessChecklist({
 }) {
   if (!center) return null
 
-  const isSingleVenue = center.center_type === 'single_venue'
-  const isCampus = center.center_type === 'campus' || !center.center_type
+  const structureMode = resolveCenterStructureMode(center)
+  const isOpenArea = structureMode === 'open_area'
+  const isBuildingsAndRooms = structureMode === 'buildings_and_rooms'
 
-  // Determine room/building readiness based on center type
+  // Determine room/building readiness based on center structure_mode
   const roomCount = Number(
     center.room_count ?? center.total_rooms ?? center.rooms?.length ?? 0
   )
@@ -32,8 +34,8 @@ export default function ReadinessChecklist({
   const hasRooms = roomCount > 0
   const hasBuildings = buildingCount > 0
 
-  const roomsRequired = !isSingleVenue
-  const buildingsRequired = isCampus
+  const roomsRequired = !isOpenArea
+  const buildingsRequired = isBuildingsAndRooms
 
   const roomsOk = roomsRequired ? hasRooms : true
   const buildingsOk = buildingsRequired ? hasBuildings : true
@@ -46,14 +48,18 @@ export default function ReadinessChecklist({
       fix: onPlaceOnMap,
       actionLabel: 'Place on map',
     },
-    {
-      key: 'rooms',
-      label: 'Rooms Defined',
-      ok: roomsOk,
-      fix: roomsRequired && !roomsOk ? onAddRooms : undefined,
-      actionLabel: 'Add room',
-    },
-    ...(!isSingleVenue
+    ...(!isOpenArea
+      ? [
+          {
+            key: 'rooms',
+            label: 'Rooms Defined',
+            ok: roomsOk,
+            fix: roomsRequired && !roomsOk ? onAddRooms : undefined,
+            actionLabel: 'Add room',
+          },
+        ]
+      : []),
+    ...(isBuildingsAndRooms
       ? [
           {
             key: 'buildings',

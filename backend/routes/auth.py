@@ -8,6 +8,7 @@ from sqlalchemy import func
 from services.mailer import send_password_setup_email
 from services.password_setup import (
     create_password_setup_token,
+    is_token_password_current,
     read_password_setup_token,
 )
 
@@ -153,14 +154,18 @@ def complete_password_setup():
         account = ResidentAccount.query.get(user_id)
         if not account or account.email.strip().lower() != token_email:
             return jsonify({"error": "This password link is no longer valid"}), 400
+        if not is_token_password_current(payload, account.password_hash):
+            return jsonify({"error": "This password link has already been used or is no longer valid."}), 400
 
         account.password_hash = generate_password_hash(password)
-        db.session.add(SystemLog(user_id=account.id, action="Password set or reset using email link"))
+        db.session.add(SystemLog(user_id=None, action=f"Resident account ({account.email}) set or reset password using email link"))
         db.session.commit()
     else:
         user = User.query.get(user_id)
         if not user or user.email.strip().lower() != token_email:
             return jsonify({"error": "This password link is no longer valid"}), 400
+        if not is_token_password_current(payload, user.password_hash):
+            return jsonify({"error": "This password link has already been used or is no longer valid."}), 400
 
         user.password_hash = generate_password_hash(password)
         db.session.add(SystemLog(user_id=user.id, action="Password set or reset using email link"))

@@ -1,11 +1,9 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
-  faUserCheck,
   faUsers,
   faBuildingColumns,
-  faDoorOpen,
   faClock,
   faCheck,
   faRotateLeft,
@@ -19,18 +17,16 @@ import {
   faListCheck,
   faCircleCheck,
   faCircleExclamation,
-  faHouseUser,
-  faMapPin,
   faFileExcel,
   faCalendarDays,
   faCalendarCheck,
   faGear,
-  faDownload,
-  faHourglassHalf,
   faTriangleExclamation,
   faBolt,
   faBoxArchive,
+  faEllipsisVertical,
   faClockRotateLeft,
+  faSliders,
 } from "@fortawesome/free-solid-svg-icons";
 import { useAuth } from "../../context/AuthContext";
 import { api } from "../../services/api";
@@ -41,25 +37,58 @@ export default function EvacueeCheckIn() {
   const [selectedOperationId, setSelectedOperationId] = useState("active");
   const [selectedCenterId, setSelectedCenterId] = useState("all");
   const [filterStatus, setFilterStatus] = useState("all"); // "all" | "pending" | "partial" | "checked_in"
-  const [selectedDate, setSelectedDate] = useState("");
+  const [selectedDate] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
+  const normalizedSearch = useMemo(
+    () => searchQuery.trim().replace(/\s+/g, " "),
+    [searchQuery]
+  );
+  const [isMobileViewport, setIsMobileViewport] = useState(
+    () =>
+      typeof window !== "undefined" &&
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(max-width: 768px)").matches
+  );
+
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+      return undefined;
+    }
+    const mq = window.matchMedia("(max-width: 768px)");
+    const handleChange = (e) => setIsMobileViewport(e.matches);
+    if (typeof mq.addEventListener === "function") {
+      mq.addEventListener("change", handleChange);
+      return () => mq.removeEventListener("change", handleChange);
+    }
+    mq.addListener(handleChange);
+    return () => mq.removeListener(handleChange);
+  }, []);
   const [actionLoadingId, setActionLoadingId] = useState(null);
   const [toastMessage, setToastMessage] = useState(null);
 
+  // Dropdown Menu & Mobile Filter Sheet States
+  const [opMenuOpen, setOpMenuOpen] = useState(false);
+  const [shelterMenuOpen, setShelterMenuOpen] = useState(false);
+  const [bannerMenuOpen, setBannerMenuOpen] = useState(false);
+  const [openMobileRowMenuId, setOpenMobileRowMenuId] = useState(null);
+  const [filterSheetOpen, setFilterSheetOpen] = useState(false);
+  const [draftCenterId, setDraftCenterId] = useState("all");
+
   // Pagination State
   const [currentPage, setCurrentPage] = useState(1);
-  const [pageSize, setPageSize] = useState(25);
+  const [pageSize, setPageSize] = useState(10);
 
   // Member Checklist Modal State
   const [modalFamily, setModalFamily] = useState(null);
   const [selectedMemberIds, setSelectedMemberIds] = useState(new Set());
 
-  // User auth & Evacuation Schedule / Report States
+  // User auth & Evacuation Operation / Report States
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
   const [exportingReport, setExportingReport] = useState(false);
-  const [showScheduleModal, setShowScheduleModal] = useState(false);
-  const [isStartingNewOp, setIsStartingNewOp] = useState(false);
+  const [showManageOpModal, setShowManageOpModal] = useState(false);
+  const [showNewOpModal, setShowNewOpModal] = useState(false);
+  const [pendingOpConfirm, setPendingOpConfirm] = useState(null); // null | "manage-conclude" | "new-operation"
   const [scheduleCenterId, setScheduleCenterId] = useState("all");
   const [scheduleOpenDate, setScheduleOpenDate] = useState("");
   const [scheduleOpenTime, setScheduleOpenTime] = useState("08:00");
@@ -67,7 +96,9 @@ export default function EvacueeCheckIn() {
   const [scheduleCutoffTime, setScheduleCutoffTime] = useState("18:00");
   const [scheduleStatus, setScheduleStatus] = useState("open");
   const [scheduleEventName, setScheduleEventName] = useState("");
+  const [scheduleEventNameError, setScheduleEventNameError] = useState("");
   const [savingSchedule, setSavingSchedule] = useState(false);
+  const savingScheduleRef = useRef(false);
 
   // Quick Extension Modal States
   const [showExtendModal, setShowExtendModal] = useState(false);
@@ -82,11 +113,11 @@ export default function EvacueeCheckIn() {
     isLoading,
     error,
   } = useQuery({
-    queryKey: ["evacuee-check-in-list", selectedCenterId, filterStatus, searchQuery, selectedDate, selectedOperationId],
+    queryKey: ["evacuee-check-in-list", selectedCenterId, filterStatus, normalizedSearch, selectedDate, selectedOperationId],
     queryFn: () =>
       api.getCheckInList({
         center_id: selectedCenterId,
-        q: searchQuery,
+        q: normalizedSearch,
         status: filterStatus,
         date: selectedDate || undefined,
         operation_id: selectedOperationId,
@@ -94,9 +125,9 @@ export default function EvacueeCheckIn() {
     staleTime: 10_000,
   });
 
-  const centers = data?.centers || [];
-  const evacuees = data?.evacuees || [];
-  const operations = data?.operations || [];
+  const centers = useMemo(() => data?.centers || [], [data?.centers]);
+  const evacuees = useMemo(() => data?.evacuees || [], [data?.evacuees]);
+  const operations = useMemo(() => data?.operations || [], [data?.operations]);
   const isHistorical = Boolean(data?.is_historical || (selectedOperationId !== "active" && selectedOperationId !== ""));
   const summary = data?.summary || {
     total_assigned: 0,
@@ -106,7 +137,7 @@ export default function EvacueeCheckIn() {
     occupancy_rate: 0,
   };
 
-  const schedule = data?.evacuation_schedule || {
+  const schedule = useMemo(() => data?.evacuation_schedule || {
     center_id: "all",
     center_name: "All Evacuation Centers",
     evacuation_open_date: null,
@@ -120,7 +151,7 @@ export default function EvacueeCheckIn() {
     is_schedule_set: false,
     is_expired: false,
     can_check_in: false,
-  };
+  }, [data?.evacuation_schedule]);
 
   // Determine active center and effective schedule
   const activeCenterObj = useMemo(() => {
@@ -159,64 +190,133 @@ export default function EvacueeCheckIn() {
     return null;
   };
 
-  // Open Evacuation Schedule Modal
-  const handleOpenScheduleModal = (startNew = false) => {
-    setIsStartingNewOp(Boolean(startNew));
-    setScheduleCenterId(selectedCenterId !== "all" ? selectedCenterId : "all");
-    const today = new Date().toISOString().split("T")[0];
-    if (startNew) {
-      setScheduleEventName("");
-      setScheduleOpenDate(today);
-      setScheduleOpenTime("08:00");
-      setScheduleCutoffDate(today);
-      setScheduleCutoffTime("22:00");
-      setScheduleStatus("open");
-    } else {
-      setScheduleOpenDate(effectiveSchedule?.evacuation_open_date || today);
-      setScheduleOpenTime(effectiveSchedule?.evacuation_open_time || "08:00");
-      setScheduleCutoffDate(effectiveSchedule?.evacuation_cutoff_date || effectiveSchedule?.evacuation_open_date || today);
-      setScheduleCutoffTime(effectiveSchedule?.evacuation_cutoff_time || "18:00");
-      setScheduleStatus(effectiveSchedule?.evacuation_status || "open");
-      setScheduleEventName(effectiveSchedule?.evacuation_event_name || "");
+  // Close dropdown menus & filter sheet on outside click or Escape
+  useEffect(() => {
+    if (!opMenuOpen && !shelterMenuOpen && !bannerMenuOpen && openMobileRowMenuId == null && !filterSheetOpen) {
+      return undefined;
     }
-    setShowScheduleModal(true);
+    const handleOutsideClick = (e) => {
+      if (!e.target.closest?.(".checkin-dropdown-anchor") && !e.target.closest?.(".checkin-mobile-menu-anchor")) {
+        setOpMenuOpen(false);
+        setShelterMenuOpen(false);
+        setBannerMenuOpen(false);
+        setOpenMobileRowMenuId(null);
+      }
+    };
+    const handleKeyDown = (e) => {
+      if (e.key === "Escape") {
+        setOpMenuOpen(false);
+        setShelterMenuOpen(false);
+        setBannerMenuOpen(false);
+        setOpenMobileRowMenuId(null);
+        setFilterSheetOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleOutsideClick);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handleOutsideClick);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [opMenuOpen, shelterMenuOpen, bannerMenuOpen, openMobileRowMenuId, filterSheetOpen]);
+
+  // Open Manage Operation Modal (prefilled with current operation details)
+  const handleOpenManageOpModal = () => {
+    const today = new Date().toISOString().split("T")[0];
+    setScheduleCenterId(selectedCenterId !== "all" ? String(selectedCenterId) : "all");
+    setScheduleOpenDate(effectiveSchedule?.evacuation_open_date || today);
+    setScheduleOpenTime(effectiveSchedule?.evacuation_open_time || "08:00");
+    setScheduleCutoffDate(
+      effectiveSchedule?.evacuation_cutoff_date ||
+      effectiveSchedule?.evacuation_open_date ||
+      today
+    );
+    setScheduleCutoffTime(effectiveSchedule?.evacuation_cutoff_time || "18:00");
+    setScheduleStatus(effectiveSchedule?.evacuation_status || "open");
+    setScheduleEventName(effectiveSchedule?.evacuation_event_name || "");
+    setScheduleEventNameError("");
+    setPendingOpConfirm(null);
+    setShowNewOpModal(false);
+    setShowManageOpModal(true);
   };
 
-  // Save Evacuation Schedule
-  const handleSaveSchedule = async (e) => {
-    e?.preventDefault();
+  // Open New Operation Modal (starts with empty fields)
+  const handleOpenNewOpModal = () => {
+    setScheduleEventName("");
+    setScheduleEventNameError("");
+    setScheduleCenterId("all");
+    setScheduleOpenDate("");
+    setScheduleOpenTime("");
+    setScheduleCutoffDate("");
+    setScheduleCutoffTime("");
+    setScheduleStatus("open");
+    setPendingOpConfirm(null);
+    setShowManageOpModal(false);
+    setShowNewOpModal(true);
+  };
+
+  // Submit / Confirm Operation Save (with validation, confirmation, and double-click guard)
+  const handleSaveOperation = async (mode, confirmed = false) => {
+    if (savingScheduleRef.current) return;
+
+    const trimmedName = scheduleEventName.trim();
+    if (!trimmedName) {
+      setScheduleEventNameError("Operation name is required.");
+      return;
+    }
+
+    if (mode === "manage" && scheduleStatus === "closed" && !confirmed) {
+      setPendingOpConfirm("manage-conclude");
+      return;
+    }
+
+    if (mode === "new" && !confirmed) {
+      setPendingOpConfirm("new-operation");
+      return;
+    }
+
+    const today = new Date().toISOString().split("T")[0];
+    const openDateValue = scheduleOpenDate || today;
+    const openTimeValue = scheduleOpenTime || "08:00";
+    const cutoffDateValue = scheduleCutoffDate || openDateValue;
+    const cutoffTimeValue = scheduleCutoffTime || "18:00";
+
     try {
+      savingScheduleRef.current = true;
       setSavingSchedule(true);
       const res = await api.updateEvacuationSchedule({
         center_id: scheduleCenterId,
-        evacuation_open_date: scheduleOpenDate || null,
-        evacuation_open_time: scheduleOpenTime || "08:00",
-        evacuation_cutoff_date: scheduleCutoffDate || scheduleOpenDate || null,
-        evacuation_cutoff_time: scheduleCutoffTime || "18:00",
+        evacuation_open_date: openDateValue,
+        evacuation_open_time: openTimeValue,
+        evacuation_cutoff_date: cutoffDateValue,
+        evacuation_cutoff_time: cutoffTimeValue,
         evacuation_status: scheduleStatus,
-        evacuation_event_name: scheduleEventName.trim(),
-        start_new_operation: isStartingNewOp,
+        evacuation_event_name: trimmedName,
+        start_new_operation: mode === "new",
       });
-      queryClient.invalidateQueries({ queryKey: ["evacuee-check-in-list"] });
-      queryClient.invalidateQueries({ queryKey: ["evacuation-centers"] });
-      showToast(res?.message || (isStartingNewOp ? "New evacuation operation started." : "Evacuation operation successfully saved."));
-      setShowScheduleModal(false);
-      if (isStartingNewOp) {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["evacuee-check-in-list"] }),
+        queryClient.invalidateQueries({ queryKey: ["evacuation-centers"] }),
+      ]);
+      showToast(
+        res?.message ||
+        (mode === "new"
+          ? "New evacuation operation started."
+          : "Evacuation operation successfully saved.")
+      );
+      setPendingOpConfirm(null);
+      setShowManageOpModal(false);
+      setShowNewOpModal(false);
+      if (mode === "new") {
         setSelectedOperationId("active");
+        setCurrentPage(1);
       }
     } catch (err) {
       showToast(err.message || "Failed to update evacuation operation.");
     } finally {
+      savingScheduleRef.current = false;
       setSavingSchedule(false);
     }
-  };
-
-  // Quick Extension Handler
-  const handleOpenExtendModal = () => {
-    setCustomExtendDate(effectiveSchedule?.evacuation_cutoff_date || new Date().toISOString().split("T")[0]);
-    setCustomExtendTime(effectiveSchedule?.evacuation_cutoff_time || "20:00");
-    setExtendHoursOption(2);
-    setShowExtendModal(true);
   };
 
   const handleExtendSchedule = async (presetHours) => {
@@ -234,8 +334,10 @@ export default function EvacueeCheckIn() {
         payload.extend_hours = Number(extendHoursOption);
       }
       const res = await api.extendEvacuationSchedule(payload);
-      queryClient.invalidateQueries({ queryKey: ["evacuee-check-in-list"] });
-      queryClient.invalidateQueries({ queryKey: ["evacuation-centers"] });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["evacuee-check-in-list"] }),
+        queryClient.invalidateQueries({ queryKey: ["evacuation-centers"] }),
+      ]);
       showToast(res?.message || "Arrival deadline extended successfully.");
       setShowExtendModal(false);
     } catch (err) {
@@ -252,7 +354,7 @@ export default function EvacueeCheckIn() {
       const blob = await api.exportCheckInReport({
         center_id: selectedCenterId,
         status: filterStatus,
-        q: searchQuery,
+        q: normalizedSearch,
         date: selectedDate || undefined,
         operation_id: selectedOperationId,
       });
@@ -277,11 +379,6 @@ export default function EvacueeCheckIn() {
       setExportingReport(false);
     }
   };
-
-  // Reset page when filters change
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [selectedCenterId, filterStatus, searchQuery, selectedDate, selectedOperationId, pageSize]);
 
   // Derived Pagination
   const totalCount = evacuees.length;
@@ -435,26 +532,157 @@ export default function EvacueeCheckIn() {
       .join("") || "HH";
   };
 
-  const formatRoomBadge = (bldg, room) => {
-    if (!room) return "General Venue";
+  const normalizeRoomLabel = (room) => {
+    if (!room) return "";
     const str = String(room).trim();
-    // If it's just digits (e.g. "27"), prepend "Room "
-    let label = str;
-    if (/^\d+[a-zA-Z]?$/i.test(str)) {
-      label = `Room ${str}`;
-    }
-    return bldg ? `${bldg} · ${label}` : label;
+    if (!str) return "";
+    return /^\d+[a-zA-Z]?$/i.test(str) ? `Room ${str}` : str;
   };
 
-  const formatCheckinTime = (isoString) => {
-    if (!isoString) return "";
+  const getEvacueeStructureMode = (evacuee) => {
+    const raw = String(evacuee?.structure_mode || "").trim().toLowerCase();
+    if (["open_area", "rooms_only", "buildings_and_rooms"].includes(raw)) {
+      return raw;
+    }
+    const code = String(evacuee?.center_type || "").trim().toLowerCase();
+    if (code === "single_venue") return "open_area";
+    if (code === "private_property") return "rooms_only";
+    return "buildings_and_rooms";
+  };
+
+  const formatRoomBadge = (bldg, room, structureMode = "buildings_and_rooms") => {
+    if (structureMode === "open_area") return null;
+    const label = normalizeRoomLabel(room);
+    if (!label) return null;
+    if (structureMode === "buildings_and_rooms" && bldg) {
+      return `${bldg} · ${label}`;
+    }
+    return label;
+  };
+
+  const formatMobileShelterLine = (evacuee) => {
+    const mode = getEvacueeStructureMode(evacuee);
+    if (mode === "open_area") {
+      return evacuee.center_name || "Evacuation Center";
+    }
+    const roomLabel = normalizeRoomLabel(evacuee.room_number);
+    const venueParts =
+      mode === "buildings_and_rooms"
+        ? [evacuee.building_name, roomLabel].filter(Boolean).join(", ")
+        : roomLabel;
+    return [evacuee.center_name, venueParts].filter(Boolean).join(" · ");
+  };
+
+  const formatOpDate = (dateStr) => {
+    if (!dateStr) return "";
     try {
-      const d = new Date(isoString);
-      return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit", hour12: true });
+      return new Date(`${dateStr}T00:00:00`).toLocaleDateString(undefined, {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+      });
     } catch {
-      return "";
+      return dateStr;
     }
   };
+
+  const formatOpDateRange = (openDate, cutoffDate) => {
+    const start = formatOpDate(openDate);
+    const end = formatOpDate(cutoffDate);
+    if (start && end && cutoffDate !== openDate) return `${start} – ${end}`;
+    return start || end || "";
+  };
+
+  const activeOperation = useMemo(
+    () => operations.find((op) => op.status !== "concluded") || null,
+    [operations]
+  );
+
+  const archivedOperations = useMemo(() => {
+    return operations
+      .filter((op) => op.status === "concluded")
+      .slice()
+      .sort((a, b) => {
+        const aKey = a.concluded_at || a.open_date || "";
+        const bKey = b.concluded_at || b.open_date || "";
+        if (bKey !== aKey) return bKey.localeCompare(aKey);
+        return (b.id || 0) - (a.id || 0);
+      });
+  }, [operations]);
+
+  const activeOpName =
+    activeOperation?.event_name ||
+    (!isHistorical ? effectiveSchedule?.evacuation_event_name : "") ||
+    "Current Operation";
+  const activeOpDates = formatOpDateRange(
+    activeOperation?.open_date || (!isHistorical ? effectiveSchedule?.evacuation_open_date : null),
+    activeOperation?.cutoff_date || (!isHistorical ? effectiveSchedule?.evacuation_cutoff_date : null)
+  );
+  const selectedArchivedOp = useMemo(
+    () => archivedOperations.find((op) => String(op.id) === String(selectedOperationId)) || null,
+    [archivedOperations, selectedOperationId]
+  );
+  const selectedCenterObj = useMemo(
+    () => (selectedCenterId === "all" ? null : centers.find((c) => String(c.id) === String(selectedCenterId)) || null),
+    [centers, selectedCenterId]
+  );
+  const archivedBannerName =
+    effectiveSchedule?.evacuation_event_name ||
+    selectedArchivedOp?.event_name ||
+    "Archived Operation";
+  const archivedBannerDates = formatOpDateRange(
+    effectiveSchedule?.evacuation_open_date || selectedArchivedOp?.open_date,
+    effectiveSchedule?.evacuation_cutoff_date || selectedArchivedOp?.cutoff_date
+  );
+
+  const renderMobileOperationMenu = () => (
+    <div className="checkin-banner-mobile-actions checkin-dropdown-anchor">
+      <button
+        type="button"
+        className="checkin-mobile-kebab-btn checkin-banner-kebab-btn"
+        onClick={() => {
+          setOpMenuOpen(false);
+          setShelterMenuOpen(false);
+          setOpenMobileRowMenuId(null);
+          setBannerMenuOpen((prev) => !prev);
+        }}
+        aria-label="Operation actions"
+        aria-expanded={bannerMenuOpen}
+        aria-haspopup="menu"
+      >
+        <FontAwesomeIcon icon={faEllipsisVertical} />
+      </button>
+
+      {bannerMenuOpen && (
+        <div className="checkin-mobile-row-dropdown checkin-banner-dropdown" role="menu">
+          <button
+            type="button"
+            role="menuitem"
+            className="checkin-mobile-row-menu-item"
+            onClick={() => {
+              setBannerMenuOpen(false);
+              handleOpenManageOpModal();
+            }}
+          >
+            <FontAwesomeIcon icon={faGear} />
+            <span>Manage Operation</span>
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className="checkin-mobile-row-menu-item is-primary"
+            onClick={() => {
+              setBannerMenuOpen(false);
+              handleOpenNewOpModal();
+            }}
+          >
+            <FontAwesomeIcon icon={faBolt} />
+            <span>New Operation</span>
+          </button>
+        </div>
+      )}
+    </div>
+  );
 
   return (
     <div className="checkin-container" role="main" aria-label="Evacuee Check-In Management">
@@ -470,73 +698,177 @@ export default function EvacueeCheckIn() {
         </div>
       )}
 
-      {/* Page Header with Center Filter Dropdown on top-right */}
+      {/* Page Header: Single row on desktop (Title left, compact controls right); stacked rows on mobile */}
       <header className="checkin-header">
         <div className="checkin-header-titles">
           <div className="checkin-title-badge-row">
             <h1>Evacuee Arrival & Check-In</h1>
-            {isHistorical ? (
-              <span className="checkin-archive-badge" title="Historical archive view (records are read-only)">
-                <FontAwesomeIcon icon={faBoxArchive} /> Archived Operation
-              </span>
-            ) : (
+            {!isHistorical && (
               <span className="checkin-live-badge">
                 <span className="checkin-live-dot" /> Live
               </span>
             )}
           </div>
-          <p>
-            {isHistorical
-              ? "Inspecting archived disaster check-in records and arrival timeline."
-              : "Verify and update resident arrival at assigned evacuation centers in real time."}
-          </p>
         </div>
 
+        {/* Header Actions (Operation Selector, Shelter Filter, Export Report/Archive) */}
         <div className="checkin-header-actions">
-          {/* Operation Archive Selector Pill */}
-          <div className={`checkin-pill-select-wrap ${isHistorical ? "is-archive" : "is-active"}`}>
-            <FontAwesomeIcon icon={isHistorical ? faBoxArchive : faClockRotateLeft} className="checkin-pill-icon" />
-            <select
+          {/* Operation History Selector (Compact closed label; full name + date range in open menu) */}
+          <div className="checkin-op-dropdown-wrap checkin-dropdown-anchor">
+            <button
+              type="button"
               id="checkin-operation-filter-select"
-              className="checkin-pill-select"
-              value={selectedOperationId}
-              onChange={(e) => setSelectedOperationId(e.target.value)}
-              aria-label="Select evacuation operation"
+              className="checkin-op-trigger"
+              onClick={() => {
+                setShelterMenuOpen(false);
+                setOpMenuOpen((prev) => !prev);
+              }}
+              aria-haspopup="listbox"
+              aria-expanded={opMenuOpen}
+              aria-label="Select active or archived evacuation operation"
+              title={
+                isHistorical
+                  ? `${archivedBannerName}${archivedBannerDates ? ` (${archivedBannerDates})` : ""}`
+                  : `Active: ${activeOpName}${activeOpDates ? ` (${activeOpDates})` : ""}`
+              }
             >
-              <option value="active">
-                Active: {operations.find((o) => o.status === "active")?.event_name || effectiveSchedule?.evacuation_event_name || "Current Evacuation"}
-              </option>
-              {operations.filter((o) => o.status !== "active").length > 0 && (
-                <optgroup label="Past Operations">
-                  {operations.filter((o) => o.status !== "active").map((op) => (
-                    <option key={op.id} value={op.id}>
-                      Past: {op.event_name} ({op.open_date})
-                    </option>
-                  ))}
-                </optgroup>
-              )}
-            </select>
-            <FontAwesomeIcon icon={faChevronDown} className="checkin-pill-arrow" />
+              <FontAwesomeIcon icon={faClockRotateLeft} className="checkin-pill-icon" />
+              <span className="checkin-op-trigger-label">
+                {isHistorical ? archivedBannerName : `Active: ${activeOpName}`}
+              </span>
+              <FontAwesomeIcon icon={faChevronDown} className="checkin-pill-arrow" />
+            </button>
+
+            {opMenuOpen && (
+              <div className="checkin-op-dropdown-menu" role="listbox" aria-label="Evacuation operations">
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected={!isHistorical}
+                  className={`checkin-op-option ${!isHistorical ? "is-selected" : ""}`}
+                  onClick={() => {
+                    setSelectedOperationId("active");
+                    setCurrentPage(1);
+                    setOpMenuOpen(false);
+                  }}
+                >
+                  <span className="checkin-op-option-main">
+                    <span className="checkin-op-option-badge is-active">Active</span>
+                    <span className="checkin-op-option-name">{activeOpName}</span>
+                  </span>
+                  {activeOpDates && (
+                    <span className="checkin-op-option-date">{activeOpDates}</span>
+                  )}
+                </button>
+
+                <div className="checkin-op-menu-divider" />
+
+                {archivedOperations.length === 0 ? (
+                  <div className="checkin-op-menu-empty" role="option" aria-disabled="true">
+                    No archived operations yet
+                  </div>
+                ) : (
+                  archivedOperations.map((op) => {
+                    const rangeLabel = formatOpDateRange(op.open_date, op.cutoff_date);
+                    const isSelected = String(op.id) === String(selectedOperationId);
+                    return (
+                      <button
+                        key={op.id}
+                        type="button"
+                        role="option"
+                        aria-selected={isSelected}
+                        className={`checkin-op-option ${isSelected ? "is-selected" : ""}`}
+                        onClick={() => {
+                          setSelectedOperationId(String(op.id));
+                          setCurrentPage(1);
+                          setOpMenuOpen(false);
+                        }}
+                      >
+                        <span className="checkin-op-option-main">
+                          <span className="checkin-op-option-name">{op.event_name || "Archived Operation"}</span>
+                        </span>
+                        {rangeLabel && (
+                          <span className="checkin-op-option-date">{rangeLabel}</span>
+                        )}
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+            )}
           </div>
 
-          {/* By-Center Filter Pill */}
-          <div className="checkin-pill-select-wrap">
-            <FontAwesomeIcon icon={faBuildingColumns} className="checkin-pill-icon" />
-            <select
+          {/* By-Center Filter Dropdown (Closed shows "All Shelters" or name without count; open list shows counts) */}
+          <div className="checkin-shelter-dropdown-wrap checkin-dropdown-anchor">
+            <button
+              type="button"
               id="checkin-center-filter-select"
-              className="checkin-pill-select"
-              value={selectedCenterId}
-              onChange={(e) => setSelectedCenterId(e.target.value)}
+              className="checkin-op-trigger checkin-shelter-trigger"
+              onClick={() => {
+                setOpMenuOpen(false);
+                setShelterMenuOpen((prev) => !prev);
+              }}
+              aria-haspopup="listbox"
+              aria-expanded={shelterMenuOpen}
               aria-label="Filter evacuees by center"
+              title={
+                selectedCenterObj
+                  ? `${selectedCenterObj.name} (${selectedCenterObj.checked_in}/${selectedCenterObj.assigned})`
+                  : `All Shelters (${centers.length})`
+              }
             >
-              <option value="all">All Shelters ({centers.length})</option>
-              {centers.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name} ({c.checked_in}/{c.assigned})
-                </option>
-              ))}
-            </select>
-            <FontAwesomeIcon icon={faChevronDown} className="checkin-pill-arrow" />
+              <FontAwesomeIcon icon={faBuildingColumns} className="checkin-pill-icon" />
+              <span className="checkin-op-trigger-label">
+                {selectedCenterObj ? selectedCenterObj.name : "All Shelters"}
+              </span>
+              <FontAwesomeIcon icon={faChevronDown} className="checkin-pill-arrow" />
+            </button>
+
+            {shelterMenuOpen && (
+              <div className="checkin-op-dropdown-menu checkin-shelter-dropdown-menu" role="listbox" aria-label="Evacuation centers">
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected={selectedCenterId === "all"}
+                  className={`checkin-op-option checkin-shelter-option ${selectedCenterId === "all" ? "is-selected" : ""}`}
+                  onClick={() => {
+                    setSelectedCenterId("all");
+                    setCurrentPage(1);
+                    setShelterMenuOpen(false);
+                  }}
+                >
+                  <span className="checkin-op-option-main checkin-shelter-option-row">
+                    <span className="checkin-op-option-name">All Shelters</span>
+                    <span className="checkin-op-option-count">({centers.length})</span>
+                  </span>
+                </button>
+
+                {centers.map((c) => {
+                  const isSelected = String(selectedCenterId) === String(c.id);
+                  return (
+                    <button
+                      key={c.id}
+                      type="button"
+                      role="option"
+                      aria-selected={isSelected}
+                      className={`checkin-op-option checkin-shelter-option ${isSelected ? "is-selected" : ""}`}
+                      onClick={() => {
+                        setSelectedCenterId(String(c.id));
+                        setCurrentPage(1);
+                        setShelterMenuOpen(false);
+                      }}
+                    >
+                      <span className="checkin-op-option-main checkin-shelter-option-row">
+                        <span className="checkin-op-option-name">{c.name}</span>
+                        <span className="checkin-op-option-count">
+                          ({c.checked_in}/{c.assigned})
+                        </span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           {/* Downloadable Report Button */}
@@ -545,10 +877,13 @@ export default function EvacueeCheckIn() {
             className="checkin-export-btn"
             onClick={handleExportReport}
             disabled={exportingReport}
+            aria-label={exportingReport ? "Exporting report" : isHistorical ? "Export Archive" : "Export Report"}
             title={isHistorical ? "Download historical check-in report for this archived event" : "Download Excel arrival roster and shelter summary report"}
           >
             <FontAwesomeIcon icon={exportingReport ? faSpinner : faFileExcel} spin={exportingReport} />
-            <span>{exportingReport ? "Exporting..." : isHistorical ? "Export Archive" : "Export Report"}</span>
+            <span className="checkin-export-label">
+              {exportingReport ? "Exporting..." : isHistorical ? "Export Archive" : "Export Report"}
+            </span>
           </button>
         </div>
       </header>
@@ -556,35 +891,34 @@ export default function EvacueeCheckIn() {
       {/* Unified Single Operational Banner */}
       <div className={`checkin-banner ${isHistorical ? "is-archive" : isWindowExpired ? "is-expired" : !isScheduleConfigured ? "is-unscheduled" : isCenterClosed ? "is-closed" : "is-active"}`}>
         {isHistorical ? (
-          // State 1: Historical Archive Mode (Never duplicated!)
+          // State 1: Historical Archive Mode (Single clean row on desktop & mobile)
           <div className="checkin-banner-inner">
             <div className="checkin-banner-left">
               <div className="checkin-banner-icon archive">
                 <FontAwesomeIcon icon={faBoxArchive} />
               </div>
               <div className="checkin-banner-details">
-                <div className="checkin-banner-title-row">
-                  <span className="checkin-banner-title">
-                    Archived Operation: <strong>{effectiveSchedule?.evacuation_event_name || "Past Disaster Event"}</strong>
-                  </span>
-                  <span className="checkin-banner-pill archive">Read-Only Archive</span>
-                </div>
-                <div className="checkin-banner-meta">
-                  <span>
-                    Concluded record from {effectiveSchedule?.evacuation_open_date || "past event"} • Check-in records are preserved for audit and historical reporting.
-                  </span>
-                </div>
+                <span className="checkin-banner-title">
+                  Viewing archived: <strong>{archivedBannerName}</strong>
+                  {archivedBannerDates ? (
+                    <span className="checkin-hide-mobile">{` · ${archivedBannerDates}`}</span>
+                  ) : null}
+                </span>
               </div>
             </div>
             <div className="checkin-banner-actions">
               <button
                 type="button"
                 className="checkin-banner-btn primary"
-                onClick={() => setSelectedOperationId("active")}
-                title="Return to the current live active evacuation operation"
+                onClick={() => {
+                  setSelectedOperationId("active");
+                  setCurrentPage(1);
+                }}
+                title="Return to the current active evacuation operation"
               >
                 <FontAwesomeIcon icon={faRotateLeft} />
-                <span>Return to Live Operation</span>
+                <span className="checkin-hide-mobile">Back to active operation</span>
+                <span className="checkin-show-mobile">Back</span>
               </button>
             </div>
           </div>
@@ -595,6 +929,7 @@ export default function EvacueeCheckIn() {
               <div className="checkin-banner-icon info">
                 <FontAwesomeIcon icon={faCalendarDays} />
               </div>
+              <span className="checkin-banner-mobile-dot standby" aria-hidden="true" />
               <div className="checkin-banner-details">
                 <div className="checkin-banner-title-row">
                   <span className="checkin-banner-title">No Evacuation Schedule Configured</span>
@@ -606,16 +941,19 @@ export default function EvacueeCheckIn() {
               </div>
             </div>
             {isAdmin && (
-              <div className="checkin-banner-actions">
-                <button
-                  type="button"
-                  className="checkin-banner-btn primary"
-                  onClick={handleOpenScheduleModal}
-                >
-                  <FontAwesomeIcon icon={faCalendarDays} />
-                  <span>Set Evacuation Date</span>
-                </button>
-              </div>
+              <>
+                <div className="checkin-banner-actions">
+                  <button
+                    type="button"
+                    className="checkin-banner-btn primary"
+                    onClick={handleOpenManageOpModal}
+                  >
+                    <FontAwesomeIcon icon={faCalendarDays} />
+                    <span>Set Evacuation Date</span>
+                  </button>
+                </div>
+                {renderMobileOperationMenu()}
+              </>
             )}
           </div>
         ) : isCenterClosed ? (
@@ -625,10 +963,12 @@ export default function EvacueeCheckIn() {
               <div className="checkin-banner-icon neutral">
                 <FontAwesomeIcon icon={faTriangleExclamation} />
               </div>
+              <span className="checkin-banner-mobile-dot closed" aria-hidden="true" />
               <div className="checkin-banner-details">
                 <div className="checkin-banner-title-row">
                   <span className="checkin-banner-title">
-                    Evacuation Closed / Concluded — <strong>{effectiveSchedule?.evacuation_event_name || "Evacuation"}</strong>
+                    <span className="checkin-hide-mobile">Evacuation Closed / Concluded — </span>
+                    <strong>{effectiveSchedule?.evacuation_event_name || "Evacuation"}</strong>
                   </span>
                   <span className="checkin-banner-pill closed">Closed / Stand Down</span>
                 </div>
@@ -638,25 +978,28 @@ export default function EvacueeCheckIn() {
               </div>
             </div>
             {isAdmin && (
-              <div className="checkin-banner-actions">
-                <button
-                  type="button"
-                  className="checkin-banner-btn secondary"
-                  onClick={() => handleOpenScheduleModal(false)}
-                >
-                  <FontAwesomeIcon icon={faRotateLeft} />
-                  <span>Reopen Operation</span>
-                </button>
-                <button
-                  type="button"
-                  className="checkin-banner-btn primary"
-                  onClick={() => handleOpenScheduleModal(true)}
-                  title="Start a new evacuation operation for a new disaster event"
-                >
-                  <FontAwesomeIcon icon={faBolt} />
-                  <span>Start New Evacuation</span>
-                </button>
-              </div>
+              <>
+                <div className="checkin-banner-actions">
+                  <button
+                    type="button"
+                    className="checkin-banner-btn secondary"
+                    onClick={handleOpenManageOpModal}
+                  >
+                    <FontAwesomeIcon icon={faRotateLeft} />
+                    <span>Reopen Operation</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="checkin-banner-btn primary"
+                    onClick={handleOpenNewOpModal}
+                    title="Start a new evacuation operation for a new disaster event"
+                  >
+                    <FontAwesomeIcon icon={faBolt} />
+                    <span>Start New Evacuation</span>
+                  </button>
+                </div>
+                {renderMobileOperationMenu()}
+              </>
             )}
           </div>
         ) : (
@@ -666,6 +1009,7 @@ export default function EvacueeCheckIn() {
               <div className="checkin-banner-icon live">
                 <FontAwesomeIcon icon={faCalendarCheck} />
               </div>
+              <span className="checkin-banner-mobile-dot live" aria-hidden="true" />
               <div className="checkin-banner-details">
                 <div className="checkin-banner-title-row">
                   <span className="checkin-banner-title">
@@ -688,96 +1032,152 @@ export default function EvacueeCheckIn() {
               </div>
             </div>
             {isAdmin && (
-              <div className="checkin-banner-actions">
-                <button
-                  type="button"
-                  className="checkin-banner-btn secondary"
-                  onClick={() => handleOpenScheduleModal(false)}
-                  title="Edit operation parameters or conclude/archive"
-                >
-                  <FontAwesomeIcon icon={faGear} />
-                  <span>Manage Operation</span>
-                </button>
-                <button
-                  type="button"
-                  className="checkin-banner-btn primary"
-                  onClick={() => handleOpenScheduleModal(true)}
-                  title="Start a fresh evacuation operation for a new disaster event"
-                >
-                  <FontAwesomeIcon icon={faBolt} />
-                  <span>New Operation</span>
-                </button>
-              </div>
+              <>
+                <div className="checkin-banner-actions">
+                  <button
+                    type="button"
+                    className="checkin-banner-btn secondary"
+                    onClick={handleOpenManageOpModal}
+                    title="Edit operation parameters or conclude/archive"
+                  >
+                    <FontAwesomeIcon icon={faGear} />
+                    <span>Manage Operation</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="checkin-banner-btn primary"
+                    onClick={handleOpenNewOpModal}
+                    title="Start a fresh evacuation operation for a new disaster event"
+                  >
+                    <FontAwesomeIcon icon={faBolt} />
+                    <span>New Operation</span>
+                  </button>
+                </div>
+                {renderMobileOperationMenu()}
+              </>
             )}
           </div>
         )}
       </div>
 
-      {/* Sleek KPI Metric Strip */}
-      <section className="checkin-stats-grid" aria-label="Check-In Statistics">
+      {/* Interactive KPI Stat Cards (Click to Filter by Status) */}
+      <section className="checkin-stats-grid" role="group" aria-label="Filter check-in list by arrival status">
         {/* Total Assigned */}
-        <div className="checkin-stat-card is-total">
+        <button
+          type="button"
+          className={`checkin-stat-card is-total ${filterStatus === "all" ? "is-selected" : ""}`}
+          onClick={() => {
+            setFilterStatus("all");
+            setCurrentPage(1);
+          }}
+          aria-pressed={filterStatus === "all"}
+        >
           <div className="checkin-stat-card-main">
-            <span className="checkin-stat-card-label">Total Assigned</span>
+            <span className="checkin-stat-card-label">
+              <span className="checkin-label-full">Total Assigned</span>
+              <span className="checkin-label-short">Total</span>
+            </span>
             <span className="checkin-stat-value">{summary.total_assigned}</span>
           </div>
           <div className="checkin-stat-icon blue">
             <FontAwesomeIcon icon={faUserGroup} />
           </div>
-        </div>
+        </button>
 
         {/* Fully Arrived */}
-        <div className="checkin-stat-card is-arrived">
+        <button
+          type="button"
+          className={`checkin-stat-card is-arrived ${filterStatus === "checked_in" ? "is-selected" : ""}`}
+          onClick={() => {
+            setFilterStatus("checked_in");
+            setCurrentPage(1);
+          }}
+          aria-pressed={filterStatus === "checked_in"}
+        >
           <div className="checkin-stat-card-main">
-            <span className="checkin-stat-card-label">Fully Arrived</span>
+            <span className="checkin-stat-card-label">
+              <span className="checkin-label-full">Fully Arrived</span>
+              <span className="checkin-label-short">Arrived</span>
+            </span>
             <span className="checkin-stat-value">{summary.total_checked_in}</span>
           </div>
           <div className="checkin-stat-icon green">
             <FontAwesomeIcon icon={faCircleCheck} />
           </div>
-        </div>
+        </button>
 
         {/* Partially Arrived */}
-        <div className="checkin-stat-card is-partial">
+        <button
+          type="button"
+          className={`checkin-stat-card is-partial ${filterStatus === "partial" ? "is-selected" : ""}`}
+          onClick={() => {
+            setFilterStatus("partial");
+            setCurrentPage(1);
+          }}
+          aria-pressed={filterStatus === "partial"}
+        >
           <div className="checkin-stat-card-main">
-            <span className="checkin-stat-card-label">Partially Arrived</span>
+            <span className="checkin-stat-card-label">
+              <span className="checkin-label-full">Partially Arrived</span>
+              <span className="checkin-label-short">Partial</span>
+            </span>
             <span className="checkin-stat-value">{summary.total_partial || 0}</span>
           </div>
           <div className="checkin-stat-icon amber">
             <FontAwesomeIcon icon={faClock} />
           </div>
-        </div>
+        </button>
 
         {/* Pending Arrival */}
-        <div className="checkin-stat-card is-pending">
+        <button
+          type="button"
+          className={`checkin-stat-card is-pending ${filterStatus === "pending" ? "is-selected" : ""}`}
+          onClick={() => {
+            setFilterStatus("pending");
+            setCurrentPage(1);
+          }}
+          aria-pressed={filterStatus === "pending"}
+        >
           <div className="checkin-stat-card-main">
-            <span className="checkin-stat-card-label">Pending Arrival</span>
+            <span className="checkin-stat-card-label">
+              <span className="checkin-label-full">Pending Arrival</span>
+              <span className="checkin-label-short">Pending</span>
+            </span>
             <span className="checkin-stat-value">{summary.total_pending}</span>
           </div>
           <div className="checkin-stat-icon slate">
             <FontAwesomeIcon icon={faCircleExclamation} />
           </div>
-        </div>
+        </button>
       </section>
 
-      {/* Unified Toolbar: Search on Left + Status Pills on Right */}
-      <section className="checkin-controls-card" aria-label="Search and status filter controls">
-        {/* Search Input */}
+      {/* Full-Width Search Toolbar (+ Mobile Shelter Filters Button) */}
+      <section className="checkin-controls-card" aria-label="Search evacuees">
         <div className="checkin-search-wrap">
           <FontAwesomeIcon icon={faMagnifyingGlass} className="checkin-search-icon" />
           <input
             type="text"
             className="checkin-search-input"
-            placeholder="Search by head, member name, code, contact, room..."
+            placeholder={
+              isMobileViewport
+                ? "Search name or code"
+                : "Search by name or household code"
+            }
             value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+            onChange={(e) => {
+              setSearchQuery(e.target.value);
+              setCurrentPage(1);
+            }}
             aria-label="Search evacuees"
           />
           {searchQuery && (
             <button
               type="button"
               className="checkin-search-clear"
-              onClick={() => setSearchQuery("")}
+              onClick={() => {
+                setSearchQuery("");
+                setCurrentPage(1);
+              }}
               title="Clear search"
             >
               <FontAwesomeIcon icon={faXmark} />
@@ -785,49 +1185,30 @@ export default function EvacueeCheckIn() {
           )}
         </div>
 
-        {/* Segmented Status Filter Tabs */}
-        <div className="checkin-filter-tabs-bar" role="tablist" aria-label="Status filters">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={filterStatus === "all"}
-            className={`checkin-filter-tab ${filterStatus === "all" ? "active" : ""}`}
-            onClick={() => setFilterStatus("all")}
-          >
-            <span>All</span>
-            <span className="checkin-tab-count">{summary.total_assigned}</span>
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={filterStatus === "pending"}
-            className={`checkin-filter-tab ${filterStatus === "pending" ? "active" : ""}`}
-            onClick={() => setFilterStatus("pending")}
-          >
-            <span>Pending</span>
-            <span className="checkin-tab-count">{summary.total_pending}</span>
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={filterStatus === "partial"}
-            className={`checkin-filter-tab ${filterStatus === "partial" ? "active" : ""}`}
-            onClick={() => setFilterStatus("partial")}
-          >
-            <span>Partially Arrived</span>
-            <span className="checkin-tab-count">{summary.total_partial || 0}</span>
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={filterStatus === "checked_in"}
-            className={`checkin-filter-tab ${filterStatus === "checked_in" ? "active" : ""}`}
-            onClick={() => setFilterStatus("checked_in")}
-          >
-            <span>Fully Arrived</span>
-            <span className="checkin-tab-count">{summary.total_checked_in}</span>
-          </button>
-        </div>
+        <button
+          type="button"
+          className={`checkin-mobile-filter-btn ${selectedCenterId !== "all" ? "has-active" : ""}`}
+          onClick={() => {
+            setOpMenuOpen(false);
+            setBannerMenuOpen(false);
+            setOpenMobileRowMenuId(null);
+            setDraftCenterId(selectedCenterId);
+            setFilterSheetOpen(true);
+          }}
+          aria-haspopup="dialog"
+          aria-expanded={filterSheetOpen}
+          aria-label={
+            selectedCenterId !== "all"
+              ? "Filter by shelter (shelter selected)"
+              : "Filter by shelter"
+          }
+        >
+          <FontAwesomeIcon icon={faSliders} />
+          <span>Filters</span>
+          {selectedCenterId !== "all" && (
+            <span className="checkin-filter-dot" aria-hidden="true" />
+          )}
+        </button>
       </section>
 
       {/* Evacuee List Section */}
@@ -918,13 +1299,21 @@ export default function EvacueeCheckIn() {
                             <span className="checkin-center-name">
                               {evacuee.center_name}
                             </span>
-                            {evacuee.room_number && (
-                              <div>
-                                <span className="checkin-room-badge is-assigned">
-                                  <span>{formatRoomBadge(evacuee.building_name, evacuee.room_number)}</span>
-                                </span>
-                              </div>
-                            )}
+                            {(() => {
+                              const mode = getEvacueeStructureMode(evacuee);
+                              const badge = formatRoomBadge(
+                                evacuee.building_name,
+                                evacuee.room_number,
+                                mode
+                              );
+                              return badge ? (
+                                <div>
+                                  <span className="checkin-room-badge is-assigned">
+                                    <span>{badge}</span>
+                                  </span>
+                                </div>
+                              ) : null;
+                            })()}
                           </div>
                         </td>
 
@@ -1087,199 +1476,176 @@ export default function EvacueeCheckIn() {
               </table>
             </div>
 
-            {/* Mobile Cards View (Visible on viewports <= 960px) */}
+            {/* Mobile Compact Cards View (Visible on viewports <= 768px) */}
             <div className="checkin-mobile-cards-wrap">
               {paginatedEvacuees.map((evacuee) => {
                 const isRowLoading = actionLoadingId === evacuee.family_id;
                 const state = evacuee.checkin_state || "none";
                 const isFullyArrived = state === "full";
                 const isPartiallyArrived = state === "partial";
+                const rowMenuKey = `${evacuee.family_id}-${evacuee.center_id}`;
+                const isMenuOpen = openMobileRowMenuId === rowMenuKey;
+                const mobileShelterLine = formatMobileShelterLine(evacuee);
 
                 return (
                   <article
-                    key={`mob-${evacuee.family_id}-${evacuee.center_id}`}
+                    key={`mob-${rowMenuKey}`}
                     className="checkin-mobile-card"
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => {
+                      setOpenMobileRowMenuId(null);
+                      handleOpenMemberModal(evacuee);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) {
+                        e.preventDefault();
+                        setOpenMobileRowMenuId(null);
+                        handleOpenMemberModal(evacuee);
+                      }
+                    }}
                   >
-                    {/* Top Row: Avatar + Head Name + Arrival Badge */}
-                    <div className="checkin-mobile-card-top">
-                      <div className="checkin-user-cell">
-                        <div className="checkin-avatar" aria-hidden="true">
-                          {getInitials(evacuee.head_name)}
-                        </div>
-                        <div className="checkin-user-text">
-                          <span className="checkin-user-name">{evacuee.head_name}</span>
-                          <span className="checkin-user-sub">
-                            <span className="checkin-code-pill">{evacuee.family_code || `#${evacuee.family_id}`}</span>
-                            {evacuee.contact_number && (
-                              <>
-                                <span className="checkin-sep">•</span>
-                                <span className="checkin-contact-num">{evacuee.contact_number}</span>
-                              </>
-                            )}
-                          </span>
-                        </div>
+                    {/* Row 1: Head Name + Status Pill + Three-Dot Menu */}
+                    <div className="checkin-mobile-card-line1">
+                      <div className="checkin-mobile-name-wrap">
+                        <span className="checkin-user-name">{evacuee.head_name}</span>
                       </div>
 
-                      <div className="checkin-mobile-top-status">
+                      <div
+                        className="checkin-mobile-right-controls checkin-mobile-menu-anchor"
+                        onClick={(e) => e.stopPropagation()}
+                      >
                         {isFullyArrived ? (
                           <span className="checkin-status-badge arrived">
-                            <FontAwesomeIcon icon={faCircleCheck} />
-                            <span>Fully Arrived</span>
+                            <span className="checkin-status-dot green" />
+                            <span>Arrived</span>
                           </span>
                         ) : isPartiallyArrived ? (
                           <span className="checkin-status-badge partial">
-                            <span className="checkin-status-dot partial" />
+                            <span className="checkin-status-dot amber" />
                             <span>{evacuee.checked_in_members}/{evacuee.member_count} Here</span>
                           </span>
                         ) : (
                           <span className="checkin-status-badge pending">
-                            <span className="checkin-status-dot pending" />
+                            <span className="checkin-status-dot gray" />
                             <span>Pending</span>
                           </span>
                         )}
-                        {evacuee.checked_in_at && (
-                          <div className="checkin-mobile-arrived-time">
-                            {evacuee.checked_in_time_only || formatCheckinTime(evacuee.checked_in_at)}
+
+                        <button
+                          type="button"
+                          className="checkin-mobile-kebab-btn"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setOpMenuOpen(false);
+                            setBannerMenuOpen(false);
+                            setOpenMobileRowMenuId((prev) => (prev === rowMenuKey ? null : rowMenuKey));
+                          }}
+                          aria-label={`Actions for ${evacuee.head_name}`}
+                          aria-expanded={isMenuOpen}
+                          aria-haspopup="menu"
+                        >
+                          {isRowLoading ? (
+                            <FontAwesomeIcon icon={faSpinner} spin />
+                          ) : (
+                            <FontAwesomeIcon icon={faEllipsisVertical} />
+                          )}
+                        </button>
+
+                        {isMenuOpen && (
+                          <div
+                            className="checkin-mobile-row-dropdown"
+                            role="menu"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {isHistorical ? (
+                              <button
+                                type="button"
+                                role="menuitem"
+                                className="checkin-mobile-row-menu-item"
+                                onClick={() => {
+                                  setOpenMobileRowMenuId(null);
+                                  handleOpenMemberModal(evacuee);
+                                }}
+                              >
+                                <FontAwesomeIcon icon={faListCheck} />
+                                <span>View Roster</span>
+                              </button>
+                            ) : (
+                              <>
+                                {!isFullyArrived && (
+                                  <button
+                                    type="button"
+                                    role="menuitem"
+                                    className="checkin-mobile-row-menu-item is-primary"
+                                    disabled={isRowLoading || !canCheckIn}
+                                    title={getCheckInDisabledReason(evacuee) || undefined}
+                                    onClick={() => {
+                                      setOpenMobileRowMenuId(null);
+                                      handleQuickCheckInAll(evacuee);
+                                    }}
+                                  >
+                                    <FontAwesomeIcon icon={faCheck} />
+                                    <span>Mark All Arrived</span>
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  role="menuitem"
+                                  className="checkin-mobile-row-menu-item"
+                                  onClick={() => {
+                                    setOpenMobileRowMenuId(null);
+                                    handleOpenMemberModal(evacuee);
+                                  }}
+                                >
+                                  <FontAwesomeIcon icon={faListCheck} />
+                                  <span>
+                                    {isPartiallyArrived
+                                      ? `Manage (${evacuee.checked_in_members}/${evacuee.member_count})`
+                                      : "Manage"}
+                                  </span>
+                                </button>
+                                {(isFullyArrived || isPartiallyArrived) && (
+                                  <button
+                                    type="button"
+                                    role="menuitem"
+                                    className="checkin-mobile-row-menu-item is-danger"
+                                    disabled={isRowLoading}
+                                    onClick={() => {
+                                      setOpenMobileRowMenuId(null);
+                                      handleQuickUndo(evacuee);
+                                    }}
+                                  >
+                                    <FontAwesomeIcon icon={faRotateLeft} />
+                                    <span>Undo</span>
+                                  </button>
+                                )}
+                              </>
+                            )}
                           </div>
                         )}
                       </div>
                     </div>
 
-                    {/* Meta Grid: Origin & Assigned Shelter */}
-                    <div className="checkin-mobile-card-meta">
-                      <div className="checkin-mobile-meta-item">
-                        <span className="checkin-mobile-meta-label">
-                          <FontAwesomeIcon icon={faMapPin} /> Origin Barangay
-                        </span>
-                        <span className="checkin-mobile-meta-val">{evacuee.barangay_name}</span>
-                        {evacuee.address && (
-                          <span className="checkin-mobile-meta-sub">{evacuee.address}</span>
-                        )}
-                      </div>
-
-                      <div className="checkin-mobile-meta-item">
-                        <span className="checkin-mobile-meta-label">
-                          <FontAwesomeIcon icon={faBuildingColumns} /> Assigned Shelter
-                        </span>
-                        <span className="checkin-mobile-meta-val">{evacuee.center_name}</span>
-                        <span className="checkin-mobile-meta-sub">
-                          {formatRoomBadge(evacuee.building_name, evacuee.room_number)}
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* Members & Needs */}
-                    <div className="checkin-mobile-members-row">
-                      <button
-                        type="button"
-                        className="checkin-members-chip-btn"
-                        onClick={() => handleOpenMemberModal(evacuee)}
-                        title="Click to view and check in individual members"
-                      >
-                        <FontAwesomeIcon icon={faUsers} />
-                        <span>
-                          {evacuee.member_count} {evacuee.member_count === 1 ? "member" : "members"}
-                        </span>
-                        {evacuee.checked_in_members > 0 && (
-                          <span className={`checkin-members-here-pill ${isFullyArrived ? "full" : "partial"}`}>
-                            {evacuee.checked_in_members} here
-                          </span>
-                        )}
-                      </button>
-
-                      {evacuee.special_needs?.length > 0 && (
-                        <div className="checkin-special-needs-list">
-                          {evacuee.special_needs.map((flag) => (
-                            <span key={flag} className="checkin-special-chip">
-                              {flag}
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Mobile Action Buttons */}
-                    <div className="checkin-mobile-card-actions">
-                      {isHistorical ? (
-                        <button
-                          type="button"
-                          className="checkin-action-btn btn-view-roster"
-                          onClick={() => handleOpenMemberModal(evacuee)}
-                          style={{ width: "100%", justifyContent: "center" }}
-                        >
-                          <FontAwesomeIcon icon={faListCheck} />
-                          <span>View Household Roster</span>
-                        </button>
-                      ) : isFullyArrived ? (
+                    {/* Row 2: Barangay & Member Count */}
+                    <div className="checkin-mobile-card-line2">
+                      {evacuee.barangay_name && (
                         <>
-                          <button
-                            type="button"
-                            className="checkin-action-btn btn-undo"
-                            onClick={() => handleQuickUndo(evacuee)}
-                            disabled={isRowLoading}
-                            title="Undo check-in for this household"
-                          >
-                            <FontAwesomeIcon icon={faRotateLeft} />
-                            <span>Undo Check-In</span>
-                          </button>
-                          <button
-                            type="button"
-                            className="checkin-action-btn btn-manage"
-                            onClick={() => handleOpenMemberModal(evacuee)}
-                          >
-                            <FontAwesomeIcon icon={faListCheck} />
-                            <span>Members</span>
-                          </button>
-                        </>
-                      ) : isPartiallyArrived ? (
-                        <>
-                          <button
-                            type="button"
-                            className="checkin-action-btn btn-manage"
-                            onClick={() => handleOpenMemberModal(evacuee)}
-                            disabled={isRowLoading}
-                          >
-                            <FontAwesomeIcon icon={faListCheck} />
-                            <span>Manage ({evacuee.checked_in_members}/{evacuee.member_count})</span>
-                          </button>
-                          <button
-                            type="button"
-                            className="checkin-action-btn btn-arrive"
-                            onClick={() => handleQuickCheckInAll(evacuee)}
-                            disabled={isRowLoading || !canCheckIn}
-                            title={getCheckInDisabledReason(evacuee) || undefined}
-                          >
-                            <FontAwesomeIcon icon={faCheck} />
-                            <span>All Arrived</span>
-                          </button>
-                        </>
-                      ) : (
-                        <>
-                          <button
-                            type="button"
-                            className={`checkin-action-btn btn-arrive ${!canCheckIn ? "is-disabled" : ""}`}
-                            onClick={() => handleQuickCheckInAll(evacuee)}
-                            disabled={isRowLoading || !canCheckIn}
-                            title={getCheckInDisabledReason(evacuee) || undefined}
-                          >
-                            {isRowLoading ? (
-                              <FontAwesomeIcon icon={faSpinner} spin />
-                            ) : (
-                              <FontAwesomeIcon icon={faCheck} />
-                            )}
-                            <span>Mark All Arrived</span>
-                          </button>
-                          <button
-                            type="button"
-                            className="checkin-action-btn btn-manage"
-                            onClick={() => handleOpenMemberModal(evacuee)}
-                          >
-                            <FontAwesomeIcon icon={faListCheck} />
-                            <span>Select Members</span>
-                          </button>
+                          <span>{evacuee.barangay_name}</span>
+                          <span className="checkin-sep">·</span>
                         </>
                       )}
+                      <span>
+                        {evacuee.member_count} {evacuee.member_count === 1 ? "person" : "people"}
+                      </span>
                     </div>
+
+                    {/* Row 3: Shelter & Room */}
+                    {mobileShelterLine && (
+                      <div className="checkin-mobile-card-line3">
+                        {mobileShelterLine}
+                      </div>
+                    )}
                   </article>
                 );
               })}
@@ -1289,17 +1655,25 @@ export default function EvacueeCheckIn() {
             {totalCount > 0 && (
               <footer className="checkin-pagination-bar" aria-label="Evacuee list pagination">
                 <div className="checkin-pagination-info">
-                  Showing <strong>{startIndex + 1}</strong>–<strong>{endIndex}</strong> of{" "}
-                  <strong>{totalCount}</strong> households
+                  <span className="checkin-hide-mobile">
+                    Showing <strong>{startIndex + 1}</strong> to <strong>{endIndex}</strong> of{" "}
+                    <strong>{totalCount}</strong>
+                  </span>
+                  <span className="checkin-show-mobile">
+                    {startIndex + 1}-{endIndex} of {totalCount}
+                  </span>
                 </div>
 
                 <div className="checkin-pagination-actions">
                   <div className="checkin-pagesize-wrap">
-                    <span className="checkin-pagesize-label">Rows per page:</span>
+                    <span className="checkin-pagesize-label">Rows:</span>
                     <select
                       className="checkin-pagesize-select"
                       value={pageSize}
-                      onChange={(e) => setPageSize(Number(e.target.value))}
+                      onChange={(e) => {
+                        setPageSize(Number(e.target.value));
+                        setCurrentPage(1);
+                      }}
                       aria-label="Select number of evacuee rows per page"
                     >
                       <option value={10}>10</option>
@@ -1312,44 +1686,50 @@ export default function EvacueeCheckIn() {
                   <nav className="checkin-page-nav" aria-label="Page navigation">
                     <button
                       type="button"
-                      className="checkin-page-btn nav-arrow"
+                      className="checkin-page-btn nav-text-btn"
                       disabled={safeCurrentPage <= 1}
                       onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
                       aria-label="Go to previous page"
-                      title="Previous page"
                     >
                       <FontAwesomeIcon icon={faChevronLeft} />
+                      <span>Previous</span>
                     </button>
 
-                    <div className="checkin-page-numbers">
-                      {getPageNumbers().map((item, idx) =>
-                        item === "..." ? (
-                          <span key={`dots-${idx}`} className="checkin-page-dots" aria-hidden="true">
-                            …
-                          </span>
-                        ) : (
-                          <button
-                            key={`page-${item}`}
-                            type="button"
-                            className={`checkin-page-btn ${item === safeCurrentPage ? "active" : ""}`}
-                            onClick={() => setCurrentPage(item)}
-                            aria-current={item === safeCurrentPage ? "page" : undefined}
-                            aria-label={`Page ${item}`}
-                          >
-                            {item}
-                          </button>
-                        )
-                      )}
-                    </div>
+                    <span className="checkin-mobile-page-indicator checkin-show-mobile">
+                      Page {safeCurrentPage} of {totalPages}
+                    </span>
+
+                    {totalPages > 1 && (
+                      <div className="checkin-page-numbers">
+                        {getPageNumbers().map((item, idx) =>
+                          item === "..." ? (
+                            <span key={`dots-${idx}`} className="checkin-page-dots" aria-hidden="true">
+                              …
+                            </span>
+                          ) : (
+                            <button
+                              key={`page-${item}`}
+                              type="button"
+                              className={`checkin-page-btn ${item === safeCurrentPage ? "active" : ""}`}
+                              onClick={() => setCurrentPage(item)}
+                              aria-current={item === safeCurrentPage ? "page" : undefined}
+                              aria-label={`Page ${item}`}
+                            >
+                              {item}
+                            </button>
+                          )
+                        )}
+                      </div>
+                    )}
 
                     <button
                       type="button"
-                      className="checkin-page-btn nav-arrow"
+                      className="checkin-page-btn nav-text-btn"
                       disabled={safeCurrentPage >= totalPages}
                       onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
                       aria-label="Go to next page"
-                      title="Next page"
                     >
+                      <span>Next</span>
                       <FontAwesomeIcon icon={faChevronRight} />
                     </button>
                   </nav>
@@ -1543,228 +1923,428 @@ export default function EvacueeCheckIn() {
         </div>
       )}
 
-      {/* Evacuation Operation & Shelter Status Modal */}
-      {showScheduleModal && (
-        <div className="checkin-modal-backdrop" onClick={() => !savingSchedule && setShowScheduleModal(false)}>
-          <div className="checkin-modal-card checkin-schedule-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: "580px" }}>
+      {/* Manage Evacuation Operation Modal */}
+      {showManageOpModal && (
+        <div
+          className="checkin-modal-backdrop"
+          onClick={() => !savingSchedule && setShowManageOpModal(false)}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="manage-op-modal-title"
+        >
+          <div
+            className="checkin-modal-card checkin-op-modal"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="checkin-modal-header">
               <div className="checkin-modal-title-wrap">
-                <FontAwesomeIcon icon={isStartingNewOp ? faBolt : faCalendarDays} style={{ color: "var(--brand, #2563eb)", fontSize: "20px" }} />
+                <FontAwesomeIcon icon={faGear} className="checkin-op-header-icon" />
                 <div>
-                  <h3 style={{ margin: 0, fontSize: "16px", fontWeight: 700 }}>
-                    {isStartingNewOp ? "Start New Evacuation Operation" : "Manage Evacuation Operation & Shelter Status"}
+                  <h3 id="manage-op-modal-title" className="checkin-op-modal-title">
+                    Manage Operation
                   </h3>
-                  <span style={{ fontSize: "12px", color: "var(--muted, #64748b)" }}>
-                    {isStartingNewOp
-                      ? "Archive current event and begin a fresh evacuation operation"
-                      : "Control active disaster status, shelter openings, and historical archiving"}
+                  <span className="checkin-op-modal-sub">
+                    Update active event name, scope, status, or conclude to archive
                   </span>
                 </div>
               </div>
               <button
                 type="button"
                 className="checkin-modal-close"
-                onClick={() => setShowScheduleModal(false)}
+                onClick={() => setShowManageOpModal(false)}
                 disabled={savingSchedule}
-                aria-label="Close"
+                aria-label="Close Manage Operation modal"
               >
                 <FontAwesomeIcon icon={faXmark} />
               </button>
             </div>
 
-            <form onSubmit={handleSaveSchedule} className="checkin-modal-body" style={{ padding: "18px 22px" }}>
-              {/* Operation Mode Selector: Current vs New */}
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px", marginBottom: "14px" }}>
-                <button
-                  type="button"
-                  style={{
-                    padding: "9px 12px",
-                    borderRadius: "8px",
-                    border: !isStartingNewOp ? "2px solid #2563eb" : "1px solid #cbd5e1",
-                    background: !isStartingNewOp ? "#eff6ff" : "#ffffff",
-                    color: !isStartingNewOp ? "#1d4ed8" : "#475569",
-                    fontWeight: !isStartingNewOp ? 700 : 500,
-                    fontSize: "13px",
-                    cursor: "pointer",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: "6px",
-                  }}
-                  onClick={() => setIsStartingNewOp(false)}
-                >
-                  <FontAwesomeIcon icon={faGear} />
-                  <span>Current Operation</span>
-                </button>
-                <button
-                  type="button"
-                  style={{
-                    padding: "9px 12px",
-                    borderRadius: "8px",
-                    border: isStartingNewOp ? "2px solid #2563eb" : "1px solid #cbd5e1",
-                    background: isStartingNewOp ? "#eff6ff" : "#ffffff",
-                    color: isStartingNewOp ? "#1d4ed8" : "#475569",
-                    fontWeight: isStartingNewOp ? 700 : 500,
-                    fontSize: "13px",
-                    cursor: "pointer",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: "6px",
-                  }}
-                  onClick={() => {
-                    setIsStartingNewOp(true);
-                    setScheduleEventName("");
-                    setScheduleStatus("open");
-                    const today = new Date().toISOString().split("T")[0];
-                    setScheduleOpenDate(today);
-                    setScheduleCutoffDate(today);
-                  }}
-                >
-                  <FontAwesomeIcon icon={faBolt} />
-                  <span>+ Start New Operation</span>
-                </button>
-              </div>
-
-              {/* Informative notice when starting a new operation */}
-              {isStartingNewOp && (
-                <div style={{
-                  padding: "10px 14px",
-                  background: "#f0fdf4",
-                  border: "1px solid #bbf7d0",
-                  borderRadius: "8px",
-                  marginBottom: "14px",
-                  fontSize: "12px",
-                  color: "#166534",
-                  display: "flex",
-                  gap: "10px",
-                  alignItems: "flex-start",
-                }}>
-                  <FontAwesomeIcon icon={faBoxArchive} style={{ marginTop: "2px", flexShrink: 0 }} />
-                  <div>
-                    <strong>Clean New Disaster Operation:</strong> The previous operation ("{effectiveSchedule?.evacuation_event_name || 'Active Evacuation'}") will be archived into history. A clean check-in roster will start at 0 arrived for this new disaster.
-                  </div>
-                </div>
-              )}
-
-              {/* Event Name */}
-              <div className="checkin-form-group">
-                <label className="checkin-form-label">
-                  Disaster Advisory or Event Name <span style={{ color: "#ef4444" }}>*</span>
-                </label>
-                <input
-                  type="text"
-                  className="checkin-form-input"
-                  placeholder="e.g. Typhoon Kristine Evacuation, Tropical Storm Pepito"
-                  value={scheduleEventName}
-                  onChange={(e) => setScheduleEventName(e.target.value)}
-                  disabled={savingSchedule}
-                  required
-                />
-              </div>
-
-              {/* Target Center */}
-              <div className="checkin-form-group">
-                <label className="checkin-form-label">Target Shelter / Facility Scope</label>
-                <select
-                  className="checkin-form-input"
-                  value={scheduleCenterId}
-                  onChange={(e) => setScheduleCenterId(e.target.value)}
-                  disabled={savingSchedule}
-                >
-                  <option value="all">Apply to All Evacuation Centers ({centers.length} facilities)</option>
-                  {centers.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Operational Status (3 Clean Vertical Options) */}
-              <div className="checkin-form-group">
-                <label className="checkin-form-label">Shelter Operational Status</label>
-                <div className="checkin-status-cards">
-                  {/* Option 1: Open */}
-                  <div
-                    role="button"
-                    tabIndex={0}
-                    className={`checkin-status-card open ${scheduleStatus === "open" ? "is-active" : ""}`}
-                    onClick={() => setScheduleStatus("open")}
-                    onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && setScheduleStatus("open")}
-                  >
-                    <div className="checkin-status-card-icon open">
-                      <span className="checkin-status-dot-lg open" />
-                    </div>
-                    <div className="checkin-status-card-text">
-                      <strong className="checkin-status-card-title">Open for Evacuation (Active)</strong>
-                      <span className="checkin-status-card-desc">
-                        Shelters are open and ready. Staff can check in arriving residents in real time 24/7.
-                      </span>
-                    </div>
-                    <div className="checkin-status-radio">
-                      <div className={`checkin-radio-indicator ${scheduleStatus === "open" ? "is-checked" : ""}`} />
-                    </div>
-                  </div>
-
-                  {/* Option 2: Standby */}
-                  <div
-                    role="button"
-                    tabIndex={0}
-                    className={`checkin-status-card standby ${scheduleStatus === "standby" ? "is-active" : ""}`}
-                    onClick={() => setScheduleStatus("standby")}
-                    onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && setScheduleStatus("standby")}
-                  >
-                    <div className="checkin-status-card-icon standby">
-                      <span className="checkin-status-dot-lg standby" />
-                    </div>
-                    <div className="checkin-status-card-text">
-                      <strong className="checkin-status-card-title">Standby / Preparedness</strong>
-                      <span className="checkin-status-card-desc">
-                        Shelters are designated and prepared in advance. Check-ins activate once opened.
-                      </span>
-                    </div>
-                    <div className="checkin-status-radio">
-                      <div className={`checkin-radio-indicator ${scheduleStatus === "standby" ? "is-checked" : ""}`} />
-                    </div>
-                  </div>
-
-                  {/* Option 3: Closed */}
-                  <div
-                    role="button"
-                    tabIndex={0}
-                    className={`checkin-status-card closed ${scheduleStatus === "closed" ? "is-active" : ""}`}
-                    onClick={() => setScheduleStatus("closed")}
-                    onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && setScheduleStatus("closed")}
-                  >
-                    <div className="checkin-status-card-icon closed">
-                      <span className="checkin-status-dot-lg closed" />
-                    </div>
-                    <div className="checkin-status-card-text">
-                      <strong className="checkin-status-card-title">Conclude & Save to Archive</strong>
-                      <span className="checkin-status-card-desc">
-                        Evacuation has concluded. Facilities stand down and records are preserved as archive.
-                      </span>
-                    </div>
-                    <div className="checkin-status-radio">
-                      <div className={`checkin-radio-indicator ${scheduleStatus === "closed" ? "is-checked" : ""}`} />
+            {pendingOpConfirm === "manage-conclude" ? (
+              <div className="checkin-op-form">
+                <div className="checkin-modal-body checkin-op-confirm-body">
+                  <div className="checkin-op-confirm-box is-archive">
+                    <FontAwesomeIcon icon={faBoxArchive} />
+                    <div>
+                      <strong>Conclude &amp; Save to Archive?</strong>
+                      <p>
+                        Concluding &ldquo;{scheduleEventName.trim()}&rdquo; pauses check-ins and saves current records into historical archives.
+                      </p>
                     </div>
                   </div>
                 </div>
+                <div className="checkin-modal-footer">
+                  <button
+                    type="button"
+                    className="checkin-modal-btn is-secondary"
+                    onClick={() => setPendingOpConfirm(null)}
+                    disabled={savingSchedule}
+                  >
+                    Back
+                  </button>
+                  <button
+                    type="button"
+                    className="checkin-modal-btn is-primary"
+                    onClick={() => handleSaveOperation("manage", true)}
+                    disabled={savingSchedule}
+                  >
+                    {savingSchedule && <FontAwesomeIcon icon={faSpinner} spin />}
+                    <span>{savingSchedule ? "Saving..." : "Confirm Conclude & Archive"}</span>
+                  </button>
+                </div>
               </div>
-
-              {/* Schedule & Operational Dates */}
-              {scheduleStatus !== "closed" && (
-                <div className="checkin-window-card">
-                  <div className="checkin-window-header">
-                    <FontAwesomeIcon icon={faCalendarDays} style={{ color: "var(--brand, #2563eb)" }} />
-                    <span style={{ fontWeight: 600, fontSize: "13px", color: "#1e293b" }}>Operation Date & Advisory Timeline</span>
+            ) : (
+              <form
+                noValidate
+                className="checkin-op-form"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  handleSaveOperation("manage", false);
+                }}
+              >
+                <div className="checkin-modal-body checkin-op-modal-body">
+                  <div className="checkin-form-group">
+                    <label htmlFor="manage-op-name" className="checkin-form-label">
+                      Operation / Event Name <span className="checkin-required-star">*</span>
+                    </label>
+                    <input
+                      id="manage-op-name"
+                      type="text"
+                      className={`checkin-form-input ${scheduleEventNameError ? "has-error" : ""}`}
+                      placeholder="e.g. Pre-emptive Evacuation"
+                      value={scheduleEventName}
+                      onChange={(e) => {
+                        setScheduleEventName(e.target.value);
+                        if (scheduleEventNameError && e.target.value.trim()) {
+                          setScheduleEventNameError("");
+                        }
+                      }}
+                      disabled={savingSchedule}
+                    />
+                    {scheduleEventNameError && (
+                      <p className="checkin-field-error" role="alert">
+                        {scheduleEventNameError}
+                      </p>
+                    )}
                   </div>
 
-                  <div className="checkin-window-grid">
+                  <div className="checkin-form-group">
+                    <label htmlFor="manage-op-scope" className="checkin-form-label">
+                      Target Shelter Scope
+                    </label>
+                    <select
+                      id="manage-op-scope"
+                      className="checkin-form-input"
+                      value={scheduleCenterId}
+                      onChange={(e) => setScheduleCenterId(e.target.value)}
+                      disabled={savingSchedule}
+                    >
+                      <option value="all">
+                        All Evacuation Centers ({centers.length} facilities)
+                      </option>
+                      {centers.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="checkin-form-group">
+                    <label className="checkin-form-label">Operational Status</label>
+                    <div
+                      className="checkin-status-segmented"
+                      role="radiogroup"
+                      aria-label="Operational Status"
+                    >
+                      <button
+                        type="button"
+                        role="radio"
+                        aria-checked={scheduleStatus === "open"}
+                        className={`checkin-segment-btn is-open ${scheduleStatus === "open" ? "is-active" : ""}`}
+                        onClick={() => setScheduleStatus("open")}
+                        disabled={savingSchedule}
+                      >
+                        <span className="checkin-seg-dot open" />
+                        <span>Open</span>
+                      </button>
+                      <button
+                        type="button"
+                        role="radio"
+                        aria-checked={scheduleStatus === "standby"}
+                        className={`checkin-segment-btn is-standby ${scheduleStatus === "standby" ? "is-active" : ""}`}
+                        onClick={() => setScheduleStatus("standby")}
+                        disabled={savingSchedule}
+                      >
+                        <span className="checkin-seg-dot standby" />
+                        <span>Standby</span>
+                      </button>
+                      <button
+                        type="button"
+                        role="radio"
+                        aria-checked={scheduleStatus === "closed"}
+                        className={`checkin-segment-btn is-closed ${scheduleStatus === "closed" ? "is-active" : ""}`}
+                        onClick={() => setScheduleStatus("closed")}
+                        disabled={savingSchedule}
+                        aria-label="Conclude & Save to Archive"
+                      >
+                        <span className="checkin-seg-dot closed" />
+                        <span>Conclude &amp; Archive</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {scheduleStatus !== "closed" ? (
+                    <div className="checkin-window-compact">
+                      <div className="checkin-window-col">
+                        <label className="checkin-form-label-sm">Opening Date &amp; Time</label>
+                        <div className="checkin-date-time-pair">
+                          <input
+                            type="date"
+                            className="checkin-form-input"
+                            value={scheduleOpenDate}
+                            onChange={(e) => {
+                              setScheduleOpenDate(e.target.value);
+                              if (!scheduleCutoffDate || scheduleCutoffDate < e.target.value) {
+                                setScheduleCutoffDate(e.target.value);
+                              }
+                            }}
+                            disabled={savingSchedule}
+                          />
+                          <input
+                            type="time"
+                            className="checkin-form-input checkin-time-input"
+                            value={scheduleOpenTime}
+                            onChange={(e) => setScheduleOpenTime(e.target.value)}
+                            disabled={savingSchedule}
+                          />
+                        </div>
+                      </div>
+
+                      <div className="checkin-window-col">
+                        <label className="checkin-form-label-sm">Expected Target (Advisory)</label>
+                        <div className="checkin-date-time-pair">
+                          <input
+                            type="date"
+                            className="checkin-form-input"
+                            value={scheduleCutoffDate}
+                            onChange={(e) => setScheduleCutoffDate(e.target.value)}
+                            disabled={savingSchedule}
+                          />
+                          <input
+                            type="time"
+                            className="checkin-form-input checkin-time-input"
+                            value={scheduleCutoffTime}
+                            onChange={(e) => setScheduleCutoffTime(e.target.value)}
+                            disabled={savingSchedule}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="checkin-op-short-notice is-archive">
+                      <FontAwesomeIcon icon={faBoxArchive} />
+                      <span>Shelters will stand down and records will be saved to history.</span>
+                    </div>
+                  )}
+                </div>
+
+                <div className="checkin-modal-footer">
+                  <button
+                    type="button"
+                    className="checkin-modal-btn is-secondary"
+                    onClick={() => setShowManageOpModal(false)}
+                    disabled={savingSchedule}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="checkin-modal-btn is-primary"
+                    disabled={savingSchedule}
+                  >
+                    {savingSchedule && <FontAwesomeIcon icon={faSpinner} spin />}
+                    <span>
+                      {savingSchedule
+                        ? "Saving..."
+                        : scheduleStatus === "closed"
+                          ? "Conclude & Save to Archive"
+                          : "Save Changes"}
+                    </span>
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Start New Evacuation Operation Modal */}
+      {showNewOpModal && (
+        <div
+          className="checkin-modal-backdrop"
+          onClick={() => !savingSchedule && setShowNewOpModal(false)}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="new-op-modal-title"
+        >
+          <div
+            className="checkin-modal-card checkin-op-modal"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="checkin-modal-header">
+              <div className="checkin-modal-title-wrap">
+                <FontAwesomeIcon icon={faBolt} className="checkin-op-header-icon" />
+                <div>
+                  <h3 id="new-op-modal-title" className="checkin-op-modal-title">
+                    New Operation
+                  </h3>
+                  <span className="checkin-op-modal-sub">
+                    Begin a fresh evacuation operation for a new event
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                className="checkin-modal-close"
+                onClick={() => setShowNewOpModal(false)}
+                disabled={savingSchedule}
+                aria-label="Close New Operation modal"
+              >
+                <FontAwesomeIcon icon={faXmark} />
+              </button>
+            </div>
+
+            {pendingOpConfirm === "new-operation" ? (
+              <div className="checkin-op-form">
+                <div className="checkin-modal-body checkin-op-confirm-body">
+                  <div className="checkin-op-confirm-box is-new">
+                    <FontAwesomeIcon icon={faBolt} />
+                    <div>
+                      <strong>Start New Operation?</strong>
+                      <p>
+                        &ldquo;{effectiveSchedule?.evacuation_event_name || "Current Operation"}&rdquo; will be archived and all shelter check-ins will reset to 0 arrived for &ldquo;{scheduleEventName.trim()}&rdquo;.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+                <div className="checkin-modal-footer">
+                  <button
+                    type="button"
+                    className="checkin-modal-btn is-secondary"
+                    onClick={() => setPendingOpConfirm(null)}
+                    disabled={savingSchedule}
+                  >
+                    Back
+                  </button>
+                  <button
+                    type="button"
+                    className="checkin-modal-btn is-primary"
+                    onClick={() => handleSaveOperation("new", true)}
+                    disabled={savingSchedule}
+                  >
+                    {savingSchedule && <FontAwesomeIcon icon={faSpinner} spin />}
+                    <span>{savingSchedule ? "Starting..." : "Confirm Start Operation"}</span>
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <form
+                noValidate
+                className="checkin-op-form"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  handleSaveOperation("new", false);
+                }}
+              >
+                <div className="checkin-modal-body checkin-op-modal-body">
+                  <div className="checkin-op-short-notice is-new">
+                    <FontAwesomeIcon icon={faBoxArchive} />
+                    <span>Archives the current event and resets check-ins to 0 arrived.</span>
+                  </div>
+
+                  <div className="checkin-form-group">
+                    <label htmlFor="new-op-name" className="checkin-form-label">
+                      Operation / Event Name <span className="checkin-required-star">*</span>
+                    </label>
+                    <input
+                      id="new-op-name"
+                      type="text"
+                      className={`checkin-form-input ${scheduleEventNameError ? "has-error" : ""}`}
+                      placeholder="e.g. Typhoon Kristine Evacuation"
+                      value={scheduleEventName}
+                      onChange={(e) => {
+                        setScheduleEventName(e.target.value);
+                        if (scheduleEventNameError && e.target.value.trim()) {
+                          setScheduleEventNameError("");
+                        }
+                      }}
+                      disabled={savingSchedule}
+                    />
+                    {scheduleEventNameError && (
+                      <p className="checkin-field-error" role="alert">
+                        {scheduleEventNameError}
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="checkin-form-group">
+                    <label htmlFor="new-op-scope" className="checkin-form-label">
+                      Target Shelter Scope
+                    </label>
+                    <select
+                      id="new-op-scope"
+                      className="checkin-form-input"
+                      value={scheduleCenterId}
+                      onChange={(e) => setScheduleCenterId(e.target.value)}
+                      disabled={savingSchedule}
+                    >
+                      <option value="all">
+                        All Evacuation Centers ({centers.length} facilities)
+                      </option>
+                      {centers.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="checkin-form-group">
+                    <label className="checkin-form-label">Initial Status</label>
+                    <div
+                      className="checkin-status-segmented is-two"
+                      role="radiogroup"
+                      aria-label="Initial Status"
+                    >
+                      <button
+                        type="button"
+                        role="radio"
+                        aria-checked={scheduleStatus === "open"}
+                        className={`checkin-segment-btn is-open ${scheduleStatus === "open" ? "is-active" : ""}`}
+                        onClick={() => setScheduleStatus("open")}
+                        disabled={savingSchedule}
+                      >
+                        <span className="checkin-seg-dot open" />
+                        <span>Open</span>
+                      </button>
+                      <button
+                        type="button"
+                        role="radio"
+                        aria-checked={scheduleStatus === "standby"}
+                        className={`checkin-segment-btn is-standby ${scheduleStatus === "standby" ? "is-active" : ""}`}
+                        onClick={() => setScheduleStatus("standby")}
+                        disabled={savingSchedule}
+                      >
+                        <span className="checkin-seg-dot standby" />
+                        <span>Standby</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="checkin-window-compact">
                     <div className="checkin-window-col">
-                      <label className="checkin-form-label-sm">Opening Date & Time</label>
-                      <div style={{ display: "flex", gap: "8px" }}>
+                      <label className="checkin-form-label-sm">Opening Date &amp; Time</label>
+                      <div className="checkin-date-time-pair">
                         <input
                           type="date"
                           className="checkin-form-input"
@@ -1776,23 +2356,20 @@ export default function EvacueeCheckIn() {
                             }
                           }}
                           disabled={savingSchedule}
-                          required
                         />
                         <input
                           type="time"
-                          className="checkin-form-input"
-                          style={{ width: "120px", flexShrink: 0 }}
+                          className="checkin-form-input checkin-time-input"
                           value={scheduleOpenTime}
                           onChange={(e) => setScheduleOpenTime(e.target.value)}
                           disabled={savingSchedule}
-                          required
                         />
                       </div>
                     </div>
 
                     <div className="checkin-window-col">
-                      <label className="checkin-form-label-sm">Expected Arrival Target (Advisory)</label>
-                      <div style={{ display: "flex", gap: "8px" }}>
+                      <label className="checkin-form-label-sm">Expected Target (Optional)</label>
+                      <div className="checkin-date-time-pair">
                         <input
                           type="date"
                           className="checkin-form-input"
@@ -1802,8 +2379,7 @@ export default function EvacueeCheckIn() {
                         />
                         <input
                           type="time"
-                          className="checkin-form-input"
-                          style={{ width: "120px", flexShrink: 0 }}
+                          className="checkin-form-input checkin-time-input"
                           value={scheduleCutoffTime}
                           onChange={(e) => setScheduleCutoffTime(e.target.value)}
                           disabled={savingSchedule}
@@ -1811,59 +2387,28 @@ export default function EvacueeCheckIn() {
                       </div>
                     </div>
                   </div>
-
-                  <div className="checkin-window-note">
-                    ℹ️ Check-ins are accessible 24/7 while shelters are open. Target deadlines are advisory and never block evacuees from checking in.
-                  </div>
                 </div>
-              )}
 
-              {/* Dynamic Live Summary Callout */}
-              <div className={`checkin-summary-callout ${scheduleStatus}`}>
-                <div className="checkin-summary-callout-text">
-                  <span className="checkin-summary-callout-title">
-                    {scheduleStatus === "open"
-                      ? "🟢 Active Evacuation Mode"
-                      : scheduleStatus === "standby"
-                        ? "🟡 Standby / Preparedness Mode"
-                        : "⚪ Conclude & Archive Mode"}
-                  </span>
-                  <span className="checkin-summary-callout-desc">
-                    {scheduleStatus === "open"
-                      ? `Shelters open on ${scheduleOpenDate || "today"} at ${scheduleOpenTime || "08:00"}. Evacuees can be checked in 24/7.`
-                      : scheduleStatus === "standby"
-                        ? `Operation scheduled in advance. Evacuee check-ins will unlock when opened.`
-                        : `Operation concluded. Check-ins are disabled and official disaster records are preserved for historical audit and reporting.`}
-                  </span>
+                <div className="checkin-modal-footer">
+                  <button
+                    type="button"
+                    className="checkin-modal-btn is-secondary"
+                    onClick={() => setShowNewOpModal(false)}
+                    disabled={savingSchedule}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="checkin-modal-btn is-primary"
+                    disabled={savingSchedule}
+                  >
+                    {savingSchedule && <FontAwesomeIcon icon={faSpinner} spin />}
+                    <span>{savingSchedule ? "Starting..." : "Start New Operation"}</span>
+                  </button>
                 </div>
-              </div>
-
-              {/* Modal Footer */}
-              <div className="checkin-modal-footer" style={{ marginTop: "16px" }}>
-                <button
-                  type="button"
-                  className="checkin-modal-btn is-secondary"
-                  onClick={() => setShowScheduleModal(false)}
-                  disabled={savingSchedule}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="checkin-modal-btn is-primary"
-                  disabled={savingSchedule || (scheduleStatus !== "closed" && !scheduleOpenDate)}
-                >
-                  {savingSchedule && <FontAwesomeIcon icon={faSpinner} spin style={{ marginRight: "6px" }} />}
-                  {savingSchedule
-                    ? "Saving..."
-                    : isStartingNewOp
-                      ? "Start & Open New Operation"
-                      : scheduleStatus === "closed"
-                        ? "Conclude & Archive Operation"
-                        : "Save Evacuation Operation"}
-                </button>
-              </div>
-            </form>
+              </form>
+            )}
           </div>
         </div>
       )}
@@ -1963,6 +2508,104 @@ export default function EvacueeCheckIn() {
                   {extendingSchedule ? "Extending Deadline..." : "Confirm Extension"}
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Mobile Shelter Filter Bottom Sheet */}
+      {filterSheetOpen && (
+        <div
+          className="checkin-filter-sheet-backdrop"
+          onClick={() => setFilterSheetOpen(false)}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="checkin-filter-sheet-title"
+        >
+          <div
+            className="checkin-filter-sheet"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="checkin-filter-sheet-handle" aria-hidden="true" />
+
+            <div className="checkin-filter-sheet-header">
+              <h2 id="checkin-filter-sheet-title">Filter by Shelter</h2>
+              <button
+                type="button"
+                className="checkin-modal-close-btn"
+                onClick={() => setFilterSheetOpen(false)}
+                aria-label="Close shelter filter"
+              >
+                <FontAwesomeIcon icon={faXmark} />
+              </button>
+            </div>
+
+            <div className="checkin-filter-sheet-list" role="listbox" aria-label="Evacuation centers">
+              <button
+                type="button"
+                role="option"
+                aria-selected={draftCenterId === "all"}
+                className={`checkin-filter-sheet-option ${draftCenterId === "all" ? "is-selected" : ""}`}
+                onClick={() => setDraftCenterId("all")}
+              >
+                <span className="checkin-filter-sheet-option-main">
+                  <span className="checkin-filter-sheet-option-name">All Shelters</span>
+                  <span className="checkin-filter-sheet-option-count">({centers.length})</span>
+                </span>
+                {draftCenterId === "all" && (
+                  <FontAwesomeIcon icon={faCheck} className="checkin-filter-sheet-check" />
+                )}
+              </button>
+
+              {centers.map((c) => {
+                const isSelected = String(draftCenterId) === String(c.id);
+                return (
+                  <button
+                    key={`sheet-center-${c.id}`}
+                    type="button"
+                    role="option"
+                    aria-selected={isSelected}
+                    className={`checkin-filter-sheet-option ${isSelected ? "is-selected" : ""}`}
+                    onClick={() => setDraftCenterId(String(c.id))}
+                  >
+                    <span className="checkin-filter-sheet-option-main">
+                      <span className="checkin-filter-sheet-option-name">{c.name}</span>
+                      <span className="checkin-filter-sheet-option-count">
+                        ({c.checked_in}/{c.assigned})
+                      </span>
+                    </span>
+                    {isSelected && (
+                      <FontAwesomeIcon icon={faCheck} className="checkin-filter-sheet-check" />
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="checkin-filter-sheet-footer">
+              <button
+                type="button"
+                className="checkin-filter-sheet-btn is-reset"
+                onClick={() => {
+                  setDraftCenterId("all");
+                  setSelectedCenterId("all");
+                  setCurrentPage(1);
+                  setFilterSheetOpen(false);
+                }}
+              >
+                Reset
+              </button>
+              <button
+                type="button"
+                className="checkin-filter-sheet-btn is-apply"
+                onClick={() => {
+                  setSelectedCenterId(draftCenterId);
+                  setCurrentPage(1);
+                  setFilterSheetOpen(false);
+                }}
+              >
+                Apply
+              </button>
             </div>
           </div>
         </div>

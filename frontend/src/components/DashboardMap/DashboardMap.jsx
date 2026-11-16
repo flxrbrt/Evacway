@@ -18,16 +18,19 @@ import {
   faArrowLeft,
   faBuildingColumns,
   faChevronRight,
-  faLayerGroup,
   faCheck,
   faHand,
   faLocationCrosshairs,
   faSatellite,
+  faSatelliteDish,
+  faCircleQuestion,
   faMap,
   faPlus,
   faMinus,
   faCompass,
+  faBan,
 } from "@fortawesome/free-solid-svg-icons";
+import IconLegendModal from "./IconLegendModal";
 
 import { BASE_URL } from "../../services/api";
 import {
@@ -39,7 +42,19 @@ import {
 } from "../../hooks/useEvacuationQueries";
 import { displayEntityName } from "../../utils/displayEntityName";
 import "./DashboardMap.css";
-import { isValidatedReport, createReportMarker, createReportPopup } from "../mapReports/mapReports";
+import { isValidatedReport, isBlockedRoadReport, createReportMarker, createReportPopup } from "../mapReports/mapReports";
+import {
+  SOGOD_CENTER as RESIDENT_SOGOD_CENTER,
+  SOGOD_BOUNDS as RESIDENT_SOGOD_BOUNDS,
+  DEFAULT_MAP_ZOOM,
+  MIN_MAP_ZOOM,
+  MAX_MAP_ZOOM,
+  ensureHazardImage,
+  createHazardMarkerImage,
+  getLineMidpoint,
+  getReportBlockedRoadMidpoint,
+  findReportForRoad,
+} from "../../pages/resident/ResidentHome";
 import "./MapOverlays.css";
 import {
   BUILDINGS_FILL_LAYER,
@@ -76,11 +91,12 @@ mapboxgl.accessToken = import.meta.env.VITE_MAPBOX_TOKEN;
 const MAPBOX_STYLE_STREETS = "mapbox://styles/mapbox/standard";
 const MAPBOX_STYLE_SATELLITE = "mapbox://styles/mapbox/satellite-streets-v12";
 
-const SOGOD_CENTER = [124.996, 10.435];
+// Sogod town proper coordinates & bounds (reused from resident map)
+const SOGOD_CENTER = [RESIDENT_SOGOD_CENTER[1], RESIDENT_SOGOD_CENTER[0]]; // [124.9886, 10.3932]
 
 const SOGOD_BOUNDS = [
-  [124.912, 10.368],
-  [125.078, 10.525],
+  [RESIDENT_SOGOD_BOUNDS[0][1], RESIDENT_SOGOD_BOUNDS[0][0]], // [124.912, 10.368]
+  [RESIDENT_SOGOD_BOUNDS[1][1], RESIDENT_SOGOD_BOUNDS[1][0]], // [125.078, 10.525]
 ];
 
 function isPointInGeoRing(lng, lat, ring) {
@@ -590,10 +606,21 @@ function DashboardMap({
   onEditablePolygonChange = null,
   // Center boundary polygon (restricts building drawing/editing and room placement)
   centerBoundaryPolygon = null,
+  onStaffAction = null,
 }) {
   const mapContainerRef = useRef(null);
   const mapRef = useRef(null);
+  const [helpOpen, setHelpOpen] = useState(false);
+  const popupOptions = useMemo(() => ({
+    isStaff: Boolean(onStaffAction),
+    isAdmin: onStaffAction?.isAdmin ?? true,
+    onVerify: onStaffAction?.onVerify,
+    onResolve: onStaffAction?.onResolve,
+    onEdit: onStaffAction?.onEdit,
+    onDelete: onStaffAction?.onDelete,
+  }), [onStaffAction]);
   const hazardMarkersRef = useRef([]);
+  const currentHazardPopupRef = useRef(null);
   const centerMarkersRef = useRef([]);
   const focusPointMarkerRef = useRef(null);
   const currentRoomPopupRef = useRef(null);
@@ -767,7 +794,7 @@ function DashboardMap({
       : Array.isArray(response?.reports)
         ? response.reports
         : [];
-    return reports.filter(isValidatedReport);
+    return reports;
   }, [hazardReportsQuery.data]);
 
   /*
@@ -946,17 +973,33 @@ function DashboardMap({
   const familiesLoading = roomFamiliesQuery.isLoading;
   const familiesError = roomFamiliesQuery.error?.message || "";
 
-  const [visibleLayers, setVisibleLayers] = useState({
-    flood: false,
-    landslide: false,
-  });
-  const [showReports, setShowReports] = useState(true);
-  const [layersMenuOpen, setLayersMenuOpen] = useState(false);
+  const filteredReports = useMemo(() => {
+    const focusId = focusLocation?.hazardId ? String(focusLocation.hazardId) : null;
+    const seenIds = new Set();
+    const result = [];
 
-  const activeLayerCount =
-    (visibleLayers.flood ? 1 : 0) +
-    (visibleLayers.landslide ? 1 : 0) +
-    (showReports ? 1 : 0);
+    (hazardReports || []).forEach((report) => {
+      if (!report || report.id == null) return;
+      const idStr = String(report.id);
+      if (seenIds.has(idStr)) return;
+
+      const status = String(report.status || "").toLowerCase();
+      if (status === "rejected" && (!focusId || focusId !== idStr)) return;
+
+      if (focusId && idStr === focusId) {
+        seenIds.add(idStr);
+        result.push(report);
+        return;
+      }
+
+      if (isValidatedReport(report)) {
+        seenIds.add(idStr);
+        result.push(report);
+      }
+    });
+
+    return result;
+  }, [hazardReports, focusLocation?.hazardId]);
 
   /*
    * Search
@@ -1152,68 +1195,7 @@ function DashboardMap({
       }
     }
 
-    // 3. Hazard zones
-    if (hazardZones && !map.getSource("hazard-zones")) {
-      try {
-        const filtered = {
-          ...hazardZones,
-          features: (hazardZones.features || []).filter(
-            (feature) => visibleLayers[feature.properties?.hazard_type] === true
-          ),
-        };
-        map.addSource("hazard-zones", {
-          type: "geojson",
-          data: filtered,
-        });
-        map.addLayer({
-          id: "hazard-zones-fill",
-          type: "fill",
-          source: "hazard-zones",
-          paint: {
-            "fill-color": [
-              "match",
-              ["get", "hazard_type"],
-              "flood",
-              "#0a9fb5",
-              "landslide",
-              "#8b5e34",
-              "#c8372d",
-            ],
-            "fill-opacity": [
-              "match",
-              ["get", "risk_level"],
-              "high",
-              0.34,
-              "medium",
-              0.25,
-              0.18,
-            ],
-          },
-        });
-        map.addLayer({
-          id: "hazard-zones-line",
-          type: "line",
-          source: "hazard-zones",
-          paint: {
-            "line-color": [
-              "match",
-              ["get", "hazard_type"],
-              "flood",
-              "#087e99",
-              "landslide",
-              "#684323",
-              "#a82e27",
-            ],
-            "line-width": 2.5,
-          },
-        });
-      } catch (e) {
-        // ignore
-      }
-    }
-
-    // 4. Evacuation centers
-    // 4. Evacuation centers
+    // 3. Evacuation centers
     if (centers?.features && !map.getSource("evacuation-centers")) {
       try {
         const centerFeatures = (centers.features || [])
@@ -1780,121 +1762,6 @@ function DashboardMap({
   }, [mapLoaded, isDrawing, editingCenter, selectedCenterProp, selectedCenter]);
 
   /*
-   * General start view:
-   * Fit the map to the mapped centers; when none are mapped,
-   * center on Sogod, Southern Leyte at zoom 12 (geocoded).
-   */
-  const hasFittedGeneralStartViewRef = useRef(false);
-
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !mapLoaded || isDrawing || hasFittedGeneralStartViewRef.current) return;
-    if (selectedCenterProp || selectedCenter || focusLocation) return;
-    if (!centers?.features) return;
-
-    hasFittedGeneralStartViewRef.current = true;
-
-    const mappedCoords = [];
-    (centers.features || []).forEach((c) => {
-      const geom = c.geometry || c.geom;
-      if (geom && geom.coordinates) {
-        function collect(coords) {
-          if (!Array.isArray(coords)) return;
-          if (
-            coords.length >= 2 &&
-            typeof coords[0] === "number" &&
-            typeof coords[1] === "number"
-          ) {
-            if (isPointInSogod(coords[0], coords[1], sogodBoundaryRef.current)) {
-              mappedCoords.push(coords);
-            }
-            return;
-          }
-          coords.forEach(collect);
-        }
-        collect(geom.coordinates);
-      } else {
-        const props = c.properties || c;
-        const rawLat = props.latitude ?? c.latitude;
-        const rawLng = props.longitude ?? c.longitude;
-        if (rawLat != null && rawLng != null && rawLat !== "" && rawLng !== "") {
-          const lat = Number(rawLat);
-          const lng = Number(rawLng);
-          if (
-            Number.isFinite(lat) &&
-            Number.isFinite(lng) &&
-            (lat !== 0 || lng !== 0) &&
-            isPointInSogod(lng, lat, sogodBoundaryRef.current)
-          ) {
-            mappedCoords.push([lng, lat]);
-          }
-        }
-      }
-    });
-
-    if (mappedCoords.length > 0) {
-      let minLng = mappedCoords[0][0];
-      let maxLng = mappedCoords[0][0];
-      let minLat = mappedCoords[0][1];
-      let maxLat = mappedCoords[0][1];
-
-      mappedCoords.forEach(([lng, lat]) => {
-        minLng = Math.min(minLng, lng);
-        maxLng = Math.max(maxLng, lng);
-        minLat = Math.min(minLat, lat);
-        maxLat = Math.max(maxLat, lat);
-      });
-
-      if (minLng === maxLng && minLat === maxLat) {
-        map.flyTo({ center: [minLng, minLat], zoom: 15, duration: 900 });
-      } else {
-        map.fitBounds(
-          [
-            [minLng, minLat],
-            [maxLng, maxLat],
-          ],
-          {
-            padding: 80,
-            maxZoom: 16,
-            duration: 900,
-          }
-        );
-      }
-    } else {
-      // When none are mapped: center on Sogod, Southern Leyte at zoom 12 (geocode it)
-      const query = "Sogod, Southern Leyte, Philippines";
-      const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(query)}.json?country=ph&limit=1&access_token=${mapboxgl.accessToken}`;
-
-      fetch(url)
-        .then((res) => (res.ok ? res.json() : null))
-        .then((data) => {
-          const feat = data?.features?.[0];
-          const coords = feat?.center || feat?.geometry?.coordinates;
-          if (coords && Array.isArray(coords) && coords.length === 2) {
-            map.flyTo({
-              center: coords,
-              zoom: 12,
-              duration: 900,
-            });
-          } else {
-            map.flyTo({
-              center: SOGOD_CENTER,
-              zoom: 12,
-              duration: 900,
-            });
-          }
-        })
-        .catch(() => {
-          map.flyTo({
-            center: SOGOD_CENTER,
-            zoom: 12,
-            duration: 900,
-          });
-        });
-    }
-  }, [mapLoaded, centers, isDrawing, selectedCenterProp, focusLocation]);
-
-  /*
    * Initialize Mapbox
    */
   useEffect(() => {
@@ -1913,9 +1780,9 @@ function DashboardMap({
       container: mapContainerRef.current,
       style: initialStyle,
       center: SOGOD_CENTER,
-      zoom: 12,
-      minZoom: 11,
-      maxZoom: 18.5,
+      zoom: DEFAULT_MAP_ZOOM,
+      minZoom: MIN_MAP_ZOOM,
+      maxZoom: MAX_MAP_ZOOM,
       maxBounds: SOGOD_BOUNDS,
       pitch: 0,
       bearing: 0,
@@ -1993,346 +1860,403 @@ function DashboardMap({
   }, [updateSogodBoundary, mapLoaded, styleVersion]);
 
   /*
-   * Roads
+   * Roads layer (same line style as resident map)
    */
   useEffect(() => {
     const map = mapRef.current;
 
-    if (!map || !mapLoaded || !roads || !map.isStyleLoaded()) return;
+    if (!map || !mapLoaded || !roads || !hasLoadedStyle(map)) return;
+
+    const sourceId = "roads";
+    const layerId = "roads-layer";
+
+    // Enrich road segments with is_closed and hazard_report_id from active filteredReports
+    const enrichedRoads = {
+      ...roads,
+      features: (roads.features || []).map((feat) => {
+        const props = feat.properties || {};
+        const matchedReport = findReportForRoad(props, filteredReports);
+        const isClosed =
+          props.is_closed === true ||
+          props.is_closed === "true" ||
+          Boolean(matchedReport && isBlockedRoadReport(matchedReport));
+        return {
+          ...feat,
+          properties: {
+            ...props,
+            is_closed: isClosed,
+            hazard_report_id: matchedReport?.id ?? props.hazard_report_id,
+            closure_reason: matchedReport?.report_type || props.closure_reason,
+          },
+        };
+      }),
+    };
 
     try {
-      const existingSource = map.getSource("roads");
+      if (map.getLayer("roads-open")) map.removeLayer("roads-open");
+      if (map.getLayer("roads-closed")) map.removeLayer("roads-closed");
 
+      const existingSource = map.getSource(sourceId);
       if (existingSource) {
-        existingSource.setData(roads);
-        return;
+        existingSource.setData(enrichedRoads);
+      } else {
+        map.addSource(sourceId, {
+          type: "geojson",
+          data: enrichedRoads,
+        });
       }
 
-      map.addSource("roads", {
-        type: "geojson",
-        data: roads,
-      });
+      if (!map.getLayer(layerId)) {
+        const beforeId = map.getLayer("admin-hazard-reports-layer-compact")
+          ? "admin-hazard-reports-layer-compact"
+          : map.getLayer("admin-hazard-reports-layer")
+            ? "admin-hazard-reports-layer"
+            : undefined;
 
-      map.addLayer({
-        id: "roads-open",
-        type: "line",
-        source: "roads",
-        filter: ["==", ["get", "is_closed"], false],
-        paint: {
-          "line-color": "#94a3b8",
-          "line-width": 2,
-          "line-opacity": 0.65,
-        },
-      });
+        map.addLayer(
+          {
+            id: layerId,
+            type: "line",
+            source: sourceId,
+            layout: {
+              "line-cap": "round",
+              "line-join": "round",
+            },
+            paint: {
+              "line-color": [
+                "case",
+                ["==", ["get", "is_closed"], true],
+                "#dc2626",
+                "#94a3b8",
+              ],
+              "line-width": [
+                "interpolate",
+                ["linear"],
+                ["zoom"],
+                10, ["case", ["==", ["get", "is_closed"], true], 3.5, 1],
+                14, ["case", ["==", ["get", "is_closed"], true], 4.5, 2],
+                18, ["case", ["==", ["get", "is_closed"], true], 6, 3],
+              ],
+              "line-opacity": ["case", ["==", ["get", "is_closed"], true], 1.0, 0.5],
+            },
+          },
+          beforeId
+        );
+      }
 
-      map.addLayer({
-        id: "roads-closed",
-        type: "line",
-        source: "roads",
-        filter: ["==", ["get", "is_closed"], true],
-        paint: {
-          "line-color": "#dc2626",
-          "line-width": 4,
-          "line-opacity": 0.9,
-        },
-      });
+      // Ensure hazard marker layers stay above road lines
+      try {
+        if (map.getLayer("admin-hazard-reports-layer-compact")) map.moveLayer("admin-hazard-reports-layer-compact");
+        if (map.getLayer("admin-hazard-reports-layer")) map.moveLayer("admin-hazard-reports-layer");
+      } catch {}
 
-      const handleOpenRoadClick = (e) => {
+      const handleRoadClick = (e) => {
+        if (isDrawing || drawMode !== "none") return;
+
+        const hazardLayerIds = [
+          "admin-hazard-reports-layer",
+          "admin-hazard-reports-layer-compact",
+        ].filter((id) => map.getLayer(id));
+        if (hazardLayerIds.length > 0) {
+          const hazardFeatures = map.queryRenderedFeatures(e.point, { layers: hazardLayerIds });
+          if (hazardFeatures && hazardFeatures.length > 0) return;
+        }
+
         const feature = e.features?.[0];
-
         if (!feature) return;
 
-        const name = feature.properties?.road_name || "Unnamed road";
+        const properties = feature.properties || {};
+        if (properties.is_closed) {
+          const report = findReportForRoad(properties, filteredReports) || {
+            ...properties,
+            blocks_road: true,
+            report_type: properties.closure_reason || "Road blocked",
+            hazard_type: "blockage",
+            status: "validated",
+            closed_roads: [properties.road_name || "Blocked road"],
+          };
 
-        createPopup(name, `<span style="color:#16a34a;">Open</span>`)
+          if (currentHazardPopupRef.current) {
+            try { currentHazardPopupRef.current.remove(); } catch {}
+            currentHazardPopupRef.current = null;
+          }
+
+          const popup = new mapboxgl.Popup({
+            offset: [0, -28],
+            className: "ew-popup",
+            maxWidth: "440px",
+            closeButton: false,
+            closeOnClick: true,
+          });
+
+          popup
+            .setLngLat(e.lngLat)
+            .setDOMContent(
+              createReportPopup(report, {
+                ...popupOptions,
+                onClose: () => popup.remove(),
+                popup,
+              })
+            )
+            .addTo(map);
+
+          currentHazardPopupRef.current = popup;
+          return;
+        }
+
+        const name = properties.road_name || "Unnamed road";
+        new mapboxgl.Popup({ offset: 10 })
           .setLngLat(e.lngLat)
-          .addTo(map);
-      };
-
-      const handleClosedRoadClick = (e) => {
-        const feature = e.features?.[0];
-
-        if (!feature) return;
-
-        const name = feature.properties?.road_name || "Unnamed road";
-
-        createPopup(name, `<span style="color:#dc2626;">ðŸš« Closed</span>`)
-          .setLngLat(e.lngLat)
+          .setHTML(`<strong>${name}</strong><div><span style="color:#16a34a;">Open</span></div>`)
           .addTo(map);
       };
 
       const handleMouseEnter = () => {
-        map.getCanvas().style.cursor = "pointer";
+        if (!isDrawing && drawMode === "none") map.getCanvas().style.cursor = "pointer";
       };
-
       const handleMouseLeave = () => {
-        map.getCanvas().style.cursor = "";
+        if (!isDrawing && drawMode === "none") map.getCanvas().style.cursor = "";
       };
 
-      if (map.getLayer("roads-open")) {
-        map.on("click", "roads-open", handleOpenRoadClick);
-        map.on("mouseenter", "roads-open", handleMouseEnter);
-        map.on("mouseleave", "roads-open", handleMouseLeave);
-      }
-
-      if (map.getLayer("roads-closed")) {
-        map.on("click", "roads-closed", handleClosedRoadClick);
-        map.on("mouseenter", "roads-closed", handleMouseEnter);
-        map.on("mouseleave", "roads-closed", handleMouseLeave);
-      }
+      map.on("click", layerId, handleRoadClick);
+      map.on("mouseenter", layerId, handleMouseEnter);
+      map.on("mouseleave", layerId, handleMouseLeave);
 
       return () => {
         try {
-          map.off("click", "roads-open", handleOpenRoadClick);
-          map.off("click", "roads-closed", handleClosedRoadClick);
-
-          map.off("mouseenter", "roads-open", handleMouseEnter);
-          map.off("mouseleave", "roads-open", handleMouseLeave);
-
-          map.off("mouseenter", "roads-closed", handleMouseEnter);
-          map.off("mouseleave", "roads-closed", handleMouseLeave);
-        } catch (e) {
-          // Safe ignore
-        }
+          map.off("click", layerId, handleRoadClick);
+          map.off("mouseenter", layerId, handleMouseEnter);
+          map.off("mouseleave", layerId, handleMouseLeave);
+        } catch (e) {}
       };
-    } catch (e) {
-      // Ignored during style reload
+    } catch (err) {
+      console.warn("Error updating roads layer:", err);
     }
-  }, [mapLoaded, roads, styleVersion]);
+  }, [mapLoaded, roads, filteredReports, popupOptions, isDrawing, drawMode, styleVersion]);
 
+  /*
+   * Hazard reports symbol layers (reused from resident map)
+   */
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !mapLoaded || !map.style) return;
+    if (!map || !mapLoaded || !hasLoadedStyle(map)) return;
 
+    const sourceId = "admin-hazard-reports-source";
+    const layerIdFull = "admin-hazard-reports-layer";
+    const layerIdCompact = "admin-hazard-reports-layer-compact";
+
+    // Clean up any legacy DOM markers or leftover cluster layers if present
     hazardMarkersRef.current.forEach((marker) => marker.remove());
     hazardMarkersRef.current = [];
-    if (!showReports) return;
 
-    hazardReports.forEach((report) => {
-      const lng = Number(report.longitude ?? report.lng);
-      const lat = Number(report.latitude ?? report.lat);
-      if (!Number.isFinite(lng) || !Number.isFinite(lat)) return;
+    try {
+      if (map.getLayer("admin-hazard-cluster-count")) map.removeLayer("admin-hazard-cluster-count");
+      if (map.getLayer("admin-hazard-clusters")) map.removeLayer("admin-hazard-clusters");
+    } catch {}
 
-      const element = createReportMarker(report);
-      if (drawMode !== "none") element.style.pointerEvents = "none";
+    const features = [];
+    const seenReportIds = new Set();
 
-      const marker = new mapboxgl.Marker({ element, anchor: "bottom" })
-        .setLngLat([lng, lat])
-        .setPopup(
-          new mapboxgl.Popup({
-            offset: [0, -52],
-            className: "ew-popup",
-            maxWidth: "290px",
-          }).setDOMContent(createReportPopup(report))
-        )
-        .addTo(map);
-      hazardMarkersRef.current.push(marker);
+    // Group strictly by hazard report ID: exactly one marker per hazard report
+    (filteredReports || []).forEach((report) => {
+      if (!report || report.id == null) return;
+      const reportIdStr = String(report.id);
+      if (seenReportIds.has(reportIdStr)) return;
+      seenReportIds.add(reportIdStr);
+
+      const blocked = isBlockedRoadReport(report);
+      let coords = null;
+
+      if (blocked) {
+        coords = getReportBlockedRoadMidpoint(report, roads?.features);
+      }
+
+      if (!coords) {
+        const lng = Number(report.longitude ?? report.lng);
+        const lat = Number(report.latitude ?? report.lat);
+        if (Number.isFinite(lng) && Number.isFinite(lat)) {
+          coords = [lng, lat];
+        }
+      }
+
+      if (!coords) return;
+
+      const labelText = blocked ? "Road blocked" : report.report_type || "Hazard";
+      const iconDef = blocked ? faBan : faTriangleExclamation;
+      const iconNameFull = ensureHazardImage(map, blocked, labelText, iconDef, true);
+      const iconNameCompact = ensureHazardImage(map, blocked, labelText, iconDef, false);
+
+      features.push({
+        type: "Feature",
+        geometry: {
+          type: "Point",
+          coordinates: coords,
+        },
+        properties: {
+          id: report.id,
+          icon_name_full: iconNameFull,
+          icon_name_compact: iconNameCompact,
+          is_blocked: blocked,
+          report_type: report.report_type || "",
+          status: report.status || "validated",
+          road_name: report.road_name || (Array.isArray(report.closed_roads) ? report.closed_roads.join(", ") : ""),
+        },
+      });
+    });
+
+    console.log(
+      `[Hazard Reports] Total fetched: ${hazardReports?.length || 0}, Active/Filtered: ${filteredReports.length}, Markers drawn: ${features.length}`
+    );
+
+    const geojsonData = {
+      type: "FeatureCollection",
+      features,
+    };
+
+    try {
+      const existingSource = map.getSource(sourceId);
+      if (existingSource) {
+        if (existingSource.cluster) {
+          try {
+            if (map.getLayer(layerIdFull)) map.removeLayer(layerIdFull);
+            if (map.getLayer(layerIdCompact)) map.removeLayer(layerIdCompact);
+            map.removeSource(sourceId);
+          } catch {}
+          map.addSource(sourceId, {
+            type: "geojson",
+            data: geojsonData,
+          });
+        } else {
+          existingSource.setData(geojsonData);
+        }
+      } else {
+        map.addSource(sourceId, {
+          type: "geojson",
+          data: geojsonData,
+        });
+      }
+
+      // Compact layer (< 15.0): icon only, no label, no filter
+      if (!map.getLayer(layerIdCompact)) {
+        map.addLayer({
+          id: layerIdCompact,
+          type: "symbol",
+          source: sourceId,
+          maxzoom: 15.0,
+          layout: {
+            "icon-image": ["get", "icon_name_compact"],
+            "icon-anchor": "center",
+            "icon-size": 1.0,
+            "icon-allow-overlap": true,
+            "icon-ignore-placement": true,
+            "icon-padding": 0,
+            "visibility": "visible",
+          },
+        });
+      } else {
+        map.setLayoutProperty(layerIdCompact, "visibility", "visible");
+      }
+
+      // Full layer (>= 15.0): icon + label, no filter
+      if (!map.getLayer(layerIdFull)) {
+        map.addLayer({
+          id: layerIdFull,
+          type: "symbol",
+          source: sourceId,
+          minzoom: 15.0,
+          layout: {
+            "icon-image": ["get", "icon_name_full"],
+            "icon-anchor": "center",
+            "icon-size": 1.0,
+            "icon-allow-overlap": true,
+            "icon-ignore-placement": true,
+            "icon-padding": 0,
+            "visibility": "visible",
+          },
+        });
+      } else {
+        map.setLayoutProperty(layerIdFull, "visibility", "visible");
+      }
+
+      try {
+        if (map.getLayer(layerIdCompact)) map.moveLayer(layerIdCompact);
+        if (map.getLayer(layerIdFull)) map.moveLayer(layerIdFull);
+      } catch {}
+    } catch (err) {
+      console.warn("Error updating hazard reports layer:", err);
+    }
+
+    function handleHazardSymbolClick(e) {
+      if (isDrawing || drawMode !== "none") return;
+      const feature = e.features?.[0];
+      if (!feature) return;
+      const reportId = feature.properties?.id;
+
+      let targetReport = filteredReports.find((r) => String(r.id) === String(reportId));
+      if (!targetReport && feature.properties?.is_blocked) {
+        targetReport = {
+          id: reportId,
+          report_type: feature.properties.report_type || "Road blocked",
+          hazard_type: "blockage",
+          blocks_road: true,
+          status: "validated",
+          road_name: feature.properties.road_name || "Blocked road",
+          closed_roads: [feature.properties.road_name || "Blocked road"],
+        };
+      }
+      if (!targetReport) return;
+
+      const coords = feature.geometry?.coordinates || [e.lngLat.lng, e.lngLat.lat];
+
+      if (currentHazardPopupRef.current) {
+        try { currentHazardPopupRef.current.remove(); } catch {}
+        currentHazardPopupRef.current = null;
+      }
+
+      const popup = new mapboxgl.Popup({
+        offset: [0, -28],
+        className: "ew-popup",
+        maxWidth: "440px",
+        closeButton: false,
+        closeOnClick: true,
+      });
+
+      const content = createReportPopup(targetReport, {
+        ...popupOptions,
+        onClose: () => popup.remove(),
+        popup,
+      });
+
+      popup.setLngLat(coords).setDOMContent(content).addTo(map);
+      currentHazardPopupRef.current = popup;
+    }
+
+    function handleMouseEnter() {
+      if (!isDrawing && drawMode === "none") map.getCanvas().style.cursor = "pointer";
+    }
+
+    function handleMouseLeave() {
+      if (!isDrawing && drawMode === "none") map.getCanvas().style.cursor = "";
+    }
+
+    [layerIdCompact, layerIdFull].forEach((layerId) => {
+      try {
+        map.on("mouseenter", layerId, handleMouseEnter);
+        map.on("mouseleave", layerId, handleMouseLeave);
+        map.on("click", layerId, handleHazardSymbolClick);
+      } catch {}
     });
 
     return () => {
-      hazardMarkersRef.current.forEach((marker) => marker.remove());
-      hazardMarkersRef.current = [];
-    };
-  }, [mapLoaded, hazardReports, showReports, drawMode, styleVersion]);
-
-  /*
-   * Hazard zones
-   */
-  useEffect(() => {
-    const map = mapRef.current;
-
-    if (!map || !mapLoaded || !hazardZones || !map.isStyleLoaded()) return;
-
-    try {
-      const filtered = {
-        ...hazardZones,
-        features: (hazardZones.features || []).filter(
-          (feature) => visibleLayers[feature.properties?.hazard_type] === true
-        ),
-      };
-
-      const source = map.getSource("hazard-zones");
-
-      if (source) {
-        source.setData(filtered);
-        return;
-      }
-
-      map.addSource("hazard-zones", {
-        type: "geojson",
-        data: filtered,
-      });
-
-      map.addLayer({
-        id: "hazard-zones-fill",
-        type: "fill",
-        source: "hazard-zones",
-        paint: {
-          "fill-color": [
-            "match",
-            ["get", "hazard_type"],
-            "flood",
-            "#0a9fb5",
-            "landslide",
-            "#8b5e34",
-            "#c8372d",
-          ],
-          "fill-opacity": [
-            "match", ["get", "risk_level"],
-            "high", 0.34,
-            "medium", 0.25,
-            0.18,
-          ],
-        },
-      });
-
-      map.addLayer({
-        id: "hazard-zones-line",
-        type: "line",
-        source: "hazard-zones",
-        paint: {
-          "line-color": [
-            "match",
-            ["get", "hazard_type"],
-            "flood",
-            "#087e99",
-            "landslide",
-            "#684323",
-            "#a82e27",
-          ],
-          "line-width": 2.5,
-        },
-      });
-
-      map.addLayer({
-        id: "hazard-zones-labels",
-        type: "symbol",
-        source: "hazard-zones",
-        minzoom: 10,
-        maxzoom: 14,
-        layout: {
-          "text-field": [
-            "concat",
-            ["case", ["==", ["get", "hazard_type"], "flood"], "Flood zone", "Landslide zone"],
-            " Â· ",
-            ["to-string", ["get", "risk_level"]],
-          ],
-          "text-font": ["Open Sans Semibold", "Arial Unicode MS Regular"],
-          "text-size": 12,
-          "text-max-width": 12,
-          "text-padding": 8,
-          "text-allow-overlap": false,
-          "text-ignore-placement": false,
-        },
-        paint: {
-          "text-color": [
-            "match", ["get", "hazard_type"],
-            "flood", "#075b70",
-            "landslide", "#553719",
-            "#81251f",
-          ],
-          "text-halo-color": "#ffffff",
-          "text-halo-width": 1.5,
-        },
-      });
-    } catch (e) {
-      // Ignored during style reload
-    }
-  }, [mapLoaded, hazardZones, visibleLayers, styleVersion]);
-
-  useEffect(() => {
-    const map = mapRef.current;
-
-    if (!map || !mapLoaded || !hazardZones) return;
-
-    try {
-      hazardMarkersRef.current.forEach((marker) => marker.remove());
-      hazardMarkersRef.current = [];
-
-      const visibleFeatures = (hazardZones.features || []).filter(
-        (feature) => visibleLayers[feature.properties?.hazard_type] === true
-      );
-
-      visibleFeatures.forEach((feature) => {
-        const bounds = getGeometryBounds(feature.geometry);
-        if (!bounds) return;
-
-        const coordinates = [
-          (bounds[0][0] + bounds[1][0]) / 2,
-          (bounds[0][1] + bounds[1][1]) / 2,
-        ];
-        const properties = feature.properties || {};
-        const hazardType = String(properties.hazard_type || "hazard").toLowerCase();
-        const riskLevel = String(properties.risk_level || "unknown").toLowerCase();
-        const element = document.createElement("button");
-        element.type = "button";
-        element.className = `dashboard-hazard-marker risk-${riskLevel}`;
-        element.setAttribute(
-          "aria-label",
-          `View ${hazardType} hazard: ${properties.name || "Hazard zone"}`
-        );
-
-        const badge = document.createElement("span");
-        badge.className = "dashboard-hazard-marker-icon";
-        badge.innerHTML = icon(
-          hazardType === "flood" ? faWater : hazardType === "landslide" ? faMountain : faTriangleExclamation
-        ).html.join("");
-
-        const label = document.createElement("span");
-        label.className = "dashboard-hazard-marker-label";
-        label.textContent = properties.name || `${hazardType} hazard`;
-        element.append(badge, label);
-
-        const marker = new mapboxgl.Marker({ element, anchor: "bottom" })
-          .setLngLat(coordinates)
-          .setPopup(
-            new mapboxgl.Popup({ offset: 12 }).setDOMContent(
-              createHazardPopup(properties)
-            )
-          )
-          .addTo(map);
-
-        hazardMarkersRef.current.push(marker);
-      });
-
-      const handleHazardClick = (event) => {
-        const feature = event.features?.[0];
-        if (!feature) return;
-
-        new mapboxgl.Popup({ offset: 10 })
-          .setLngLat(event.lngLat)
-          .setDOMContent(createHazardPopup(feature.properties || {}))
-          .addTo(map);
-      };
-
-      const handleMouseEnter = () => {
-        map.getCanvas().style.cursor = "pointer";
-      };
-      const handleMouseLeave = () => {
-        map.getCanvas().style.cursor = "";
-      };
-
-      if (map.getLayer("hazard-zones-fill")) {
-        map.on("click", "hazard-zones-fill", handleHazardClick);
-        map.on("mouseenter", "hazard-zones-fill", handleMouseEnter);
-        map.on("mouseleave", "hazard-zones-fill", handleMouseLeave);
-      }
-
-      return () => {
+      [layerIdCompact, layerIdFull].forEach((layerId) => {
         try {
-          hazardMarkersRef.current.forEach((marker) => marker.remove());
-          hazardMarkersRef.current = [];
-          map.off("click", "hazard-zones-fill", handleHazardClick);
-          map.off("mouseenter", "hazard-zones-fill", handleMouseEnter);
-          map.off("mouseleave", "hazard-zones-fill", handleMouseLeave);
-        } catch (e) {
-          // Safe ignore
-        }
-      };
-    } catch (e) {
-      // Ignored during style reload
-    }
-  }, [mapLoaded, hazardZones, visibleLayers, styleVersion]);
+          map.off("mouseenter", layerId, handleMouseEnter);
+          map.off("mouseleave", layerId, handleMouseLeave);
+          map.off("click", layerId, handleHazardSymbolClick);
+        } catch {}
+      });
+    };
+  }, [mapLoaded, filteredReports, roads, isDrawing, drawMode, popupOptions, styleVersion]);
 
   /*
    * Evacuation centers
@@ -2592,20 +2516,31 @@ function DashboardMap({
 
       const element = document.createElement("button");
       element.type = "button";
-      element.className = `evacway-center-marker ${isSelected ? "is-selected" : ""}`;
+      element.className = `evacway-center-marker show-label ${isSelected ? "is-selected" : ""}`;
       element.setAttribute(
         "aria-label",
         `Evacuation Center: ${props.name || "Center"}, ${occStatus.percent}% occupied (${occStatus.statusText})`
       );
 
       const pin = document.createElement("span");
-      pin.className = "evacway-center-pin";
+      pin.className = "evacway-center-icon";
+      pin.style.setProperty("--pin-bg", occStatus.color);
       pin.style.backgroundColor = occStatus.color;
       pin.innerHTML = icon(faBuildingColumns).html.join("");
 
       const label = document.createElement("span");
       label.className = "evacway-center-label";
-      label.textContent = props.name || "Evacuation Center";
+
+      const dot = document.createElement("span");
+      dot.className = "evacway-center-label-dot";
+      dot.style.backgroundColor = occStatus.color;
+
+      const text = document.createElement("span");
+      text.className = "evacway-center-label-text";
+      text.textContent = props.name || "Evacuation Center";
+
+      label.appendChild(dot);
+      label.appendChild(text);
 
       element.appendChild(pin);
       element.appendChild(label);
@@ -2622,7 +2557,7 @@ function DashboardMap({
 
       const marker = new mapboxgl.Marker({
         element,
-        anchor: "center",
+        anchor: "bottom",
       })
         .setLngLat([coords.longitude, coords.latitude])
         .addTo(map);
@@ -4022,23 +3957,6 @@ function DashboardMap({
         )
       : 0;
 
-  /*
-   * Layer buttons
-   */
-  function toggleFlood() {
-    setVisibleLayers((current) => ({
-      ...current,
-      flood: !current.flood,
-    }));
-  }
-
-  function toggleLandslide() {
-    setVisibleLayers((current) => ({
-      ...current,
-      landslide: !current.landslide,
-    }));
-  }
-
   return (
     <div className="dashboard-map">
       <div ref={mapContainerRef} className="dashboard-map-container" />
@@ -4160,189 +4078,55 @@ function DashboardMap({
         </>
       )}
 
-      {/* TOP RIGHT: Single Layers button + Popover with 3 switches & legend (Hidden while drawing) */}
+      {/* RIGHT CONTROL STACK: Full view, My location, Map/Satellite, Help */}
       {!isDrawing && (
-        <div className="map-top-right-layers">
+        <div className="right-control-stack" role="group" aria-label="Map controls">
           {topRightSlot}
-          <div className="map-layers-trigger-wrap">
-            <button
-              type="button"
-              className={`map-layers-trigger-btn ${activeLayerCount > 0 ? "has-active" : ""}`}
-              onClick={() => setLayersMenuOpen((open) => !open)}
-              aria-expanded={layersMenuOpen}
-              aria-label="Toggle map hazard layers and legend"
-              title="Hazard Layers"
-            >
-              <FontAwesomeIcon icon={faLayerGroup} />
-              <span>Layers</span>
-              {activeLayerCount > 0 && (
-                <span className="map-layers-badge">{activeLayerCount}</span>
-              )}
-            </button>
 
-            {layersMenuOpen && (
-              <div className="map-layers-popover" role="dialog" aria-label="Hazard Layers and Legend">
-                <div className="map-layers-popover-header">
-                  <h4>Hazard Layers</h4>
-                  <button
-                    type="button"
-                    className="map-layers-close-btn"
-                    onClick={() => setLayersMenuOpen(false)}
-                    aria-label="Close layers menu"
-                  >
-                    <FontAwesomeIcon icon={faXmark} />
-                  </button>
-                </div>
-
-                <div className="map-layers-list">
-                  {/* Flood Switch */}
-                  <label className="map-layer-row">
-                    <div className="map-layer-info">
-                      <span className="map-layer-indicator flood-indicator" />
-                      <div className="map-layer-texts">
-                        <strong>Flood Hazard</strong>
-                        <small>MGB high/medium/low flood risk</small>
-                      </div>
-                    </div>
-                    <input
-                      type="checkbox"
-                      className="map-switch"
-                      checked={visibleLayers.flood}
-                      onChange={toggleFlood}
-                    />
-                  </label>
-
-                  {/* Landslide Switch */}
-                  <label className="map-layer-row">
-                    <div className="map-layer-info">
-                      <span className="map-layer-indicator landslide-indicator" />
-                      <div className="map-layer-texts">
-                        <strong>Landslide Hazard</strong>
-                        <small>Rain-induced susceptibility zones</small>
-                      </div>
-                    </div>
-                    <input
-                      type="checkbox"
-                      className="map-switch"
-                      checked={visibleLayers.landslide}
-                      onChange={toggleLandslide}
-                    />
-                  </label>
-
-                  {/* Hazard Reports Switch */}
-                  <label className="map-layer-row">
-                    <div className="map-layer-info">
-                      <span className="map-layer-indicator reports-indicator" />
-                      <div className="map-layer-texts">
-                        <strong>Hazard Reports</strong>
-                        <small>Validated community alerts ({hazardReports.length})</small>
-                      </div>
-                    </div>
-                    <input
-                      type="checkbox"
-                      className="map-switch"
-                      checked={showReports}
-                      onChange={() => setShowReports((v) => !v)}
-                    />
-                  </label>
-                </div>
-
-                {/* Legend section */}
-                <div className="map-layers-legend">
-                  <span className="map-legend-title">Legend</span>
-                  <div className="map-legend-items">
-                    <div className="map-legend-item">
-                      <span className="legend-swatch swatch-flood" />
-                      <span>Flood zone</span>
-                    </div>
-                    <div className="map-legend-item">
-                      <span className="legend-swatch swatch-landslide" />
-                      <span>Landslide zone</span>
-                    </div>
-                    <div className="map-legend-item">
-                      <span className="legend-swatch swatch-report" />
-                      <span>Active report</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* BOTTOM RIGHT: Zoom (+/-), Compass, My Location, and Map/Satellite Toggle (Hidden while drawing) */}
-      {!isDrawing && (
-        <div className="map-bottom-right-controls" role="toolbar" aria-label="Map Controls">
-          {/* Zoom & Compass group */}
-          {!hideZoomControls && (
-            <div className="map-control-btn-group" role="group" aria-label="Zoom and bearing">
-              <button
-                type="button"
-                className="map-ctrl-btn"
-                onClick={() => mapRef.current?.zoomIn()}
-                title="Zoom In"
-                aria-label="Zoom in"
-              >
-                <FontAwesomeIcon icon={faPlus} />
-              </button>
-              <button
-                type="button"
-                className="map-ctrl-btn"
-                onClick={() => mapRef.current?.zoomOut()}
-                title="Zoom Out"
-                aria-label="Zoom out"
-              >
-                <FontAwesomeIcon icon={faMinus} />
-              </button>
-              <button
-                type="button"
-                className="map-ctrl-btn"
-                onClick={() => mapRef.current?.resetNorthPitch({ duration: 300 })}
-                title="Reset Compass (Facing North)"
-                aria-label="Reset compass"
-              >
-                <FontAwesomeIcon icon={faCompass} />
-              </button>
-            </div>
-          )}
-
-          {/* My Location Button */}
+          {/* My location button */}
           <button
             type="button"
-            className="map-ctrl-btn map-my-loc-btn"
+            className="control-stack-btn"
             onClick={handleMyLocation}
-            title="Fly to My Current Location"
             disabled={locatingUser}
+            title="My location"
             aria-label="My location"
           >
             <FontAwesomeIcon icon={faLocationCrosshairs} spin={locatingUser} />
-            <span className="map-loc-label">My location</span>
           </button>
 
-          {/* Map / Satellite Toggle */}
-          <div className="map-style-toggle-pill" role="group" aria-label="Base map style">
-            <button
-              type="button"
-              className={`map-style-btn ${mapStyle === "streets" ? "is-active" : ""}`}
-              onClick={() => changeMapStyle("streets")}
-              title="Standard Streets Map"
-            >
-              <FontAwesomeIcon icon={faMap} />
-              <span>Map</span>
-            </button>
-            <button
-              type="button"
-              className={`map-style-btn ${mapStyle === "satellite" ? "is-active" : ""}`}
-              onClick={() => changeMapStyle("satellite")}
-              title="Satellite Streets Map"
-            >
-              <FontAwesomeIcon icon={faSatellite} />
-              <span>Satellite</span>
-            </button>
-          </div>
+          {/* Map / Satellite toggle */}
+          <button
+            type="button"
+            onClick={() => changeMapStyle(mapStyle === "streets" ? "satellite" : "streets")}
+            className={`control-stack-btn ${mapStyle === "satellite" ? "active" : ""}`}
+            title={mapStyle === "streets" ? "Switch to satellite" : "Switch to street map"}
+            aria-label={mapStyle === "streets" ? "Switch to satellite" : "Switch to street map"}
+            aria-pressed={mapStyle === "satellite"}
+          >
+            <FontAwesomeIcon icon={faSatelliteDish} />
+          </button>
+
+          {/* What do the icons mean? */}
+          <button
+            type="button"
+            onClick={() => setHelpOpen((o) => !o)}
+            className={`control-stack-btn ${helpOpen ? "active" : ""}`}
+            title="What do the icons mean?"
+            aria-label="What do the icons mean?"
+            aria-expanded={helpOpen}
+          >
+            <FontAwesomeIcon icon={faCircleQuestion} />
+          </button>
         </div>
       )}
+
+      {/* "What do the icons mean?" Modal */}
+      <IconLegendModal
+        isOpen={helpOpen}
+        onClose={() => setHelpOpen(false)}
+        isMobile={typeof window !== "undefined" && window.innerWidth <= 768}
+      />
 
       {/* =====================================================
           ROOM DETAILS

@@ -1,69 +1,238 @@
 /* ==========================================================================
-   1. LOAD CHOREOGRAPHY
+   FINAL STATIC STATE (Default & prefers-reduced-motion: reduce)
    ========================================================================== */
-.ew-header {
-  animation: ew-fade-in 0.3s ease-out both;
-}
-
-.ew-hero-copy > * {
-  animation: ew-rise 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
-}
-
-.ew-hero-copy > :nth-child(1) {
-  animation-delay: 0.08s;
-}
-
-.ew-hero-copy > :nth-child(2) {
-  animation-delay: 0.16s;
-}
-
-.ew-hero-copy > :nth-child(3) {
-  animation-delay: 0.24s;
-}
-
-.ew-hero-copy > :nth-child(4) {
-  animation-delay: 0.32s;
-}
-
-.ew-map-wrap {
+.m-route-initial {
   opacity: 0;
-  animation: ew-fade-in 0.65s ease-out 0.2s forwards;
+  stroke-dashoffset: 1;
 }
 
-/* Route draws in over 2.4s starting at 0.6s */
-.m-route {
-  animation: ew-draw 2.4s cubic-bezier(0.45, 0, 0.25, 1) 0.6s forwards;
+.m-route-detour {
+  opacity: 1;
+  stroke-dashoffset: 0;
 }
 
-.m-center-g {
+.m-closed-marker {
+  opacity: 1;
+  transform: none;
+}
+
+.m-center-ring {
   opacity: 0;
-  animation: ew-fade-in 0.45s ease-out 2.3s forwards;
-}
-
-.ew-svg-chip {
-  opacity: 0;
-  animation: ew-fade-in 0.45s ease-out forwards;
 }
 
 .ew-svg-chip-a {
-  animation-delay: 1.0s;
+  opacity: 0;
 }
 
-.ew-svg-chip-b {
-  animation-delay: 1.4s;
-}
-
+.ew-svg-chip-b,
 .ew-svg-chip-c {
-  animation-delay: 2.4s;
+  opacity: 1;
 }
 
-@keyframes ew-fade-in {
-  from {
+.m-flow,
+.m-rain,
+.m-walker {
+  display: none;
+}
+
+.ew-reveal {
+  opacity: 1;
+  transform: none;
+}
+
+/* ==========================================================================
+   MOTION (Only when prefers-reduced-motion: no-preference)
+   Animates transform, opacity, and stroke-dashoffset only.
+   ========================================================================== */
+@media (prefers-reduced-motion: no-preference) {
+  /* 1. Load entrance */
+  .ew-header {
+    animation: ew-fade-in 0.3s ease-out both;
+  }
+
+  .ew-hero-copy > * {
+    animation: ew-rise 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  .ew-hero-copy > :nth-child(1) { animation-delay: 0.08s; }
+  .ew-hero-copy > :nth-child(2) { animation-delay: 0.16s; }
+  .ew-hero-copy > :nth-child(3) { animation-delay: 0.24s; }
+  .ew-hero-copy > :nth-child(4) { animation-delay: 0.32s; }
+  .ew-hero-copy > :nth-child(5) { animation-delay: 0.40s; }
+
+  .ew-map-wrap {
     opacity: 0;
+    animation: ew-fade-in 0.65s ease-out 0.15s forwards;
   }
-  to {
+
+  /* 2. 10s Hero Loop (8s sequence + 2s pause), paused when offscreen or hidden */
+  .ew-stage.ew-hero-paused * {
+    animation-play-state: paused !important;
+  }
+
+  /* a. Initial route draws 0s -> 2.4s, fades out at 2.6s -> 3.2s */
+  .m-route-initial {
+    animation: ew-initial-route-loop 10s cubic-bezier(0.45, 0, 0.25, 1) infinite;
+  }
+
+  /* b. You-are-here pulses softly the whole time */
+  .ew-node-halo,
+  .m-pulse,
+  .s-pulse {
+    animation: ew-halo-pulse 3s ease-in-out infinite;
+  }
+
+  /* c. Closed road marker pops in at 2.5s */
+  .m-closed-marker {
+    transform-box: fill-box;
+    transform-origin: center;
+    animation: ew-closed-marker-loop 10s ease-out infinite;
+  }
+
+  .m-closed {
+    animation: ew-march 1.8s linear infinite;
+  }
+
+  /* c2. Detour safe route fades in and draws 3.2s -> 6.0s, holds through 8s+2s pause */
+  .m-route-detour-wrap {
+    animation: ew-detour-wrap-loop 10s ease-out infinite;
+  }
+
+  .m-route-detour {
+    animation: ew-detour-draw-loop 10s cubic-bezier(0.45, 0, 0.25, 1) infinite;
+  }
+
+  /* d. Evacuation center single pulse when detour arrives (~6.0s) */
+  .m-center-ring {
+    animation: ew-center-arrive-ring 10s ease-out infinite;
+  }
+
+  /* Labels: max 2 visible at a time, fading cleanly */
+  .ew-svg-chip-a {
+    animation: ew-chip-a-loop 10s ease-out infinite;
+  }
+
+  .ew-svg-chip-b {
+    animation: ew-chip-b-loop 10s ease-out infinite;
+  }
+
+  .ew-svg-chip-c {
+    animation: ew-chip-c-loop 10s ease-out infinite;
+  }
+
+  .m-ripples path {
+    fill: none;
+    stroke: rgba(14, 159, 154, 0.45);
+    stroke-width: 1.2;
+    animation: ew-ripple 7s linear infinite;
+  }
+
+  .s-route {
+    fill: none;
+    stroke: var(--ew-blue-600);
+    stroke-width: 2.2;
+    stroke-linecap: round;
+    stroke-dasharray: 4 4;
+    animation: ew-dash 1.4s linear infinite;
+  }
+
+  /* 3. Scroll fade-up (400ms) + 80ms stagger between sibling cards */
+  .ew-reveal {
+    opacity: 0;
+    transform: translateY(16px);
+    transition: opacity 400ms ease-out, transform 400ms ease-out;
+  }
+
+  .ew-reveal.ew-visible {
     opacity: 1;
+    transform: none;
   }
+
+  .ew-reveal .ew-stagger-item {
+    opacity: 0;
+    transform: translateY(16px);
+    transition:
+      opacity 400ms ease-out calc(var(--ew-stagger, 0) * 80ms),
+      transform 400ms ease-out calc(var(--ew-stagger, 0) * 80ms);
+  }
+
+  .ew-reveal.ew-visible .ew-stagger-item {
+    opacity: 1;
+    transform: none;
+  }
+
+  /* "Three steps" sequential highlight (01 -> 02 -> 03 -> settle) */
+  .ew-steps.ew-visible .ew-step:nth-child(1)::after {
+    animation: ew-step-pulse 0.75s ease-in-out 0.35s 1;
+  }
+  .ew-steps.ew-visible .ew-step:nth-child(2)::after {
+    animation: ew-step-pulse 0.75s ease-in-out 1.15s 1;
+  }
+  .ew-steps.ew-visible .ew-step:nth-child(3)::after {
+    animation: ew-step-pulse 0.75s ease-in-out 1.95s 1;
+  }
+
+  .ew-steps.ew-visible .ew-step:nth-child(1) .ew-step-n {
+    animation: ew-badge-pop 0.75s ease-in-out 0.35s 1;
+  }
+  .ew-steps.ew-visible .ew-step:nth-child(2) .ew-step-n {
+    animation: ew-badge-pop 0.75s ease-in-out 1.15s 1;
+  }
+  .ew-steps.ew-visible .ew-step:nth-child(3) .ew-step-n {
+    animation: ew-badge-pop 0.75s ease-in-out 1.95s 1;
+  }
+
+  /* 4. Interactive Legend Sample Map & Skeleton */
+  .ew-legend-sym {
+    transition: opacity 220ms ease-out, transform 220ms ease-out;
+  }
+
+  .ew-status-skel-num,
+  .ew-status-skel-lbl {
+    animation: ew-skel-pulse 1.5s ease-in-out infinite;
+  }
+
+  /* 5. Hover & Press Feedback */
+  .ew-btn {
+    transition: transform 160ms ease-out, opacity 160ms ease-out;
+  }
+
+  .ew-btn:active {
+    transform: scale(0.98);
+  }
+
+  .ew-btn-primary .ew-btn-chevron {
+    transition: transform 200ms ease-out;
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .ew-step,
+    .ew-key-item {
+      transition: transform 220ms ease-out, opacity 220ms ease-out;
+    }
+
+    .ew-step:hover,
+    .ew-key-item:hover {
+      transform: translateY(-2px);
+      box-shadow: var(--ew-shadow-soft);
+    }
+
+    .ew-btn-primary:hover .ew-btn-chevron {
+      transform: translateX(3px);
+    }
+  }
+
+  .ew-dialog[open] {
+    animation: ew-pop 0.22s ease-out;
+  }
+}
+
+/* ==========================================================================
+   KEYFRAMES (GPU transform, opacity, stroke-dashoffset only)
+   ========================================================================== */
+@keyframes ew-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 @keyframes ew-rise {
@@ -77,60 +246,108 @@
   }
 }
 
-@keyframes ew-draw {
-  to {
+@keyframes ew-initial-route-loop {
+  0% {
+    opacity: 0;
+    stroke-dashoffset: 1;
+  }
+  4% {
+    opacity: 1;
+    stroke-dashoffset: 1;
+  }
+  24% {
+    opacity: 1;
+    stroke-dashoffset: 0;
+  }
+  32% {
+    opacity: 0;
+    stroke-dashoffset: 0;
+  }
+  100% {
+    opacity: 0;
     stroke-dashoffset: 0;
   }
 }
 
-/* ==========================================================================
-   2. AMBIENT CALM MOTION
-   ========================================================================== */
-.ew-node-halo,
-.m-pulse,
-.s-pulse {
-  animation: ew-halo-pulse 3s ease-in-out infinite;
+@keyframes ew-closed-marker-loop {
+  0%, 24% {
+    opacity: 0;
+    transform: scale(0.7);
+  }
+  28% {
+    opacity: 1;
+    transform: scale(1.06);
+  }
+  32%, 90% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  96%, 100% {
+    opacity: 0;
+    transform: scale(0.9);
+  }
 }
 
-.m-flow {
-  fill: none;
-  stroke: #FFFFFF;
-  stroke-width: 2;
-  stroke-linecap: round;
-  stroke-dasharray: 0.08 0.92;
-  stroke-dashoffset: 1;
-  opacity: 0;
-  animation:
-    ew-fade-in 0.4s ease-out 2.8s forwards,
-    ew-route-highlight 5s linear 2.8s infinite;
+@keyframes ew-detour-wrap-loop {
+  0%, 30% {
+    opacity: 0;
+  }
+  34%, 90% {
+    opacity: 1;
+  }
+  96%, 100% {
+    opacity: 0;
+  }
 }
 
-.m-walker {
-  fill: #FFFFFF;
-  stroke: #1D5ED8;
-  stroke-width: 2.5;
+@keyframes ew-detour-draw-loop {
+  0%, 32% {
+    stroke-dashoffset: 1;
+  }
+  60%, 100% {
+    stroke-dashoffset: 0;
+  }
 }
 
-.m-ripples path {
-  fill: none;
-  stroke: rgba(14, 159, 154, 0.45);
-  stroke-width: 1.2;
-  animation: ew-ripple 7s linear infinite;
+@keyframes ew-center-arrive-ring {
+  0%, 58% {
+    opacity: 0;
+    transform: scale(0.75);
+  }
+  62% {
+    opacity: 0.75;
+    transform: scale(0.95);
+  }
+  74% {
+    opacity: 0;
+    transform: scale(1.65);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.65);
+  }
 }
 
-.m-closed {
-  animation: ew-march 1.8s linear infinite;
+@keyframes ew-chip-a-loop {
+  0%, 6% { opacity: 0; }
+  10%, 26% { opacity: 1; }
+  32%, 100% { opacity: 0; }
 }
 
-.ew-cloud,
-.ew-wave,
-.m-rain {
-  display: none;
+@keyframes ew-chip-b-loop {
+  0%, 25% { opacity: 0; }
+  30%, 88% { opacity: 1; }
+  94%, 100% { opacity: 0; }
+}
+
+@keyframes ew-chip-c-loop {
+  0%, 60% { opacity: 0; }
+  65%, 90% { opacity: 1; }
+  96%, 100% { opacity: 0; }
 }
 
 @keyframes ew-halo-pulse {
-  0%,
-  100% {
+  0%, 100% {
     transform: scale(0.9);
     opacity: 0.8;
   }
@@ -140,71 +357,31 @@
   }
 }
 
-@keyframes ew-route-highlight {
-  from {
-    stroke-dashoffset: 1;
-  }
-  to {
-    stroke-dashoffset: 0;
-  }
+@keyframes ew-step-pulse {
+  0%, 100% { opacity: 0; }
+  35%, 65% { opacity: 1; }
+}
+
+@keyframes ew-badge-pop {
+  0%, 100% { transform: scale(1); }
+  35%, 65% { transform: scale(1.12); }
+}
+
+@keyframes ew-skel-pulse {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 1; }
 }
 
 @keyframes ew-ripple {
-  to {
-    transform: translateX(40px);
-  }
+  to { transform: translateX(40px); }
 }
 
 @keyframes ew-march {
-  to {
-    stroke-dashoffset: -11;
-  }
-}
-
-/* ==========================================================================
-   3. SCROLL FADE-UP & STEP ICON MOTION
-   ========================================================================== */
-.ew-reveal {
-  opacity: 0;
-  transform: translateY(16px);
-  transition: opacity 0.4s ease-out, transform 0.4s ease-out;
-}
-
-.ew-reveal.ew-visible {
-  opacity: 1;
-  transform: none;
-}
-
-.s-pulse {
-  fill: rgba(35, 98, 199, 0.2);
-  transform-box: fill-box;
-  transform-origin: center;
-}
-
-.s-flood {
-  fill: none;
-  stroke: var(--flood);
-  stroke-width: 2;
-  stroke-linecap: round;
-}
-
-.s-route {
-  fill: none;
-  stroke: var(--ew-blue-600);
-  stroke-width: 2.2;
-  stroke-linecap: round;
-  stroke-dasharray: 4 4;
-  animation: ew-dash 1.4s linear infinite;
+  to { stroke-dashoffset: -11; }
 }
 
 @keyframes ew-dash {
-  to {
-    stroke-dashoffset: -8;
-  }
-}
-
-.ew-dialog[open] {
-  animation: ew-pop 0.22s ease-out;
+  to { stroke-dashoffset: -8; }
 }
 
 @keyframes ew-pop {
@@ -215,48 +392,5 @@
   to {
     opacity: 1;
     transform: none;
-  }
-}
-
-/* ==========================================================================
-   4. REDUCED MOTION OVERRIDE
-   ========================================================================== */
-@media (prefers-reduced-motion: reduce) {
-  .ew-header,
-  .ew-hero-copy > *,
-  .ew-map-wrap,
-  .m-route,
-  .m-center-g,
-  .ew-svg-chip,
-  .ew-node-halo,
-  .m-pulse,
-  .s-pulse,
-  .m-flow,
-  .m-ripples path,
-  .m-closed,
-  .s-route,
-  .ew-dialog[open] {
-    animation: none !important;
-  }
-
-  .m-route {
-    stroke-dashoffset: 0 !important;
-    transition: none !important;
-  }
-
-  .ew-hero-copy > *,
-  .ew-map-wrap,
-  .m-center-g,
-  .ew-svg-chip,
-  .ew-reveal {
-    opacity: 1 !important;
-    transform: none !important;
-    transition: none !important;
-  }
-
-  .m-flow,
-  .m-rain,
-  .m-walker {
-    display: none !important;
   }
 }

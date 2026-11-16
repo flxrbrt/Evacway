@@ -20,10 +20,47 @@ export const BUILDINGS_FILL_LAYER = "evacway-buildings-fill";
 export const BUILDINGS_HALO_LAYER = "evacway-buildings-outline-halo";
 export const BUILDINGS_OUTLINE_LAYER = "evacway-buildings-outline";
 export const BUILDINGS_SYMBOL_LAYER = "evacway-buildings-symbol";
+export const BUILDING_MIN_ZOOM = 14;
 
 export const ENTRANCES_SOURCE_ID = "evacway-entrances-source";
 export const ENTRANCES_CIRCLE_LAYER = "evacway-entrances-circle";
 export const ENTRANCES_SYMBOL_LAYER = "evacway-entrances-symbol";
+
+/**
+ * Remove any active building hover/tap tooltip and clear hover feature-state.
+ */
+export function removeBuildingTooltip(map) {
+  if (!map) return;
+  if (map.__buildingTooltip) {
+    try {
+      map.__buildingTooltip.remove();
+    } catch (e) {}
+    map.__buildingTooltip = null;
+  }
+  try {
+    if (map.getCanvas()) {
+      map.getCanvas().style.cursor = "";
+    }
+  } catch (e) {}
+
+  const prevHoverId = map.__hoveredBuildingFeatureId;
+  if (prevHoverId !== undefined && prevHoverId !== null) {
+    try {
+      if (map.getStyle() && map.getSource(BUILDINGS_SOURCE_ID)) {
+        map.setFeatureState(
+          { source: BUILDINGS_SOURCE_ID, id: prevHoverId },
+          { hover: false }
+        );
+      }
+    } catch (e) {}
+    map.__hoveredBuildingFeatureId = null;
+  }
+  if (map.__buildingHoverNotify) {
+    try {
+      map.__buildingHoverNotify(null);
+    } catch (e) {}
+  }
+}
 
 /**
  * Initialize building layers on the map. Safe to call multiple times or after style reload.
@@ -199,33 +236,78 @@ export function initBuildingLayers(map, onBuildingClick = null, options = {}) {
     }
   }
 
-  // Setup cursor and hover state
-  let hoveredFeatureId = null;
+  // Setup cursor, hover state, and lifecycle-managed tooltip
+  map.__hoveredBuildingFeatureId = map.__hoveredBuildingFeatureId ?? null;
+  map.__buildingHoverNotify = onHoverChange || null;
 
-  // Single shared tooltip instance if requested
-  let tooltip = null;
-  if (enableTooltip) {
-    if (!map.__buildingTooltip) {
-      map.__buildingTooltip = new mapboxgl.Popup({
-        closeButton: false,
-        closeOnClick: false,
-        className: "evacway-building-hover-tooltip",
-        offset: 12,
-      });
+  const isTouchLikeEvent = (e) => {
+    const ptrType = e?.originalEvent?.pointerType;
+    if (ptrType === "touch") return true;
+    if (ptrType === "mouse" || ptrType === "pen") return false;
+    return typeof window !== "undefined" && window.matchMedia?.("(pointer: coarse)")?.matches;
+  };
+
+  const showBuildingTooltip = (feat, lngLat) => {
+    if (!enableTooltip || !map || map.__pickingLocation || map.getZoom() < BUILDING_MIN_ZOOM) {
+      return;
     }
-    tooltip = map.__buildingTooltip;
-  }
+    if (map.__buildingTooltip) {
+      try {
+        map.__buildingTooltip.remove();
+      } catch (e) {}
+      map.__buildingTooltip = null;
+    }
+    const p = feat.properties || {};
+    const bName = p.name || "Building";
+    const occ = p.occupied ?? 0;
+    const cap = p.capacity ?? 0;
+    const assigned = p.assigned ?? 0;
+    const popup = new mapboxgl.Popup({
+      closeButton: false,
+      closeOnClick: false,
+      className: "evacway-building-hover-tooltip",
+      offset: 12,
+    });
+    popup
+      .setLngLat(lngLat)
+      .setHTML(
+        `<div class="bld-tooltip-card"><strong>${bName}</strong><span>${occ} of ${cap} here · ${assigned} assigned</span></div>`
+      )
+      .addTo(map);
+    map.__buildingTooltip = popup;
+  };
 
   // Remove existing listeners if already attached
+  if (map.__buildingMouseEnterHandler) {
+    map.off("mouseenter", BUILDINGS_FILL_LAYER, map.__buildingMouseEnterHandler);
+  }
   if (map.__buildingMouseMoveHandler) {
     map.off("mousemove", BUILDINGS_FILL_LAYER, map.__buildingMouseMoveHandler);
   }
   if (map.__buildingMouseLeaveHandler) {
     map.off("mouseleave", BUILDINGS_FILL_LAYER, map.__buildingMouseLeaveHandler);
   }
+  if (map.__buildingZoomDismissHandler) {
+    map.off("zoomstart", map.__buildingZoomDismissHandler);
+    map.off("zoom", map.__buildingZoomDismissHandler);
+    map.off("zoomend", map.__buildingZoomDismissHandler);
+  }
+  if (map.__buildingMoveDismissHandler) {
+    map.off("movestart", map.__buildingMoveDismissHandler);
+  }
+  if (map.__buildingStyleDismissHandler) {
+    map.off("style.load", map.__buildingStyleDismissHandler);
+  }
+  if (map.__buildingOutsideTapHandler) {
+    map.off("click", map.__buildingOutsideTapHandler);
+  }
 
-  map.__buildingMouseMoveHandler = (e) => {
-    if (map.__pickingLocation) {
+  const handleBuildingHover = (e) => {
+    if (map.__pickingLocation || map.getZoom() < BUILDING_MIN_ZOOM) {
+      removeBuildingTooltip(map);
+      return;
+    }
+    if (isTouchLikeEvent(e)) {
       return;
     }
     map.getCanvas().style.cursor = "pointer";
@@ -233,32 +315,27 @@ export function initBuildingLayers(map, onBuildingClick = null, options = {}) {
       const feat = e.features[0];
       const featId = feat.id;
 
-      if (hoveredFeatureId !== null && hoveredFeatureId !== featId) {
+      if (
+        map.__hoveredBuildingFeatureId !== null &&
+        map.__hoveredBuildingFeatureId !== featId
+      ) {
+        try {
+          map.setFeatureState(
+            { source: BUILDINGS_SOURCE_ID, id: map.__hoveredBuildingFeatureId },
+            { hover: false }
+          );
+        } catch (err) {}
+      }
+
+      map.__hoveredBuildingFeatureId = featId;
+      try {
         map.setFeatureState(
-          { source: BUILDINGS_SOURCE_ID, id: hoveredFeatureId },
-          { hover: false }
+          { source: BUILDINGS_SOURCE_ID, id: featId },
+          { hover: true }
         );
-      }
+      } catch (err) {}
 
-      hoveredFeatureId = featId;
-      map.setFeatureState(
-        { source: BUILDINGS_SOURCE_ID, id: hoveredFeatureId },
-        { hover: true }
-      );
-
-      if (enableTooltip && tooltip) {
-        const p = feat.properties || {};
-        const bName = p.name || "Building";
-        const occ = p.occupied ?? 0;
-        const cap = p.capacity ?? 0;
-        const assigned = p.assigned ?? 0;
-        tooltip
-          .setLngLat(e.lngLat)
-          .setHTML(
-            `<div class="bld-tooltip-card"><strong>${bName}</strong><span>${occ} of ${cap} here · ${assigned} assigned</span></div>`
-          )
-          .addTo(map);
-      }
+      showBuildingTooltip(feat, e.lngLat);
 
       if (onHoverChange) {
         onHoverChange(feat);
@@ -266,27 +343,48 @@ export function initBuildingLayers(map, onBuildingClick = null, options = {}) {
     }
   };
 
+  map.__buildingMouseEnterHandler = handleBuildingHover;
+  map.__buildingMouseMoveHandler = handleBuildingHover;
+
   map.__buildingMouseLeaveHandler = () => {
-    map.getCanvas().style.cursor = "";
-    if (hoveredFeatureId !== null) {
-      map.setFeatureState(
-        { source: BUILDINGS_SOURCE_ID, id: hoveredFeatureId },
-        { hover: false }
-      );
-    }
-    hoveredFeatureId = null;
+    removeBuildingTooltip(map);
+  };
 
-    if (enableTooltip && tooltip) {
-      tooltip.remove();
-    }
-
-    if (onHoverChange) {
-      onHoverChange(null);
+  map.__buildingZoomDismissHandler = () => {
+    if (map.getZoom() < BUILDING_MIN_ZOOM || map.__buildingTooltip) {
+      removeBuildingTooltip(map);
     }
   };
 
+  map.__buildingMoveDismissHandler = () => {
+    removeBuildingTooltip(map);
+  };
+
+  map.__buildingStyleDismissHandler = () => {
+    removeBuildingTooltip(map);
+  };
+
+  map.__buildingOutsideTapHandler = (e) => {
+    if (!map.__buildingTooltip) return;
+    try {
+      const hits = map.queryRenderedFeatures(e.point, { layers: [BUILDINGS_FILL_LAYER] });
+      if (!hits || hits.length === 0) {
+        removeBuildingTooltip(map);
+      }
+    } catch (err) {
+      removeBuildingTooltip(map);
+    }
+  };
+
+  map.on("mouseenter", BUILDINGS_FILL_LAYER, map.__buildingMouseEnterHandler);
   map.on("mousemove", BUILDINGS_FILL_LAYER, map.__buildingMouseMoveHandler);
   map.on("mouseleave", BUILDINGS_FILL_LAYER, map.__buildingMouseLeaveHandler);
+  map.on("zoomstart", map.__buildingZoomDismissHandler);
+  map.on("zoom", map.__buildingZoomDismissHandler);
+  map.on("zoomend", map.__buildingZoomDismissHandler);
+  map.on("movestart", map.__buildingMoveDismissHandler);
+  map.on("style.load", map.__buildingStyleDismissHandler);
+  map.on("click", map.__buildingOutsideTapHandler);
 
   // Click handler
   if (onBuildingClick) {
@@ -295,11 +393,18 @@ export function initBuildingLayers(map, onBuildingClick = null, options = {}) {
     }
 
     map.__buildingClickHandler = (e) => {
-      if (map.__pickingLocation) {
+      if (map.__pickingLocation || map.getZoom() < BUILDING_MIN_ZOOM) {
+        removeBuildingTooltip(map);
         return;
       }
       if (e.features && e.features.length > 0) {
-        onBuildingClick(e.features[0]);
+        const feat = e.features[0];
+        if (isTouchLikeEvent(e)) {
+          showBuildingTooltip(feat, e.lngLat);
+        } else {
+          removeBuildingTooltip(map);
+        }
+        onBuildingClick(feat);
       }
     };
 

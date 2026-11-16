@@ -1,12 +1,14 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
   faArrowLeft,
   faBuilding,
   faCheckCircle,
+  faChevronRight,
   faDoorOpen,
   faDownload,
+  faEllipsisVertical,
   faEye,
   faFileExcel,
   faHeartPulse,
@@ -17,6 +19,7 @@ import {
   faRightLeft,
   faRotate,
   faShieldHeart,
+  faSliders,
   faTrashCan,
   faTriangleExclamation,
   faUser,
@@ -38,6 +41,7 @@ import {
 } from "../../hooks/useEvacuationQueries";
 import { displayEntityName } from "../../utils/displayEntityName";
 import { formatRoomLabel } from "../../utils/formatRoomLabel";
+import { resolveCenterStructureMode } from "./utils";
 import LoadingState from "../LoadingState/LoadingState";
 import "./FamilyManagement.css";
 
@@ -60,6 +64,20 @@ const RELATIONSHIP_OPTIONS = [
   "Grandchild",
   "Other Relative",
   "Other",
+];
+
+const SUFFIX_OPTIONS = [
+  "Jr.",
+  "Sr.",
+  "II",
+  "III",
+  "IV",
+  "V",
+  "VI",
+  "VII",
+  "VIII",
+  "IX",
+  "X",
 ];
 
 function getHouseholdInitials(name) {
@@ -89,7 +107,7 @@ function emptyMember(isHead = false) {
     suffix: "",
     date_of_birth: "",
     gender: "",
-    relationship_to_head: isHead ? "Household Head" : "Spouse",
+    relationship_to_head: isHead ? "Household Head" : "",
     contact_number: "",
     alternate_contact: "",
     is_head_of_family: isHead,
@@ -104,6 +122,90 @@ function emptyMember(isHead = false) {
     medical_notes: "",
     notes: "",
   };
+}
+
+function getLocalTodayIso() {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, "0");
+  const d = String(now.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+function getLocalMinDobIso() {
+  const now = new Date();
+  const y = now.getFullYear() - 120;
+  const m = String(now.getMonth() + 1).padStart(2, "0");
+  const d = String(now.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+function sanitizeNameInput(raw) {
+  return String(raw || "").replace(/[^\p{L} .'-]/gu, "");
+}
+
+function formatNameOnBlur(raw) {
+  const cleaned = sanitizeNameInput(raw).replace(/\s+/g, " ").trim();
+  if (!cleaned) return "";
+  return cleaned.replace(
+    /(^|[\s'.-])(\p{L})/gu,
+    (_, sep, ch) => `${sep}${ch.toLocaleUpperCase()}`
+  );
+}
+
+function hasNameLetters(value) {
+  return /\p{L}/u.test(String(value || ""));
+}
+
+function sanitizePhoneInput(raw) {
+  const str = String(raw || "");
+  const hasLeadingPlus = str.trimStart().startsWith("+");
+  const digits = str.replace(/\D/g, "");
+  if (hasLeadingPlus) {
+    return `+${digits}`.slice(0, 13);
+  }
+  return digits.slice(0, 11);
+}
+
+function handlePhoneKeyDown(event) {
+  if (event.ctrlKey || event.metaKey || event.altKey) return;
+  const allowedKeys = [
+    "Backspace",
+    "Delete",
+    "Tab",
+    "Escape",
+    "Enter",
+    "ArrowLeft",
+    "ArrowRight",
+    "ArrowUp",
+    "ArrowDown",
+    "Home",
+    "End",
+  ];
+  if (allowedKeys.includes(event.key)) return;
+  if (/^\d$/.test(event.key)) return;
+  if (
+    event.key === "+" &&
+    event.target?.selectionStart === 0 &&
+    (!String(event.target?.value || "").includes("+") ||
+      (event.target?.selectionEnd || 0) > 0)
+  ) {
+    return;
+  }
+  event.preventDefault();
+}
+
+function normalizePhPhoneForCompare(value) {
+  const trimmed = String(value || "").trim();
+  if (!trimmed) return "";
+  if (trimmed.startsWith("+63") && trimmed.length === 13) {
+    return `0${trimmed.slice(3)}`;
+  }
+  return trimmed;
+}
+
+function normalizeNameForCompare(member) {
+  return memberDisplayName(member).replace(/\s+/g, " ").trim().toLocaleLowerCase();
 }
 
 function memberDisplayName(member) {
@@ -133,6 +235,106 @@ function getAge(dateOfBirth) {
     age -= 1;
   }
   return age >= 0 ? age : null;
+}
+
+function getExactAge(dateOfBirth) {
+  if (!dateOfBirth) return null;
+  const parts = String(dateOfBirth).trim().split("-");
+  if (parts.length !== 3) return null;
+  const [year, month, day] = parts.map(Number);
+  if (!year || !month || !day) return null;
+  const dobDate = new Date(year, month - 1, day);
+  if (
+    Number.isNaN(dobDate.getTime()) ||
+    dobDate.getFullYear() !== year ||
+    dobDate.getMonth() !== month - 1 ||
+    dobDate.getDate() !== day
+  ) {
+    return null;
+  }
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  if (dobDate > today) {
+    return -1;
+  }
+  let age = today.getFullYear() - year;
+  if (
+    today.getMonth() + 1 < month ||
+    (today.getMonth() + 1 === month && today.getDate() < day)
+  ) {
+    age -= 1;
+  }
+  return age;
+}
+
+function validateDateOfBirth(
+  dateOfBirth,
+  { isHead = false, relationship = "" } = {}
+) {
+  if (!dateOfBirth) return "";
+  const parts = String(dateOfBirth).trim().split("-");
+  if (parts.length !== 3) {
+    return "Please enter a valid date of birth.";
+  }
+  const [year, month, day] = parts.map(Number);
+  if (!year || !month || !day) {
+    return "Please enter a valid date of birth.";
+  }
+  const dobDate = new Date(year, month - 1, day);
+  if (
+    Number.isNaN(dobDate.getTime()) ||
+    dobDate.getFullYear() !== year ||
+    dobDate.getMonth() !== month - 1 ||
+    dobDate.getDate() !== day
+  ) {
+    return "Please enter a valid date of birth.";
+  }
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  if (dobDate > today) {
+    return "Date of birth cannot be in the future.";
+  }
+  const minDobDate = new Date(
+    today.getFullYear() - 120,
+    today.getMonth(),
+    today.getDate()
+  );
+  if (dobDate < minDobDate) {
+    return "Date of birth cannot be more than 120 years ago.";
+  }
+  const age = getExactAge(dateOfBirth);
+  if (age === null) {
+    return "Please enter a valid date of birth.";
+  }
+  if (isHead && age < 18) {
+    return "Household head must be at least 18 years old.";
+  }
+  if (
+    String(relationship || "").trim().toLocaleLowerCase() === "spouse" &&
+    age < 15
+  ) {
+    return "A Spouse must be at least 15 years old.";
+  }
+  return "";
+}
+
+function isValidPhMobile(value) {
+  if (value == null || String(value).trim() === "") return true;
+  const trimmed = String(value).trim();
+  return /^(09\d{9}|\+639\d{9})$/.test(trimmed);
+}
+
+function focusFirstInvalidField(fieldIds = []) {
+  for (const id of fieldIds) {
+    const el = document.getElementById(id);
+    if (el && typeof el.focus === "function") {
+      el.focus();
+      if (typeof el.scrollIntoView === "function") {
+        el.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      }
+      return;
+    }
+  }
 }
 
 function getVulnerabilityBadges(member) {
@@ -200,29 +402,34 @@ function getCenterRemainingCapacity(center) {
   return Math.max(cap - getCenterAssignedCount(center), 0);
 }
 
-function isDirectVenueCenter(center, rooms = [], isLoadingRooms = false) {
+function getFamilyStructureMode(fam) {
+  if (!fam) return "buildings_and_rooms";
+  const raw = String(
+    fam.current_structure_mode || fam.assignments?.[0]?.structure_mode || ""
+  )
+    .trim()
+    .toLowerCase();
+  if (["open_area", "rooms_only", "buildings_and_rooms"].includes(raw)) {
+    return raw;
+  }
+  const code = String(
+    fam.current_center_type || fam.assignments?.[0]?.center_type || ""
+  )
+    .trim()
+    .toLowerCase();
+  if (code === "single_venue") return "open_area";
+  if (code === "private_property") return "rooms_only";
+  return "buildings_and_rooms";
+}
+
+function isDirectVenueCenter(center) {
   if (!center) return false;
-  const cType = center.center_type || "campus";
-  if (cType === "single_venue") return true;
-  const totalRooms = Number(center.room_count ?? center.total_rooms ?? rooms.length);
-  const totalBldgs = Number(
-    center.building_count ?? (center.buildings || []).length
-  );
-  if (
-    ["covered_court", "multi_purpose_hall", "church_facility"].includes(cType) &&
-    totalRooms === 0
-  ) {
-    return true;
-  }
-  if (!isLoadingRooms && totalRooms === 0 && rooms.length === 0 && totalBldgs === 0) {
-    return true;
-  }
-  return false;
+  return resolveCenterStructureMode(center) === "open_area";
 }
 
 function centerHasBuildings(center, rooms = []) {
   if (!center) return false;
-  if (isDirectVenueCenter(center, rooms, false)) return false;
+  if (resolveCenterStructureMode(center) !== "buildings_and_rooms") return false;
   if (Array.isArray(center.buildings) && center.buildings.length > 0) return true;
   if (Number(center.building_count || 0) > 0) return true;
   return rooms.some((r) => r.building_id != null);
@@ -298,10 +505,93 @@ function getFilteredRoomsForSelection(
 }
 
 const ADD_STEPS = [
-  { number: 1, title: "Household & Head", subtitle: "Address, contact & head profile" },
-  { number: 2, title: "Household Members", subtitle: "Additional members (optional)" },
-  { number: 3, title: "Room & Save", subtitle: "Evacuation room & confirm" },
+  { number: 1, title: "Household Details", subtitle: "Barangay, address & contacts" },
+  { number: 2, title: "Household Head", subtitle: "Head profile & health info" },
+  { number: 3, title: "Household Members", subtitle: "Additional members (optional)" },
+  { number: 4, title: "Room & Save", subtitle: "Evacuation room & confirm" },
 ];
+
+function SuccessToastItem({ toast, onRemove }) {
+  const [isLeaving, setIsLeaving] = useState(false);
+  const remainingMsRef = useRef(4000);
+  const startTimeRef = useRef(null);
+  const timerRef = useRef(null);
+  const fadeTimerRef = useRef(null);
+
+  const clearTimers = () => {
+    if (timerRef.current) {
+      window.clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+    if (fadeTimerRef.current) {
+      window.clearTimeout(fadeTimerRef.current);
+      fadeTimerRef.current = null;
+    }
+  };
+
+  const triggerFadeOut = () => {
+    clearTimers();
+    setIsLeaving(true);
+    fadeTimerRef.current = window.setTimeout(() => {
+      onRemove(toast.id);
+    }, 220);
+  };
+
+  const startTimer = (ms) => {
+    clearTimers();
+    startTimeRef.current = Date.now();
+    timerRef.current = window.setTimeout(() => {
+      triggerFadeOut();
+    }, Math.max(0, ms));
+  };
+
+  useEffect(() => {
+    startTimer(remainingMsRef.current);
+    return () => clearTimers();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleMouseEnter = () => {
+    if (isLeaving) {
+      clearTimers();
+      setIsLeaving(false);
+      remainingMsRef.current = Math.max(remainingMsRef.current, 1200);
+      return;
+    }
+    if (startTimeRef.current != null) {
+      const elapsed = Date.now() - startTimeRef.current;
+      remainingMsRef.current = Math.max(400, remainingMsRef.current - elapsed);
+    }
+    clearTimers();
+  };
+
+  const handleMouseLeave = () => {
+    startTimer(remainingMsRef.current);
+  };
+
+  return (
+    <div
+      className={`fm-toast fm-toast-success ${isLeaving ? "is-leaving" : ""}`}
+      role="status"
+      aria-live="polite"
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
+    >
+      <div className="fm-toast-content">
+        <FontAwesomeIcon icon={faCheckCircle} className="fm-toast-icon" />
+        <span className="fm-toast-message">{toast.message}</span>
+      </div>
+      <button
+        type="button"
+        className="fm-toast-dismiss"
+        onClick={triggerFadeOut}
+        aria-label="Dismiss notification"
+      >
+        Dismiss
+      </button>
+    </div>
+  );
+}
 
 export default function FamilyManagement({
   barangays = [],
@@ -314,17 +604,23 @@ export default function FamilyManagement({
   onInitialStartAddConsumed = null,
   onInitialFamilyConsumed = null,
   onClearInitialAction = null,
+  hideListHeader = false,
+  hideScreenContent = false,
+  compactMobileAllHouseholds = false,
+  onBackToBarangays = null,
+  onRegisterActions = null,
+  onScreenChange = null,
 }) {
   const queryClient = useQueryClient();
 
   const shouldStartAdd = Boolean(initialStartAdd || startWithAddFamily);
 
-  // Navigation state: "list" | "household-detail" | "member-detail" | "add-wizard"
+  // Navigation state: "list" | "household-detail" | "member-detail"
   const [activeScreen, setActiveScreen] = useState(() => {
-    if (shouldStartAdd) return "add-wizard";
     if (initialFamilyId) return "household-detail";
     return "list";
   });
+  const [isAddWizardOpen, setIsAddWizardOpen] = useState(() => shouldStartAdd);
 
   // List filters & pagination
   const [page, setPage] = useState(1);
@@ -335,11 +631,171 @@ export default function FamilyManagement({
     lockedBarangayId ? String(lockedBarangayId) : ""
   );
   const [assignmentStatus, setAssignmentStatus] = useState("");
-  const [buildingFilter, setBuildingFilter] = useState("");
   const [sortBy, setSortBy] = useState("family_code");
   const [direction, setDirection] = useState("asc");
   const [rosterYears, setRosterYears] = useState([]);
   const [yearFilter, setYearFilter] = useState("2026");
+
+  // Mobile filters sheet & compact card menu state (used when compactMobileAllHouseholds is enabled)
+  const [isMobileViewport, setIsMobileViewport] = useState(() =>
+    typeof window !== "undefined" && typeof window.matchMedia === "function"
+      ? window.matchMedia("(max-width: 768px)").matches
+      : false
+  );
+  const [isMobileFiltersOpen, setIsMobileFiltersOpen] = useState(false);
+  const [draftMobileFilters, setDraftMobileFilters] = useState({
+    yearFilter: "2026",
+    barangayFilter: "",
+    assignmentStatus: "",
+    sortKey: "family_code:asc",
+  });
+  const [openMobileCardMenuId, setOpenMobileCardMenuId] = useState(null);
+  const [detailMenuOpen, setDetailMenuOpen] = useState(false);
+
+  const sectionRef = useRef(null);
+  const listTableWrapRef = useRef(null);
+  const listMobileCardsRef = useRef(null);
+  const savedListScrollRef = useRef({
+    tableTop: 0,
+    mobileTop: 0,
+    pageTop: 0,
+    contentTop: 0,
+    windowTop: 0,
+  });
+  const shouldRestoreListScrollRef = useRef(false);
+  const shouldResetDetailScrollRef = useRef(false);
+
+  const defaultYearFilter = useMemo(() => {
+    const active = rosterYears.find((y) => y.is_active);
+    return active ? String(active.year) : "2026";
+  }, [rosterYears]);
+
+  const activeMobileFilterCount = useMemo(() => {
+    let count = 0;
+    if (yearFilter !== defaultYearFilter) count += 1;
+    if (!lockedBarangayId && barangayFilter) count += 1;
+    if (assignmentStatus) count += 1;
+    if (sortBy !== "family_code" || direction !== "asc") count += 1;
+    return count;
+  }, [
+    yearFilter,
+    defaultYearFilter,
+    lockedBarangayId,
+    barangayFilter,
+    assignmentStatus,
+    sortBy,
+    direction,
+  ]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+      return undefined;
+    }
+    const mq = window.matchMedia("(max-width: 768px)");
+    const handleChange = (e) => {
+      setIsMobileViewport(e.matches);
+      if (!e.matches) {
+        setIsMobileFiltersOpen(false);
+        setOpenMobileCardMenuId(null);
+        setDetailMenuOpen(false);
+      }
+    };
+    setIsMobileViewport(mq.matches);
+    mq.addEventListener("change", handleChange);
+    return () => mq.removeEventListener("change", handleChange);
+  }, []);
+
+  useEffect(() => {
+    if (!openMobileCardMenuId) return undefined;
+    const handleOutside = (e) => {
+      if (!e.target.closest?.(".fm-mobile-card-menu-wrap")) {
+        setOpenMobileCardMenuId(null);
+      }
+    };
+    const handleEsc = (e) => {
+      if (e.key === "Escape") setOpenMobileCardMenuId(null);
+    };
+    document.addEventListener("mousedown", handleOutside);
+    document.addEventListener("touchstart", handleOutside);
+    document.addEventListener("keydown", handleEsc);
+    return () => {
+      document.removeEventListener("mousedown", handleOutside);
+      document.removeEventListener("touchstart", handleOutside);
+      document.removeEventListener("keydown", handleEsc);
+    };
+  }, [openMobileCardMenuId]);
+
+  useEffect(() => {
+    if (!detailMenuOpen) return undefined;
+    const handleOutside = (e) => {
+      if (!e.target.closest?.(".fm-detail-menu-wrap")) {
+        setDetailMenuOpen(false);
+      }
+    };
+    const handleEsc = (e) => {
+      if (e.key === "Escape") setDetailMenuOpen(false);
+    };
+    document.addEventListener("mousedown", handleOutside);
+    document.addEventListener("touchstart", handleOutside);
+    document.addEventListener("keydown", handleEsc);
+    return () => {
+      document.removeEventListener("mousedown", handleOutside);
+      document.removeEventListener("touchstart", handleOutside);
+      document.removeEventListener("keydown", handleEsc);
+    };
+  }, [detailMenuOpen]);
+
+  useEffect(() => {
+    if (!isMobileFiltersOpen) return undefined;
+    const handleEsc = (e) => {
+      if (e.key === "Escape") setIsMobileFiltersOpen(false);
+    };
+    document.addEventListener("keydown", handleEsc);
+    return () => document.removeEventListener("keydown", handleEsc);
+  }, [isMobileFiltersOpen]);
+
+  function openMobileFiltersSheet() {
+    setDraftMobileFilters({
+      yearFilter,
+      barangayFilter,
+      assignmentStatus,
+      sortKey: `${sortBy}:${direction}`,
+    });
+    setIsMobileFiltersOpen(true);
+  }
+
+  function applyMobileFilters() {
+    const [nextSort, nextDir] = String(
+      draftMobileFilters.sortKey || "family_code:asc"
+    ).split(":");
+    setYearFilter(draftMobileFilters.yearFilter ?? "");
+    setBarangayFilter(
+      lockedBarangayId ? String(lockedBarangayId) : draftMobileFilters.barangayFilter ?? ""
+    );
+    setAssignmentStatus(draftMobileFilters.assignmentStatus ?? "");
+    setSortBy(nextSort || "family_code");
+    setDirection(nextDir || "asc");
+    setPage(1);
+    setIsMobileFiltersOpen(false);
+  }
+
+  function resetMobileFilters() {
+    const nextBrgy = lockedBarangayId ? String(lockedBarangayId) : "";
+    const resetValues = {
+      yearFilter: defaultYearFilter,
+      barangayFilter: nextBrgy,
+      assignmentStatus: "",
+      sortKey: "family_code:asc",
+    };
+    setDraftMobileFilters(resetValues);
+    setYearFilter(defaultYearFilter);
+    setBarangayFilter(nextBrgy);
+    setAssignmentStatus("");
+    setSortBy("family_code");
+    setDirection("asc");
+    setPage(1);
+    setIsMobileFiltersOpen(false);
+  }
 
   useEffect(() => {
     let isMounted = true;
@@ -359,9 +815,21 @@ export default function FamilyManagement({
     };
   }, []);
 
-  // Feedback banners
+  // Feedback banners & toast notifications
   const [localError, setError] = useState("");
-  const [notice, setNotice] = useState("");
+  const [toasts, setToasts] = useState([]);
+  const toastSeqRef = useRef(0);
+
+  function removeToast(toastId) {
+    setToasts((prev) => prev.filter((t) => t.id !== toastId));
+  }
+
+  function setNotice(msg) {
+    if (!msg) return;
+    toastSeqRef.current += 1;
+    const id = `${Date.now()}-${toastSeqRef.current}`;
+    setToasts((prev) => [...prev, { id, message: String(msg) }]);
+  }
 
   // Selected Household & Member IDs (always derived from React Query)
   const [selectedFamilyId, setSelectedFamilyId] = useState(
@@ -374,8 +842,11 @@ export default function FamilyManagement({
     if (initialFamilyId && onInitialFamilyConsumed) {
       onInitialFamilyConsumed();
     }
-    if (shouldStartAdd && onInitialStartAddConsumed) {
-      onInitialStartAddConsumed();
+    if (shouldStartAdd) {
+      setIsAddWizardOpen(true);
+      if (onInitialStartAddConsumed) {
+        onInitialStartAddConsumed();
+      }
     }
     if ((initialFamilyId || shouldStartAdd) && onClearInitialAction) {
       onClearInitialAction();
@@ -407,12 +878,11 @@ export default function FamilyManagement({
       search,
       barangay_id: effectiveBarangayId,
       assignment_status: assignmentStatus,
-      building_id: buildingFilter,
       year: yearFilter,
       sort_by: sortBy,
       direction,
     }),
-    [page, pageSize, search, effectiveBarangayId, assignmentStatus, buildingFilter, yearFilter, sortBy, direction]
+    [page, pageSize, search, effectiveBarangayId, assignmentStatus, yearFilter, sortBy, direction]
   );
 
   const familiesQuery = useFamilies(familyFilters);
@@ -424,10 +894,19 @@ export default function FamilyManagement({
   const pages = Math.max(1, familiesQuery.data?.pages || 1);
   const loading = familiesQuery.isLoading;
 
+  // Modals for quick actions ("edit-household" | "member-form" | "assign" | "move" | "import" | "")
+  const [modal, setModal] = useState("");
+  const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
+  const [confirmDialog, setConfirmDialog] = useState(null);
+
   const familyDetailQuery = useFamily(selectedFamilyId, {
     enabled:
       selectedFamilyId != null &&
-      (activeScreen === "household-detail" || activeScreen === "member-detail"),
+      (activeScreen === "household-detail" ||
+        activeScreen === "member-detail" ||
+        modal === "edit-household" ||
+        modal === "member-form"),
   });
 
   const activeFamily = useMemo(() => {
@@ -444,13 +923,10 @@ export default function FamilyManagement({
     );
   }, [activeFamily, selectedMemberId]);
 
-  // Modals for quick actions ("edit-household" | "member-form" | "assign" | "move" | "import" | "")
-  const [modal, setModal] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [confirmDialog, setConfirmDialog] = useState(null);
-
-  // 5-Step Add Family Wizard State
+  // 3-Step Add Family Wizard State
   const [wizardStep, setWizardStep] = useState(1);
+  const [wizardTouched, setWizardTouched] = useState({});
+  const [memberDraftTouched, setMemberDraftTouched] = useState({});
   const [wizardForm, setWizardForm] = useState({
     barangay_id: lockedBarangayId ? String(lockedBarangayId) : "",
     family_code: "",
@@ -478,11 +954,16 @@ export default function FamilyManagement({
     address: "",
     remarks: "",
   });
+  const [editHouseholdInitial, setEditHouseholdInitial] = useState(null);
+  const [editHouseholdTouched, setEditHouseholdTouched] = useState({});
 
   // Add / Edit Individual Member Modal State (from Page D / Page E)
   const [memberModalMode, setMemberModalMode] = useState("add"); // "add" | "edit"
   const [memberModalTargetId, setMemberModalTargetId] = useState(null);
   const [memberModalForm, setMemberModalForm] = useState(emptyMember(false));
+  const [memberModalInitial, setMemberModalInitial] = useState(null);
+  const [memberModalTouched, setMemberModalTouched] = useState({});
+  const modalBodyRef = useRef(null);
 
   // Assign / Move Room Modal State
   const [assignCenterId, setAssignCenterId] = useState("");
@@ -500,7 +981,7 @@ export default function FamilyManagement({
   const centersQuery = useEvacuationCenters(false, {
     enabled:
       activeScreen === "list" ||
-      activeScreen === "add-wizard" ||
+      isAddWizardOpen ||
       modal === "assign" ||
       modal === "move",
   });
@@ -509,7 +990,7 @@ export default function FamilyManagement({
       (feature) => feature.properties || feature
     );
     const preferredBarangayId =
-      activeScreen === "add-wizard"
+      isAddWizardOpen
         ? wizardForm.barangay_id
         : activeFamily?.barangay_id || effectiveBarangayId;
     if (!preferredBarangayId) return raw;
@@ -522,47 +1003,11 @@ export default function FamilyManagement({
       .sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
   }, [
     centersQuery.data,
-    activeScreen,
+    isAddWizardOpen,
     wizardForm.barangay_id,
     activeFamily?.barangay_id,
     effectiveBarangayId,
   ]);
-
-  const buildingOptions = useMemo(() => {
-    const map = new Map();
-    for (const b of availableBuildings || []) {
-      if (b?.id != null) {
-        map.set(Number(b.id), {
-          id: Number(b.id),
-          name: b.name || `Building ${b.id}`,
-          center_name: b.center_name || "",
-        });
-      }
-    }
-    for (const c of centersList) {
-      for (const b of c.buildings || []) {
-        if (b?.id != null && !map.has(Number(b.id))) {
-          map.set(Number(b.id), {
-            id: Number(b.id),
-            name: b.name || `Building ${b.id}`,
-            center_name: c.name || "",
-          });
-        }
-      }
-    }
-    for (const fam of families) {
-      if (fam?.current_building_id != null && !map.has(Number(fam.current_building_id))) {
-        map.set(Number(fam.current_building_id), {
-          id: Number(fam.current_building_id),
-          name: fam.current_building_name || fam.current_building || `Building ${fam.current_building_id}`,
-          center_name: fam.current_center_name || "",
-        });
-      }
-    }
-    return Array.from(map.values()).sort((a, b) =>
-      String(a.name || "").localeCompare(String(b.name || ""))
-    );
-  }, [availableBuildings, centersList, families]);
 
   const wizardRoomsQuery = useRooms(
     wizardForm.assignment_center_id
@@ -570,7 +1015,7 @@ export default function FamilyManagement({
       : null,
     {
       enabled:
-        activeScreen === "add-wizard" &&
+        isAddWizardOpen &&
         wizardForm.assignment_mode === "assign" &&
         Boolean(wizardForm.assignment_center_id),
     }
@@ -605,16 +1050,145 @@ export default function FamilyManagement({
     (activeScreen !== "list" ? familyDetailQuery.error?.message : "") ||
     "";
 
-  function closeModal() {
-    if (saving || assigning || moving) return;
+  function forceCloseModal() {
     setModal("");
     setError("");
+    setEditHouseholdInitial(null);
+    setEditHouseholdTouched({});
+    setMemberModalInitial(null);
+    setMemberModalTouched({});
     setAssignCenterId("");
     setAssignBuildingId("");
     setAssignRoomId("");
     setTargetCenterId("");
     setTargetBuildingId("");
     setTargetRoomId("");
+  }
+
+  const isEditHouseholdDirty = useMemo(() => {
+    if (modal !== "edit-household" || !editHouseholdInitial) return false;
+    return (
+      String(editHouseholdForm.head_resident_id || "") !==
+        String(editHouseholdInitial.head_resident_id || "") ||
+      String(editHouseholdForm.barangay_id || "") !==
+        String(editHouseholdInitial.barangay_id || "") ||
+      String(editHouseholdForm.address || "") !==
+        String(editHouseholdInitial.address || "") ||
+      String(editHouseholdForm.contact_number || "") !==
+        String(editHouseholdInitial.contact_number || "") ||
+      String(editHouseholdForm.alternate_contact || "") !==
+        String(editHouseholdInitial.alternate_contact || "") ||
+      String(editHouseholdForm.remarks || "") !==
+        String(editHouseholdInitial.remarks || "")
+    );
+  }, [modal, editHouseholdForm, editHouseholdInitial]);
+
+  const isMemberModalDirty = useMemo(() => {
+    if (modal !== "member-form" || !memberModalInitial) return false;
+    const keys = [
+      "first_name",
+      "middle_name",
+      "last_name",
+      "suffix",
+      "date_of_birth",
+      "gender",
+      "relationship_to_head",
+      "contact_number",
+      "is_head_of_family",
+      "is_pwd",
+      "disability_type",
+      "disability_notes",
+      "is_pregnant",
+      "is_lactating",
+      "is_solo_parent",
+      "needs_assistance",
+      "vulnerable_members",
+      "medical_notes",
+      "notes",
+    ];
+    return keys.some((k) => {
+      const a = memberModalForm[k];
+      const b = memberModalInitial[k];
+      if (typeof b === "boolean" || typeof a === "boolean") {
+        return Boolean(a) !== Boolean(b);
+      }
+      return String(a ?? "") !== String(b ?? "");
+    });
+  }, [modal, memberModalForm, memberModalInitial]);
+
+  const isActiveModalDirty =
+    modal === "edit-household"
+      ? isEditHouseholdDirty
+      : modal === "member-form"
+        ? isMemberModalDirty
+        : false;
+
+  function closeModal() {
+    if (saving || assigning || moving) return;
+    if (isActiveModalDirty) {
+      setConfirmDialog({
+        title: "Discard unsaved changes?",
+        message:
+          "You have unsaved changes. Are you sure you want to close without saving?",
+        confirmText: "Discard Changes",
+        cancelText: "Keep Editing",
+        danger: true,
+        onConfirm: () => {
+          setConfirmDialog(null);
+          forceCloseModal();
+        },
+      });
+      return;
+    }
+    forceCloseModal();
+  }
+
+  useEffect(() => {
+    if (!modal && !confirmDialog) return undefined;
+    const handleEsc = (e) => {
+      if (e.key !== "Escape") return;
+      if (confirmDialog) {
+        if (!saving) setConfirmDialog(null);
+        return;
+      }
+      if (modal) {
+        closeModal();
+      }
+    };
+    document.addEventListener("keydown", handleEsc);
+    return () => document.removeEventListener("keydown", handleEsc);
+  });
+
+  function handleModalFormKeyDown(event) {
+    if (event.key !== "Enter") return;
+    const tag = event.target?.tagName?.toLowerCase();
+    if (tag === "textarea" || tag === "button") return;
+    if (event.target?.type?.toLowerCase() === "submit") return;
+    event.preventDefault();
+  }
+
+  function handlePhonePaste(event, applyValue) {
+    const pasted = event.clipboardData?.getData("text");
+    if (pasted == null) return;
+    event.preventDefault();
+    const input = event.target;
+    const current = String(input?.value || "");
+    const start = input?.selectionStart ?? current.length;
+    const end = input?.selectionEnd ?? current.length;
+    const merged = `${current.slice(0, start)}${pasted}${current.slice(end)}`;
+    applyValue(sanitizePhoneInput(merged));
+  }
+
+  function handleNamePaste(event, applyValue) {
+    const pasted = event.clipboardData?.getData("text");
+    if (pasted == null) return;
+    event.preventDefault();
+    const input = event.target;
+    const current = String(input?.value || "");
+    const start = input?.selectionStart ?? current.length;
+    const end = input?.selectionEnd ?? current.length;
+    const merged = `${current.slice(0, start)}${sanitizeNameInput(pasted)}${current.slice(end)}`;
+    applyValue(sanitizeNameInput(merged));
   }
 
   async function refreshAllData(familyIdToKeep = null) {
@@ -629,7 +1203,24 @@ export default function FamilyManagement({
   // =========================================================
   // NAVIGATION HANDLERS
   // =========================================================
+  function captureListScrollPosition() {
+    const sectionEl = sectionRef.current;
+    const pageEl = sectionEl?.closest?.(".barangay-page") || null;
+    const contentEl = sectionEl?.closest?.(".dashboard-content") || null;
+    savedListScrollRef.current = {
+      tableTop: listTableWrapRef.current?.scrollTop ?? 0,
+      mobileTop: listMobileCardsRef.current?.scrollTop ?? 0,
+      pageTop: pageEl?.scrollTop ?? 0,
+      contentTop: contentEl?.scrollTop ?? 0,
+      windowTop: typeof window !== "undefined" ? window.scrollY : 0,
+    };
+  }
+
   function openHouseholdDetails(family) {
+    captureListScrollPosition();
+    shouldRestoreListScrollRef.current = true;
+    shouldResetDetailScrollRef.current = true;
+    setDetailMenuOpen(false);
     setSelectedFamilySeed(family);
     setSelectedFamilyId(family.id);
     setSelectedMemberId(null);
@@ -638,16 +1229,63 @@ export default function FamilyManagement({
   }
 
   function openMemberDetails(member) {
+    setDetailMenuOpen(false);
     setSelectedMemberId(member.id);
     setError("");
     setActiveScreen("member-detail");
   }
 
   function backToHouseholdList() {
+    setDetailMenuOpen(false);
     setActiveScreen("list");
     setSelectedMemberId(null);
     setError("");
   }
+
+  useLayoutEffect(() => {
+    if (hideScreenContent) return undefined;
+    const sectionEl = sectionRef.current;
+    const pageEl = sectionEl?.closest?.(".barangay-page") || null;
+    const contentEl = sectionEl?.closest?.(".dashboard-content") || null;
+
+    if (activeScreen === "household-detail" && shouldResetDetailScrollRef.current) {
+      shouldResetDetailScrollRef.current = false;
+      if (pageEl) pageEl.scrollTop = 0;
+      if (contentEl) contentEl.scrollTop = 0;
+      if (typeof window !== "undefined") window.scrollTo(0, 0);
+      return undefined;
+    }
+
+    if (activeScreen === "list" && shouldRestoreListScrollRef.current) {
+      shouldRestoreListScrollRef.current = false;
+      const saved = savedListScrollRef.current;
+      const applyScroll = () => {
+        if (listTableWrapRef.current) {
+          listTableWrapRef.current.scrollTop = saved.tableTop;
+        }
+        if (listMobileCardsRef.current) {
+          listMobileCardsRef.current.scrollTop = saved.mobileTop;
+        }
+        if (pageEl) pageEl.scrollTop = saved.pageTop;
+        if (contentEl) contentEl.scrollTop = saved.contentTop;
+        if (typeof window !== "undefined" && saved.windowTop > 0) {
+          window.scrollTo(0, saved.windowTop);
+        }
+      };
+      applyScroll();
+      const rafId =
+        typeof window !== "undefined" && typeof window.requestAnimationFrame === "function"
+          ? window.requestAnimationFrame(applyScroll)
+          : null;
+      return () => {
+        if (rafId !== null && typeof window.cancelAnimationFrame === "function") {
+          window.cancelAnimationFrame(rafId);
+        }
+      };
+    }
+
+    return undefined;
+  }, [activeScreen, hideScreenContent]);
 
   function backToHouseholdDetails() {
     setActiveScreen("household-detail");
@@ -656,7 +1294,7 @@ export default function FamilyManagement({
   }
 
   // =========================================================
-  // 5-STEP ADD FAMILY WIZARD HANDLERS
+  // 3-STEP ADD FAMILY WIZARD HANDLERS
   // =========================================================
   function openAddFamilyWizard() {
     const defaultBrgyId = lockedBarangayId
@@ -677,11 +1315,120 @@ export default function FamilyManagement({
       assignment_room_id: "",
     });
     setWizardStep(1);
+    setWizardTouched({});
+    setMemberDraftTouched({});
     setEditingOtherIndex(null);
     setMemberDraft(null);
     setError("");
     setNotice("");
-    setActiveScreen("add-wizard");
+    setIsAddWizardOpen(true);
+  }
+
+  function hasUnsavedWizardChanges() {
+    const defaultBrgyId = lockedBarangayId
+      ? String(lockedBarangayId)
+      : barangayFilter || "";
+    const head = wizardForm.head;
+    const headHasData =
+      Boolean(head.first_name.trim()) ||
+      Boolean(head.middle_name.trim()) ||
+      Boolean(head.last_name.trim()) ||
+      Boolean(head.suffix.trim()) ||
+      Boolean(head.date_of_birth) ||
+      Boolean(head.gender) ||
+      Boolean(head.contact_number.trim()) ||
+      Boolean(head.alternate_contact.trim()) ||
+      Boolean(head.is_pwd) ||
+      Boolean(head.disability_type.trim()) ||
+      Boolean(head.disability_notes.trim()) ||
+      Boolean(head.is_pregnant) ||
+      Boolean(head.is_lactating) ||
+      Boolean(head.is_solo_parent) ||
+      Boolean(head.needs_assistance) ||
+      Boolean(head.vulnerable_members.trim()) ||
+      Boolean(head.medical_notes.trim()) ||
+      Boolean(head.notes.trim());
+
+    return (
+      (!lockedBarangayId &&
+        String(wizardForm.barangay_id || "") !== String(defaultBrgyId)) ||
+      Boolean(wizardForm.family_code.trim()) ||
+      Boolean(wizardForm.address.trim()) ||
+      Boolean(wizardForm.contact_number.trim()) ||
+      Boolean(wizardForm.alternate_contact.trim()) ||
+      Boolean(wizardForm.remarks.trim()) ||
+      headHasData ||
+      wizardForm.otherMembers.length > 0 ||
+      editingOtherIndex !== null ||
+      wizardForm.assignment_mode !== "unassigned" ||
+      Boolean(wizardForm.assignment_center_id) ||
+      Boolean(wizardForm.assignment_building_id) ||
+      Boolean(wizardForm.assignment_room_id)
+    );
+  }
+
+  function closeAddFamilyWizard() {
+    setIsAddWizardOpen(false);
+    setWizardTouched({});
+    setMemberDraftTouched({});
+    setEditingOtherIndex(null);
+    setMemberDraft(null);
+    setError("");
+  }
+
+  function requestCloseAddWizard() {
+    if (saving) return;
+    if (hasUnsavedWizardChanges()) {
+      setConfirmDialog({
+        title: "Discard Unsaved Changes?",
+        message:
+          "You have unsaved changes in the Add Household form. Are you sure you want to close and discard your changes?",
+        confirmText: "Discard Changes",
+        cancelText: "Keep Editing",
+        danger: true,
+        onConfirm: () => {
+          setConfirmDialog(null);
+          closeAddFamilyWizard();
+        },
+      });
+      return;
+    }
+    closeAddFamilyWizard();
+  }
+
+  useEffect(() => {
+    if (!isAddWizardOpen && !confirmDialog && !modal) return undefined;
+    function handleKeyDown(event) {
+      if (event.key !== "Escape") return;
+      if (confirmDialog) {
+        event.stopPropagation();
+        setConfirmDialog(null);
+        return;
+      }
+      if (modal) {
+        event.stopPropagation();
+        closeModal();
+        return;
+      }
+      if (isAddWizardOpen) {
+        event.stopPropagation();
+        requestCloseAddWizard();
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  });
+
+  function touchWizardField(fieldKey) {
+    setWizardTouched((prev) =>
+      prev[fieldKey] ? prev : { ...prev, [fieldKey]: true }
+    );
+  }
+
+  function touchMemberDraftField(fieldKey) {
+    setMemberDraftTouched((prev) =>
+      prev[fieldKey] ? prev : { ...prev, [fieldKey]: true }
+    );
   }
 
   function updateWizardHead(field, value) {
@@ -698,12 +1445,14 @@ export default function FamilyManagement({
 
   function startAddOtherMember() {
     setError("");
+    setMemberDraftTouched({});
     setEditingOtherIndex("new");
     setMemberDraft(emptyMember(false));
   }
 
   function startEditOtherMember(index) {
     setError("");
+    setMemberDraftTouched({});
     setEditingOtherIndex(index);
     setMemberDraft({ ...wizardForm.otherMembers[index] });
   }
@@ -711,50 +1460,254 @@ export default function FamilyManagement({
   function cancelOtherMemberDraft() {
     setEditingOtherIndex(null);
     setMemberDraft(null);
+    setMemberDraftTouched({});
     setError("");
   }
 
-  function saveOtherMemberDraft() {
-    if (!memberDraft) return;
-    const first = memberDraft.first_name.trim();
-    const last = memberDraft.last_name.trim();
-    if (!first || !last) {
-      setError("Member first name and last name are required.");
-      return;
+  const wizardStep1Errors = useMemo(() => {
+    const errs = {};
+    if (!String(wizardForm.barangay_id || "").trim()) {
+      errs.barangay_id = "Barangay is required.";
     }
-    if (memberDraft.date_of_birth) {
-      const age = getAge(memberDraft.date_of_birth);
-      const dobDate = new Date(`${memberDraft.date_of_birth}T00:00:00`);
-      if (
-        age === null ||
-        dobDate > new Date() ||
-        dobDate.getFullYear() < 1900
-      ) {
-        setError("Enter a valid date of birth (between 1900 and today).");
-        return;
+    if (!String(wizardForm.address || "").trim()) {
+      errs.address = "Complete household address is required.";
+    }
+    if (
+      String(wizardForm.contact_number || "").length > 0 &&
+      !isValidPhMobile(wizardForm.contact_number)
+    ) {
+      errs.contact_number =
+        "Enter a valid PH mobile number (e.g. 09171234567).";
+    }
+    if (
+      String(wizardForm.alternate_contact || "").length > 0 &&
+      !isValidPhMobile(wizardForm.alternate_contact)
+    ) {
+      errs.alternate_contact =
+        "Enter a valid PH mobile number (e.g. 09171234567).";
+    }
+    return errs;
+  }, [
+    wizardForm.barangay_id,
+    wizardForm.address,
+    wizardForm.contact_number,
+    wizardForm.alternate_contact,
+  ]);
+
+  const wizardStep2Errors = useMemo(() => {
+    const errs = {};
+    const head = wizardForm.head;
+    if (!String(head.first_name || "").trim()) {
+      errs["head.first_name"] = "First name is required.";
+    }
+    if (
+      String(head.middle_name || "").length > 0 &&
+      !String(head.middle_name).trim()
+    ) {
+      errs["head.middle_name"] = "Middle name cannot contain only spaces.";
+    }
+    if (!String(head.last_name || "").trim()) {
+      errs["head.last_name"] = "Last name is required.";
+    }
+    if (!head.date_of_birth) {
+      errs["head.date_of_birth"] = "Date of birth is required.";
+    } else {
+      const headDobError = validateDateOfBirth(head.date_of_birth, {
+        isHead: true,
+      });
+      if (headDobError) {
+        errs["head.date_of_birth"] = headDobError;
       }
     }
-    const candidateName = memberDisplayName(memberDraft)
-      .trim()
-      .toLocaleLowerCase();
-    const headName = memberDisplayName(wizardForm.head)
-      .trim()
-      .toLocaleLowerCase();
-    if (candidateName === headName) {
-      setError(
-        "This member has the same full name as the household head. The household head is already registered in Step 2."
-      );
-      return;
+    if (!["Male", "Female"].includes(String(head.gender || "").trim())) {
+      errs["head.gender"] = "Select a gender";
     }
-    const duplicateInOthers = wizardForm.otherMembers.some((m, idx) => {
-      if (editingOtherIndex !== "new" && idx === editingOtherIndex) return false;
-      return memberDisplayName(m).trim().toLocaleLowerCase() === candidateName;
+    if (
+      String(head.contact_number || "").length > 0 &&
+      !isValidPhMobile(head.contact_number)
+    ) {
+      errs["head.contact_number"] =
+        "Enter a valid PH mobile number (e.g. 09171234567).";
+    }
+    return errs;
+  }, [wizardForm.head]);
+
+  const memberDraftErrors = useMemo(() => {
+    if (!memberDraft) return {};
+    const errs = {};
+    const first = String(memberDraft.first_name || "").trim();
+    const last = String(memberDraft.last_name || "").trim();
+    if (!first) {
+      errs.first_name = "First name is required.";
+    }
+    if (
+      String(memberDraft.middle_name || "").length > 0 &&
+      !String(memberDraft.middle_name).trim()
+    ) {
+      errs.middle_name = "Middle name cannot contain only spaces.";
+    }
+    if (!last) {
+      errs.last_name = "Last name is required.";
+    }
+    if (first && last) {
+      const candidateName = memberDisplayName({
+        ...memberDraft,
+        first_name: first,
+        middle_name: String(memberDraft.middle_name || "").trim(),
+        last_name: last,
+      })
+        .trim()
+        .toLocaleLowerCase();
+      const headName = memberDisplayName(wizardForm.head)
+        .trim()
+        .toLocaleLowerCase();
+      if (candidateName === headName) {
+        errs.first_name =
+          "This member has the same full name as the household head.";
+      } else {
+        const duplicateInOthers = wizardForm.otherMembers.some((m, idx) => {
+          if (editingOtherIndex !== "new" && idx === editingOtherIndex) {
+            return false;
+          }
+          return (
+            memberDisplayName(m).trim().toLocaleLowerCase() === candidateName
+          );
+        });
+        if (duplicateInOthers) {
+          errs.first_name =
+            "Another household member with this full name is already added.";
+        }
+      }
+    }
+    const dobError = validateDateOfBirth(memberDraft.date_of_birth, {
+      isHead: false,
+      relationship: memberDraft.relationship_to_head,
     });
-    if (duplicateInOthers) {
-      setError("Another family member with this full name is already added.");
+    if (dobError) {
+      errs.date_of_birth = dobError;
+    }
+    if (!["Male", "Female"].includes(String(memberDraft.gender || "").trim())) {
+      errs.gender = "Select a gender";
+    }
+    const rel = String(memberDraft.relationship_to_head || "").trim();
+    if (!rel) {
+      errs.relationship_to_head = "Relationship to head is required.";
+    } else if (
+      rel.toLocaleLowerCase() === "household head" ||
+      rel.toLocaleLowerCase() === "self"
+    ) {
+      errs.relationship_to_head =
+        "Relationship cannot be Household Head since the head is already set.";
+    }
+    if (
+      String(memberDraft.contact_number || "").length > 0 &&
+      !isValidPhMobile(memberDraft.contact_number)
+    ) {
+      errs.contact_number =
+        "Enter a valid PH mobile number (e.g. 09171234567).";
+    }
+    return errs;
+  }, [memberDraft, wizardForm.head, wizardForm.otherMembers, editingOtherIndex]);
+
+  const wizardStep4Errors = useMemo(() => {
+    const errs = {};
+    if (
+      wizardForm.assignment_mode === "assign" ||
+      wizardForm.assignment_mode === "venue"
+    ) {
+      if (!wizardForm.assignment_center_id) {
+        errs.assignment_center_id = "Please select an evacuation center.";
+        return errs;
+      }
+      const selectedCenter = centersList.find(
+        (c) => String(c.id) === String(wizardForm.assignment_center_id)
+      );
+      const totalMembersCount = 1 + wizardForm.otherMembers.length;
+      const isDirectCenter =
+        wizardForm.assignment_mode === "venue" ||
+        isDirectVenueCenter(
+          selectedCenter,
+          wizardRooms,
+          wizardRoomsQuery.isLoading
+        );
+
+      if (isDirectCenter) {
+        const available = getCenterRemainingCapacity(selectedCenter);
+        if (selectedCenter && available <= 0) {
+          errs.assignment_center_id =
+            "Selected evacuation center is full. Please choose another center.";
+        } else if (selectedCenter && totalMembersCount > available) {
+          errs.assignment_center_id = `Selected center only has ${available} available space(s), but this household has ${totalMembersCount} member(s).`;
+        }
+        return errs;
+      }
+
+      const hasBldgs = centerHasBuildings(selectedCenter, wizardRooms);
+      if (hasBldgs && !wizardForm.assignment_building_id) {
+        errs.assignment_building_id = "Please select a building.";
+      }
+      if (!wizardForm.assignment_room_id) {
+        if (!hasBldgs || wizardForm.assignment_building_id) {
+          errs.assignment_room_id = "Please select a room.";
+        }
+      } else {
+        const selectedRoom = wizardRooms.find(
+          (r) => String(r.id) === String(wizardForm.assignment_room_id)
+        );
+        if (selectedRoom) {
+          const available = getRoomRemainingCapacity(selectedRoom);
+          if (available <= 0) {
+            errs.assignment_room_id =
+              "Selected room is full. Please choose another room.";
+          } else if (totalMembersCount > available) {
+            errs.assignment_room_id = `Selected room only has ${available} available space(s), but this household has ${totalMembersCount} member(s).`;
+          }
+        }
+      }
+    }
+    return errs;
+  }, [
+    wizardForm.assignment_mode,
+    wizardForm.assignment_center_id,
+    wizardForm.assignment_building_id,
+    wizardForm.assignment_room_id,
+    wizardForm.otherMembers.length,
+    centersList,
+    wizardRooms,
+    wizardRoomsQuery.isLoading,
+  ]);
+
+  function saveOtherMemberDraft() {
+    if (!memberDraft) return;
+    setMemberDraftTouched({
+      first_name: true,
+      middle_name: true,
+      last_name: true,
+      date_of_birth: true,
+      gender: true,
+      relationship_to_head: true,
+      contact_number: true,
+    });
+    const draftFieldMap = [
+      ["first_name", "fm-draft-first-name"],
+      ["middle_name", "fm-draft-middle-name"],
+      ["last_name", "fm-draft-last-name"],
+      ["date_of_birth", "fm-draft-dob"],
+      ["gender", "fm-draft-gender"],
+      ["relationship_to_head", "fm-draft-relationship"],
+      ["contact_number", "fm-draft-contact"],
+    ];
+    const invalidDraftIds = draftFieldMap
+      .filter(([key]) => Boolean(memberDraftErrors[key]))
+      .map(([, domId]) => domId);
+
+    if (invalidDraftIds.length > 0) {
+      focusFirstInvalidField(invalidDraftIds);
       return;
     }
 
+    const first = memberDraft.first_name.trim();
+    const last = memberDraft.last_name.trim();
     const cleanedMember = {
       ...memberDraft,
       first_name: first,
@@ -762,7 +1715,7 @@ export default function FamilyManagement({
       last_name: last,
       suffix: memberDraft.suffix.trim(),
       relationship_to_head:
-        memberDraft.relationship_to_head.trim() || "Family Member",
+        memberDraft.relationship_to_head.trim() || "Spouse",
       is_head_of_family: false,
     };
 
@@ -777,6 +1730,7 @@ export default function FamilyManagement({
     });
     setEditingOtherIndex(null);
     setMemberDraft(null);
+    setMemberDraftTouched({});
     setError("");
   }
 
@@ -788,49 +1742,121 @@ export default function FamilyManagement({
     if (editingOtherIndex === index) {
       setEditingOtherIndex(null);
       setMemberDraft(null);
+      setMemberDraftTouched({});
     }
   }
 
   function validateWizardStep(step) {
     setError("");
     if (step === 1) {
-      if (!wizardForm.barangay_id) {
-        setError("Please select a barangay for this household.");
+      setWizardTouched((prev) => ({
+        ...prev,
+        barangay_id: true,
+        address: true,
+        contact_number: true,
+        alternate_contact: true,
+      }));
+      const step1FieldMap = [
+        ["barangay_id", "fm-wizard-barangay"],
+        ["address", "fm-wizard-address"],
+        ["contact_number", "fm-wizard-contact"],
+        ["alternate_contact", "fm-wizard-alt-contact"],
+      ];
+      const invalidIds = step1FieldMap
+        .filter(([key]) => Boolean(wizardStep1Errors[key]))
+        .map(([, domId]) => domId);
+
+      if (invalidIds.length > 0) {
+        focusFirstInvalidField(invalidIds);
         return false;
-      }
-      if (!wizardForm.address.trim()) {
-        setError("Please enter the complete household address or purok/sitio.");
-        return false;
-      }
-      const head = wizardForm.head;
-      if (!head.first_name.trim() || !head.last_name.trim()) {
-        setError("Household head's first name and last name are required.");
-        return false;
-      }
-      if (head.date_of_birth) {
-        const age = getAge(head.date_of_birth);
-        const dobDate = new Date(`${head.date_of_birth}T00:00:00`);
-        if (
-          age === null ||
-          dobDate > new Date() ||
-          dobDate.getFullYear() < 1900
-        ) {
-          setError(
-            "Please enter a valid date of birth for the household head (not in the future)."
-          );
-          return false;
-        }
       }
       return true;
     }
 
     if (step === 2) {
+      setWizardTouched((prev) => ({
+        ...prev,
+        "head.first_name": true,
+        "head.middle_name": true,
+        "head.last_name": true,
+        "head.date_of_birth": true,
+        "head.gender": true,
+        "head.contact_number": true,
+      }));
+      const step2FieldMap = [
+        ["head.first_name", "fm-head-first-name"],
+        ["head.middle_name", "fm-head-middle-name"],
+        ["head.last_name", "fm-head-last-name"],
+        ["head.date_of_birth", "fm-head-dob"],
+        ["head.gender", "fm-head-gender"],
+        ["head.contact_number", "fm-head-contact"],
+      ];
+      const invalidIds = step2FieldMap
+        .filter(([key]) => Boolean(wizardStep2Errors[key]))
+        .map(([, domId]) => domId);
+
+      if (invalidIds.length > 0) {
+        focusFirstInvalidField(invalidIds);
+        return false;
+      }
+      return true;
+    }
+
+    if (step === 3) {
       if (editingOtherIndex !== null) {
+        setMemberDraftTouched({
+          first_name: true,
+          middle_name: true,
+          last_name: true,
+          date_of_birth: true,
+          gender: true,
+          relationship_to_head: true,
+          contact_number: true,
+        });
+        const draftFieldMap = [
+          ["first_name", "fm-draft-first-name"],
+          ["middle_name", "fm-draft-middle-name"],
+          ["last_name", "fm-draft-last-name"],
+          ["date_of_birth", "fm-draft-dob"],
+          ["gender", "fm-draft-gender"],
+          ["relationship_to_head", "fm-draft-relationship"],
+          ["contact_number", "fm-draft-contact"],
+        ];
+        const invalidDraftIds = draftFieldMap
+          .filter(([key]) => Boolean(memberDraftErrors[key]))
+          .map(([, domId]) => domId);
+        if (invalidDraftIds.length > 0) {
+          focusFirstInvalidField(invalidDraftIds);
+        } else {
+          focusFirstInvalidField(["fm-draft-save-btn", "fm-draft-first-name"]);
+        }
         setError(
           "Please save or cancel the member form you are currently editing before continuing."
         );
         return false;
       }
+
+      for (const m of wizardForm.otherMembers) {
+        if (!String(m.first_name || "").trim() || !String(m.last_name || "").trim()) {
+          setError("All household members must have a valid first and last name.");
+          return false;
+        }
+        const mDobErr = validateDateOfBirth(m.date_of_birth, { isHead: false });
+        if (mDobErr) {
+          setError(mDobErr);
+          return false;
+        }
+        if (!["Male", "Female"].includes(String(m.gender || "").trim())) {
+          setError("Select a gender");
+          return false;
+        }
+        const rel = String(m.relationship_to_head || "").trim().toLocaleLowerCase();
+        if (rel === "household head" || rel === "self") {
+          setError("A household member's relationship cannot be Household Head.");
+          return false;
+        }
+      }
+
       const allMembers = [wizardForm.head, ...wizardForm.otherMembers];
       const names = allMembers.map((m) =>
         memberDisplayName(m).trim().toLocaleLowerCase()
@@ -842,60 +1868,24 @@ export default function FamilyManagement({
       return true;
     }
 
-    if (step === 3) {
-      if (wizardForm.assignment_mode === "assign" || wizardForm.assignment_mode === "venue") {
-        if (!wizardForm.assignment_center_id) {
-          setError(
-            "Select an evacuation center, or choose 'Leave Unassigned'."
-          );
-          return false;
-        }
-        const selectedCenter = centersList.find(
-          (c) => String(c.id) === String(wizardForm.assignment_center_id)
-        );
-        const totalMembersCount = 1 + wizardForm.otherMembers.length;
-        const isDirectCenter =
-          wizardForm.assignment_mode === "venue" ||
-          isDirectVenueCenter(
-            selectedCenter,
-            wizardRooms,
-            wizardRoomsQuery.isLoading
-          );
-
-        if (isDirectCenter) {
-          const available = getCenterRemainingCapacity(selectedCenter);
-          if (selectedCenter && totalMembersCount > available) {
-            setError(
-              `Selected center only has ${available} available space(s), but this household has ${totalMembersCount} member(s).`
-            );
-            return false;
-          }
-          return true;
-        }
-
-        const hasBldgs = centerHasBuildings(selectedCenter, wizardRooms);
-        if (hasBldgs && !wizardForm.assignment_building_id) {
-          setError("Please select a building first.");
-          return false;
-        }
-        if (!wizardForm.assignment_room_id) {
-          setError(
-            hasBldgs
-              ? "Please select a room in the chosen building."
-              : "Please select a room in the chosen evacuation center."
-          );
-          return false;
-        }
-        const selectedRoom = wizardRooms.find(
-          (r) => String(r.id) === String(wizardForm.assignment_room_id)
-        );
-        const available = getRoomRemainingCapacity(selectedRoom);
-        if (selectedRoom && totalMembersCount > available) {
-          setError(
-            `Selected room only has ${available} available space(s), but this household has ${totalMembersCount} member(s).`
-          );
-          return false;
-        }
+    if (step === 4) {
+      setWizardTouched((prev) => ({
+        ...prev,
+        assignment_center_id: true,
+        assignment_building_id: true,
+        assignment_room_id: true,
+      }));
+      const step4FieldMap = [
+        ["assignment_center_id", "fm-wizard-center"],
+        ["assignment_building_id", "fm-wizard-building"],
+        ["assignment_room_id", "fm-wizard-room"],
+      ];
+      const invalidIds = step4FieldMap
+        .filter(([key]) => Boolean(wizardStep4Errors[key]))
+        .map(([, domId]) => domId);
+      if (invalidIds.length > 0) {
+        focusFirstInvalidField(invalidIds);
+        return false;
       }
       return true;
     }
@@ -903,17 +1893,35 @@ export default function FamilyManagement({
     return true;
   }
 
+  function isWizardStepValid(step) {
+    if (step === 1) {
+      return Object.keys(wizardStep1Errors).length === 0;
+    }
+    if (step === 2) {
+      return Object.keys(wizardStep2Errors).length === 0;
+    }
+    if (step === 3) {
+      if (editingOtherIndex !== null) return false;
+      const allMembers = [wizardForm.head, ...wizardForm.otherMembers];
+      const names = allMembers.map((m) =>
+        memberDisplayName(m).trim().toLocaleLowerCase()
+      );
+      if (new Set(names).size !== names.length) return false;
+      return true;
+    }
+    if (step === 4) {
+      return Object.keys(wizardStep4Errors).length === 0;
+    }
+    return true;
+  }
+
   function handleWizardNext() {
     if (!validateWizardStep(wizardStep)) return;
-    setWizardStep((prev) => Math.min(3, prev + 1));
+    setWizardStep((prev) => Math.min(4, prev + 1));
   }
 
   function handleWizardBack() {
     setError("");
-    if (editingOtherIndex !== null) {
-      setEditingOtherIndex(null);
-      setMemberDraft(null);
-    }
     setWizardStep((prev) => Math.max(1, prev - 1));
   }
 
@@ -929,10 +1937,43 @@ export default function FamilyManagement({
     setWizardStep(targetStep);
   }
 
+  function requestSaveNewFamily() {
+    if (saving || savingRef.current) return;
+    if (wizardStep < 4) {
+      handleWizardNext();
+      return;
+    }
+    for (let s = 1; s <= 4; s += 1) {
+      if (!validateWizardStep(s)) {
+        setWizardStep(s);
+        return;
+      }
+    }
+    const headFullName = memberDisplayName(wizardForm.head).trim();
+    const totalMembers = 1 + wizardForm.otherMembers.length;
+    setConfirmDialog({
+      title: "Save this household?",
+      message: `Register household "${headFullName}" (${totalMembers} member${totalMembers === 1 ? "" : "s"})?`,
+      confirmText: "Confirm",
+      cancelText: "Cancel",
+      danger: false,
+      onConfirm: async () => {
+        setConfirmDialog(null);
+        await submitNewFamily();
+      },
+    });
+  }
+
   async function submitNewFamily(event) {
-    event.preventDefault();
-    if (saving) return;
-    for (let s = 1; s <= 3; s += 1) {
+    if (event?.preventDefault) {
+      event.preventDefault();
+    }
+    if (saving || savingRef.current) return;
+    if (wizardStep < 4) {
+      handleWizardNext();
+      return;
+    }
+    for (let s = 1; s <= 4; s += 1) {
       if (!validateWizardStep(s)) {
         setWizardStep(s);
         return;
@@ -952,6 +1993,7 @@ export default function FamilyManagement({
       })),
     ];
 
+    savingRef.current = true;
     setSaving(true);
     setError("");
     try {
@@ -1002,11 +2044,11 @@ export default function FamilyManagement({
           disability_notes: member.is_pwd
             ? member.disability_notes.trim() || null
             : null,
-          is_pregnant: Boolean(member.is_pregnant),
-          is_lactating: Boolean(member.is_lactating),
+          is_pregnant:
+            member.gender === "Female" ? Boolean(member.is_pregnant) : false,
+          is_lactating:
+            member.gender === "Female" ? Boolean(member.is_lactating) : false,
           is_solo_parent: Boolean(member.is_solo_parent),
-          needs_assistance: Boolean(member.needs_assistance),
-          vulnerable_members: member.vulnerable_members.trim() || null,
           medical_notes: member.medical_notes.trim() || null,
           notes: member.notes.trim() || null,
         })),
@@ -1035,7 +2077,10 @@ export default function FamilyManagement({
         result.message ||
           `Household "${headFullName}" (${allMembers.length} member${allMembers.length === 1 ? "" : "s"}) registered successfully.`
       );
-      if (createdFamily?.id) {
+      setIsAddWizardOpen(false);
+      if (createdFamily?.id && !hideScreenContent) {
+        shouldResetDetailScrollRef.current = true;
+        setDetailMenuOpen(false);
         setSelectedFamilySeed(createdFamily);
         setSelectedFamilyId(createdFamily.id);
         setActiveScreen("household-detail");
@@ -1045,45 +2090,189 @@ export default function FamilyManagement({
     } catch (requestError) {
       setError(requestError.message || "Household could not be registered.");
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
   }
 
   // =========================================================
-  // EDIT HOUSEHOLD HANDLERS
+  // EDIT HOUSEHOLD HANDLERS & VALIDATION
   // =========================================================
+  useEffect(() => {
+    if (modal !== "edit-household" || !familyDetailQuery.data?.members) return;
+    if (editHouseholdForm.head_resident_id) return;
+    const headMember = familyDetailQuery.data.members.find((m) => m.is_head_of_family);
+    if (!headMember?.id) return;
+    const headId = String(headMember.id);
+    setEditHouseholdForm((prev) =>
+      prev.head_resident_id ? prev : { ...prev, head_resident_id: headId }
+    );
+    setEditHouseholdInitial((prev) =>
+      prev && !prev.head_resident_id ? { ...prev, head_resident_id: headId } : prev
+    );
+  }, [modal, familyDetailQuery.data, editHouseholdForm.head_resident_id]);
+
+  function touchEditHouseholdField(field) {
+    setEditHouseholdTouched((prev) =>
+      prev[field] ? prev : { ...prev, [field]: true }
+    );
+  }
+
+  const editHouseholdErrors = useMemo(() => {
+    if (modal !== "edit-household") return {};
+    const errs = {};
+    if (!String(editHouseholdForm.barangay_id || "").trim()) {
+      errs.barangay_id = "Barangay is required.";
+    }
+    if (!String(editHouseholdForm.address || "").trim()) {
+      errs.address = "Household address is required.";
+    }
+    if (
+      String(editHouseholdForm.contact_number || "").length > 0 &&
+      !isValidPhMobile(editHouseholdForm.contact_number)
+    ) {
+      errs.contact_number = "Enter a valid mobile number, e.g. 09171234567";
+    }
+    if (
+      String(editHouseholdForm.alternate_contact || "").length > 0 &&
+      !isValidPhMobile(editHouseholdForm.alternate_contact)
+    ) {
+      errs.alternate_contact = "Enter a valid mobile number, e.g. 09171234567";
+    } else if (
+      String(editHouseholdForm.contact_number || "").trim() &&
+      String(editHouseholdForm.alternate_contact || "").trim() &&
+      normalizePhPhoneForCompare(editHouseholdForm.contact_number) ===
+        normalizePhPhoneForCompare(editHouseholdForm.alternate_contact)
+    ) {
+      errs.alternate_contact =
+        "Alternate Contact must not be the same as Contact Number.";
+    }
+    if (String(editHouseholdForm.remarks || "").length > 500) {
+      errs.remarks = "Household remarks must be 500 characters or fewer.";
+    }
+    return errs;
+  }, [modal, editHouseholdForm]);
+
+  const isEditHouseholdValid = Object.keys(editHouseholdErrors).length === 0;
+
   function openEditHouseholdModal(fam = activeFamily) {
     if (!fam) return;
     setSelectedFamilySeed(fam);
     setSelectedFamilyId(fam.id);
     const headMember = fam.members?.find((m) => m.is_head_of_family);
-    setEditHouseholdForm({
+    const initialData = {
       head_name: fam.head_name || "",
       head_resident_id: headMember?.id ? String(headMember.id) : "",
       barangay_id: fam.barangay_id ? String(fam.barangay_id) : "",
-      contact_number: fam.contact_number || "",
-      alternate_contact:
-        fam.alternate_contact || headMember?.alternate_contact || "",
+      contact_number: sanitizePhoneInput(fam.contact_number || ""),
+      alternate_contact: sanitizePhoneInput(
+        fam.alternate_contact || headMember?.alternate_contact || ""
+      ),
       address: fam.address || headMember?.address || "",
-      remarks: fam.remarks || headMember?.remarks || "",
-    });
+      remarks: (fam.remarks || headMember?.remarks || "").slice(0, 500),
+    };
+    setEditHouseholdForm(initialData);
+    setEditHouseholdInitial(initialData);
+    setEditHouseholdTouched({});
     setError("");
     setModal("edit-household");
   }
 
-  async function submitEditHousehold(event) {
-    event.preventDefault();
-    if (!activeFamily) return;
-    if (!editHouseholdForm.head_name.trim() && !editHouseholdForm.head_resident_id) {
-      setError("Household head is required.");
+  function handleEditBarangayChange(nextBarangayId) {
+    const prevBarangayId = String(editHouseholdForm.barangay_id || "");
+    const initialBarangayId = String(editHouseholdInitial?.barangay_id || "");
+    if (nextBarangayId === prevBarangayId) return;
+    if (nextBarangayId && nextBarangayId !== initialBarangayId) {
+      const targetBrgy = barangays.find(
+        (b) => String(b.id) === String(nextBarangayId)
+      );
+      setConfirmDialog({
+        title: "Change Barangay",
+        message: targetBrgy?.name
+          ? `Move this household to another barangay (${targetBrgy.name})? The household code stays as it is.`
+          : "Move this household to another barangay? The household code stays as it is.",
+        confirmText: "Move Household",
+        cancelText: "Keep Current",
+        danger: false,
+        onConfirm: () => {
+          setConfirmDialog(null);
+          setEditHouseholdForm((prev) => ({
+            ...prev,
+            barangay_id: nextBarangayId,
+          }));
+          touchEditHouseholdField("barangay_id");
+        },
+      });
       return;
     }
+    setEditHouseholdForm((prev) => ({
+      ...prev,
+      barangay_id: nextBarangayId,
+    }));
+    touchEditHouseholdField("barangay_id");
+  }
+
+  function openHeadProfileFromEdit() {
+    const headId = editHouseholdForm.head_resident_id;
+    const headMember =
+      activeFamily?.members?.find((m) => String(m.id) === String(headId)) ||
+      activeFamily?.members?.find((m) => m.is_head_of_family);
+    if (!headMember) return;
+
+    const navigateToHead = () => {
+      forceCloseModal();
+      setActiveScreen("member-detail");
+      setSelectedMemberId(headMember.id);
+    };
+
+    if (isEditHouseholdDirty) {
+      setConfirmDialog({
+        title: "Discard unsaved changes?",
+        message:
+          "You have unsaved changes. Are you sure you want to leave this form to view the household head's profile?",
+        confirmText: "View Profile",
+        cancelText: "Keep Editing",
+        danger: false,
+        onConfirm: () => {
+          setConfirmDialog(null);
+          navigateToHead();
+        },
+      });
+      return;
+    }
+    navigateToHead();
+  }
+
+  async function submitEditHousehold(event) {
+    event.preventDefault();
+    if (!activeFamily || savingRef.current) return;
+    setEditHouseholdTouched({
+      barangay_id: true,
+      address: true,
+      contact_number: true,
+      alternate_contact: true,
+      remarks: true,
+    });
+    if (!isEditHouseholdValid || !isEditHouseholdDirty) {
+      focusFirstInvalidField([
+        editHouseholdErrors.barangay_id ? "fm-edit-hh-barangay" : null,
+        editHouseholdErrors.address ? "fm-edit-hh-address" : null,
+        editHouseholdErrors.contact_number ? "fm-edit-hh-contact" : null,
+        editHouseholdErrors.alternate_contact ? "fm-edit-hh-alt-contact" : null,
+        editHouseholdErrors.remarks ? "fm-edit-hh-remarks" : null,
+      ].filter(Boolean));
+      return;
+    }
+    savingRef.current = true;
     setSaving(true);
     setError("");
     try {
+      const headChanged =
+        editHouseholdForm.head_resident_id &&
+        String(editHouseholdForm.head_resident_id) !==
+          String(editHouseholdInitial?.head_resident_id || "");
       const payload = {
-        head_name: editHouseholdForm.head_name.trim() || undefined,
-        head_resident_id: editHouseholdForm.head_resident_id
+        head_resident_id: headChanged
           ? Number(editHouseholdForm.head_resident_id)
           : undefined,
         barangay_id: editHouseholdForm.barangay_id
@@ -1091,16 +2280,18 @@ export default function FamilyManagement({
           : undefined,
         contact_number: editHouseholdForm.contact_number.trim() || null,
         alternate_contact: editHouseholdForm.alternate_contact.trim() || null,
-        address: editHouseholdForm.address.trim() || null,
+        address: editHouseholdForm.address.trim(),
         remarks: editHouseholdForm.remarks.trim() || null,
       };
       const result = await api.updateFamily(activeFamily.id, payload);
       await refreshAllData(activeFamily.id);
       setNotice(result.message || "Household information updated.");
-      setModal("");
+      forceCloseModal();
     } catch (requestError) {
       setError(requestError.message || "Failed to update household details.");
+      if (modalBodyRef.current) modalBodyRef.current.scrollTop = 0;
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
   }
@@ -1108,11 +2299,122 @@ export default function FamilyManagement({
   // =========================================================
   // ADD / EDIT / DELETE / PROMOTE MEMBER HANDLERS (Page D & Page E)
   // =========================================================
+  function touchMemberModalField(field) {
+    setMemberModalTouched((prev) =>
+      prev[field] ? prev : { ...prev, [field]: true }
+    );
+  }
+
+  const memberModalErrors = useMemo(() => {
+    if (modal !== "member-form") return {};
+    const errs = {};
+    const first = String(memberModalForm.first_name || "").trim();
+    const middle = String(memberModalForm.middle_name || "");
+    const last = String(memberModalForm.last_name || "").trim();
+
+    if (!first || !hasNameLetters(first)) {
+      errs.first_name = "First name is required.";
+    }
+    if (middle.length > 0 && (!middle.trim() || !hasNameLetters(middle))) {
+      errs.middle_name = "Middle name must contain valid letters.";
+    }
+    if (!last || !hasNameLetters(last)) {
+      errs.last_name = "Last name is required.";
+    }
+
+    const isHead = Boolean(memberModalForm.is_head_of_family);
+    const dobError = validateDateOfBirth(memberModalForm.date_of_birth, {
+      isHead,
+      relationship: memberModalForm.relationship_to_head,
+    });
+    if (dobError) {
+      errs.date_of_birth = dobError;
+    }
+    if (!["Male", "Female"].includes(String(memberModalForm.gender || "").trim())) {
+      errs.gender = "Select a gender";
+    }
+
+    if (!isHead) {
+      const rel = String(memberModalForm.relationship_to_head || "").trim();
+      if (!rel) {
+        errs.relationship_to_head = "Relationship to head is required.";
+      } else if (
+        rel.toLocaleLowerCase() === "household head" ||
+        rel.toLocaleLowerCase() === "self"
+      ) {
+        errs.relationship_to_head =
+          "Relationship cannot be Household Head since the head already exists.";
+      }
+    }
+
+    if (
+      String(memberModalForm.contact_number || "").length > 0 &&
+      !isValidPhMobile(memberModalForm.contact_number)
+    ) {
+      errs.contact_number = "Enter a valid mobile number, e.g. 09171234567";
+    }
+    if (String(memberModalForm.medical_notes || "").length > 500) {
+      errs.medical_notes = "Medical notes must be 500 characters or fewer.";
+    }
+    if (String(memberModalForm.notes || "").length > 500) {
+      errs.notes = "Additional notes must be 500 characters or fewer.";
+    }
+    return errs;
+  }, [modal, memberModalForm]);
+
+  const memberDuplicateWarning = useMemo(() => {
+    if (modal !== "member-form" || !activeFamily?.members) return "";
+    const first = String(memberModalForm.first_name || "").trim();
+    const last = String(memberModalForm.last_name || "").trim();
+    if (!first || !last) return "";
+    const candidateName = normalizeNameForCompare({
+      ...memberModalForm,
+      first_name: first,
+      middle_name: String(memberModalForm.middle_name || "").trim(),
+      last_name: last,
+    });
+    if (!candidateName) return "";
+    const candidateDob = String(memberModalForm.date_of_birth || "").trim();
+
+    const matches = activeFamily.members.filter((m) => {
+      if (
+        memberModalMode === "edit" &&
+        Number(m.id) === Number(memberModalTargetId)
+      ) {
+        return false;
+      }
+      return normalizeNameForCompare(m) === candidateName;
+    });
+    if (matches.length === 0) return "";
+
+    if (candidateDob) {
+      const exactMatch = matches.find(
+        (m) => String(m.date_of_birth || "").trim() === candidateDob
+      );
+      if (exactMatch) {
+        return `Warning: A member named "${memberDisplayName(exactMatch)}" with date of birth ${candidateDob} already exists in this household.`;
+      }
+    }
+    if (memberModalMode === "add") {
+      return `Warning: A member named "${memberDisplayName(matches[0])}" already exists in this household.`;
+    }
+    return "";
+  }, [
+    modal,
+    activeFamily,
+    memberModalForm,
+    memberModalMode,
+    memberModalTargetId,
+  ]);
+
   function openAddMemberModal() {
     if (!activeFamily) return;
+    const initial = emptyMember(false);
     setMemberModalMode("add");
     setMemberModalTargetId(null);
-    setMemberModalForm(emptyMember(false));
+    setMemberModalForm(initial);
+    setMemberModalInitial(initial);
+    setMemberModalTouched({});
     setError("");
     setModal("member-form");
   }
@@ -1125,17 +2427,24 @@ export default function FamilyManagement({
     const normalizedRel =
       member.is_head_of_family || rel.toLowerCase() === "self"
         ? "Household Head"
-        : rel || "Spouse";
-    setMemberModalForm({
+        : rel || "";
+    const rawGender = String(member.gender || "").trim();
+    const normalizedGender =
+      rawGender.toLowerCase() === "male"
+        ? "Male"
+        : rawGender.toLowerCase() === "female"
+          ? "Female"
+          : "";
+    const initial = {
       first_name: member.first_name || "",
       middle_name: member.middle_name || "",
       last_name: member.last_name || "",
       suffix: member.suffix || "",
       date_of_birth: member.date_of_birth || "",
-      gender: member.gender || "",
+      gender: normalizedGender,
       relationship_to_head: normalizedRel,
-      contact_number: member.contact_number || "",
-      alternate_contact: member.alternate_contact || "",
+      contact_number: sanitizePhoneInput(member.contact_number || ""),
+      alternate_contact: sanitizePhoneInput(member.alternate_contact || ""),
       is_head_of_family: Boolean(member.is_head_of_family),
       is_pwd: Boolean(member.is_pwd),
       disability_type: member.disability_type || "",
@@ -1145,49 +2454,67 @@ export default function FamilyManagement({
       is_solo_parent: Boolean(member.is_solo_parent),
       needs_assistance: Boolean(member.needs_assistance),
       vulnerable_members: member.vulnerable_members || "",
-      medical_notes: member.medical_notes || "",
-      notes: member.notes || "",
-    });
+      medical_notes: (member.medical_notes || "").slice(0, 500),
+      notes: (member.notes || "").slice(0, 500),
+    };
+    setMemberModalForm(initial);
+    setMemberModalInitial(initial);
+    setMemberModalTouched({});
     setError("");
     setModal("member-form");
   }
 
   async function submitMemberModal(event) {
     event.preventDefault();
-    if (!activeFamily) return;
-    if (
-      !memberModalForm.first_name.trim() ||
-      !memberModalForm.last_name.trim()
-    ) {
-      setError("First name and last name are required.");
+    if (!activeFamily || savingRef.current) return;
+    setMemberModalTouched({
+      first_name: true,
+      middle_name: true,
+      last_name: true,
+      date_of_birth: true,
+      gender: true,
+      relationship_to_head: true,
+      contact_number: true,
+      medical_notes: true,
+      notes: true,
+    });
+    if (Object.keys(memberModalErrors).length > 0) {
+      setError("Please check the highlighted fields before saving.");
+      focusFirstInvalidField([
+        memberModalErrors.first_name ? "fm-modal-member-first-name" : null,
+        memberModalErrors.middle_name ? "fm-modal-member-middle-name" : null,
+        memberModalErrors.last_name ? "fm-modal-member-last-name" : null,
+        memberModalErrors.date_of_birth ? "fm-modal-member-dob" : null,
+        memberModalErrors.gender ? "fm-modal-member-gender" : null,
+        memberModalErrors.relationship_to_head
+          ? "fm-modal-member-relationship"
+          : null,
+        memberModalErrors.contact_number ? "fm-modal-member-contact" : null,
+        memberModalErrors.medical_notes ? "fm-modal-member-medical-notes" : null,
+        memberModalErrors.notes ? "fm-modal-member-notes" : null,
+      ].filter(Boolean));
       return;
     }
-    if (memberModalForm.date_of_birth) {
-      const age = getAge(memberModalForm.date_of_birth);
-      const dobDate = new Date(`${memberModalForm.date_of_birth}T00:00:00`);
-      if (
-        age === null ||
-        dobDate > new Date() ||
-        dobDate.getFullYear() < 1900
-      ) {
-        setError("Please enter a valid date of birth (not in the future).");
-        return;
-      }
-    }
 
+    const memberAge = getExactAge(memberModalForm.date_of_birth);
+    const allowMaternalFlags =
+      memberModalForm.gender === "Female" &&
+      !(memberAge !== null && memberAge >= 0 && memberAge < 12);
+
+    savingRef.current = true;
     setSaving(true);
     setError("");
     try {
       const payload = {
-        first_name: memberModalForm.first_name.trim(),
-        middle_name: memberModalForm.middle_name.trim() || null,
-        last_name: memberModalForm.last_name.trim(),
+        first_name: formatNameOnBlur(memberModalForm.first_name),
+        middle_name: formatNameOnBlur(memberModalForm.middle_name) || null,
+        last_name: formatNameOnBlur(memberModalForm.last_name),
         suffix: memberModalForm.suffix.trim() || null,
         date_of_birth: memberModalForm.date_of_birth || null,
         gender: memberModalForm.gender || null,
         relationship_to_head: memberModalForm.is_head_of_family
           ? "Household Head"
-          : memberModalForm.relationship_to_head.trim() || "Family Member",
+          : memberModalForm.relationship_to_head.trim(),
         contact_number: memberModalForm.contact_number.trim() || null,
         alternate_contact: memberModalForm.alternate_contact.trim() || null,
         is_head_of_family: Boolean(memberModalForm.is_head_of_family),
@@ -1198,11 +2525,13 @@ export default function FamilyManagement({
         disability_notes: memberModalForm.is_pwd
           ? memberModalForm.disability_notes.trim() || null
           : null,
-        is_pregnant: Boolean(memberModalForm.is_pregnant),
-        is_lactating: Boolean(memberModalForm.is_lactating),
+        is_pregnant: allowMaternalFlags
+          ? Boolean(memberModalForm.is_pregnant)
+          : false,
+        is_lactating: allowMaternalFlags
+          ? Boolean(memberModalForm.is_lactating)
+          : false,
         is_solo_parent: Boolean(memberModalForm.is_solo_parent),
-        needs_assistance: Boolean(memberModalForm.needs_assistance),
-        vulnerable_members: memberModalForm.vulnerable_members.trim() || null,
         medical_notes: memberModalForm.medical_notes.trim() || null,
         notes: memberModalForm.notes.trim() || null,
       };
@@ -1220,10 +2549,16 @@ export default function FamilyManagement({
         await refreshAllData(activeFamily.id);
         setNotice(res.message || "Family member updated.");
       }
-      setModal("");
+      forceCloseModal();
     } catch (requestError) {
-      setError(requestError.message || "Failed to save family member.");
+      const rawMessage = String(requestError?.message || "").trim();
+      const friendlyMessage = /^Request failed \(5\d\d\)$/i.test(rawMessage)
+        ? "We couldn't save the member details right now. Please try again."
+        : rawMessage || "We couldn't save the member details. Please try again.";
+      setError(friendlyMessage);
+      if (modalBodyRef.current) modalBodyRef.current.scrollTop = 0;
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
   }
@@ -1308,6 +2643,7 @@ export default function FamilyManagement({
           const res = await api.deleteFamily(fam.id);
           setConfirmDialog(null);
           if (Number(selectedFamilyId) === Number(fam.id)) {
+            setDetailMenuOpen(false);
             setActiveScreen("list");
             setSelectedFamilyId(null);
           }
@@ -1659,133 +2995,364 @@ export default function FamilyManagement({
   // =========================================================
   // REUSABLE PERSONAL & VULNERABILITY FORM FIELDS
   // =========================================================
-  function renderMemberFormFields(memberObj, onChangeField, isHeadLocked = false) {
-    const calculatedAge = getAge(memberObj.date_of_birth);
+  function renderMemberFormFields(
+    memberObj,
+    onChangeField,
+    isHeadLocked = false,
+    fieldValidation = {}
+  ) {
+    const {
+      idPrefix = isHeadLocked ? "fm-head" : "fm-member",
+      errors = {},
+      touched = {},
+      onTouchField = () => {},
+    } = fieldValidation;
+    const calculatedAge = getExactAge(memberObj.date_of_birth);
+    const isUnder12 = calculatedAge !== null && calculatedAge >= 0 && calculatedAge < 12;
+    const showMaternalCheckboxes = memberObj.gender === "Female" && !isUnder12;
+    const showErr = (field) =>
+      touched[field] && errors[field] ? errors[field] : "";
+    const allowedRelationships = isHeadLocked
+      ? RELATIONSHIP_OPTIONS
+      : RELATIONSHIP_OPTIONS.filter(
+          (rel) =>
+            rel.toLowerCase() !== "household head" &&
+            rel.toLowerCase() !== "self"
+        );
+
     return (
       <div className="fm-member-fields-block">
         <div className="fm-form-grid-4">
-          <label className="fm-field">
+          <label
+            className={`fm-field ${showErr("first_name") ? "has-error" : ""}`}
+          >
             <span>
               First Name <strong className="fm-req">*</strong>
             </span>
             <input
+              id={`${idPrefix}-first-name`}
               type="text"
               value={memberObj.first_name}
-              onChange={(e) => onChangeField("first_name", e.target.value)}
+              onChange={(e) => {
+                const cleaned = sanitizeNameInput(e.target.value);
+                onChangeField("first_name", cleaned);
+                if (touched.first_name || cleaned !== "") {
+                  onTouchField("first_name");
+                }
+              }}
+              onPaste={(e) =>
+                handleNamePaste(e, (cleaned) => {
+                  onChangeField("first_name", cleaned);
+                  onTouchField("first_name");
+                })
+              }
+              onBlur={() => {
+                onChangeField("first_name", formatNameOnBlur(memberObj.first_name));
+                onTouchField("first_name");
+              }}
+              aria-invalid={Boolean(showErr("first_name"))}
+              aria-describedby={
+                showErr("first_name") ? `${idPrefix}-first-name-error` : undefined
+              }
               placeholder="e.g. Juan"
-              required
             />
+            {showErr("first_name") && (
+              <small
+                id={`${idPrefix}-first-name-error`}
+                className="fm-field-error"
+                role="alert"
+              >
+                {showErr("first_name")}
+              </small>
+            )}
           </label>
-          <label className="fm-field">
+          <label
+            className={`fm-field ${showErr("middle_name") ? "has-error" : ""}`}
+          >
             <span>Middle Name</span>
             <input
+              id={`${idPrefix}-middle-name`}
               type="text"
               value={memberObj.middle_name}
-              onChange={(e) => onChangeField("middle_name", e.target.value)}
+              onChange={(e) => {
+                const cleaned = sanitizeNameInput(e.target.value);
+                onChangeField("middle_name", cleaned);
+                if (touched.middle_name || cleaned !== "") {
+                  onTouchField("middle_name");
+                }
+              }}
+              onPaste={(e) =>
+                handleNamePaste(e, (cleaned) => {
+                  onChangeField("middle_name", cleaned);
+                  onTouchField("middle_name");
+                })
+              }
+              onBlur={() => {
+                onChangeField("middle_name", formatNameOnBlur(memberObj.middle_name));
+                onTouchField("middle_name");
+              }}
+              aria-invalid={Boolean(showErr("middle_name"))}
+              aria-describedby={
+                showErr("middle_name") ? `${idPrefix}-middle-name-error` : undefined
+              }
               placeholder="Optional"
             />
+            {showErr("middle_name") && (
+              <small
+                id={`${idPrefix}-middle-name-error`}
+                className="fm-field-error"
+                role="alert"
+              >
+                {showErr("middle_name")}
+              </small>
+            )}
           </label>
-          <label className="fm-field">
+          <label
+            className={`fm-field ${showErr("last_name") ? "has-error" : ""}`}
+          >
             <span>
               Last Name <strong className="fm-req">*</strong>
             </span>
             <input
+              id={`${idPrefix}-last-name`}
               type="text"
               value={memberObj.last_name}
-              onChange={(e) => onChangeField("last_name", e.target.value)}
+              onChange={(e) => {
+                const cleaned = sanitizeNameInput(e.target.value);
+                onChangeField("last_name", cleaned);
+                if (touched.last_name || cleaned !== "") {
+                  onTouchField("last_name");
+                }
+              }}
+              onPaste={(e) =>
+                handleNamePaste(e, (cleaned) => {
+                  onChangeField("last_name", cleaned);
+                  onTouchField("last_name");
+                })
+              }
+              onBlur={() => {
+                onChangeField("last_name", formatNameOnBlur(memberObj.last_name));
+                onTouchField("last_name");
+              }}
+              aria-invalid={Boolean(showErr("last_name"))}
+              aria-describedby={
+                showErr("last_name") ? `${idPrefix}-last-name-error` : undefined
+              }
               placeholder="e.g. Dela Cruz"
-              required
             />
+            {showErr("last_name") && (
+              <small
+                id={`${idPrefix}-last-name-error`}
+                className="fm-field-error"
+                role="alert"
+              >
+                {showErr("last_name")}
+              </small>
+            )}
           </label>
           <label className="fm-field">
             <span>Suffix</span>
-            <input
-              type="text"
-              value={memberObj.suffix}
+            <select
+              id={`${idPrefix}-suffix`}
+              value={memberObj.suffix || ""}
               onChange={(e) => onChangeField("suffix", e.target.value)}
-              placeholder="Jr., Sr., III"
-            />
+            >
+              <option value="">None</option>
+              {memberObj.suffix &&
+                !SUFFIX_OPTIONS.includes(memberObj.suffix) && (
+                  <option value={memberObj.suffix}>{memberObj.suffix}</option>
+                )}
+              {SUFFIX_OPTIONS.map((sfx) => (
+                <option key={sfx} value={sfx}>
+                  {sfx}
+                </option>
+              ))}
+            </select>
           </label>
         </div>
 
-        <div className="fm-form-grid-4">
-          <label className="fm-field">
-            <span>Date of Birth</span>
+        <div className={isHeadLocked ? "fm-form-grid-3" : "fm-form-grid-4"}>
+          <label
+            className={`fm-field ${showErr("date_of_birth") ? "has-error" : ""}`}
+          >
+            <span>
+              Date of Birth{" "}
+              {isHeadLocked && <strong className="fm-req">*</strong>}
+            </span>
             <input
+              id={`${idPrefix}-dob`}
               type="date"
-              max={new Date().toISOString().split("T")[0]}
+              min={getLocalMinDobIso()}
+              max={getLocalTodayIso()}
               value={memberObj.date_of_birth}
-              onChange={(e) => onChangeField("date_of_birth", e.target.value)}
+              onChange={(e) => {
+                const nextDob = e.target.value;
+                onChangeField("date_of_birth", nextDob);
+                const nextAge = getExactAge(nextDob);
+                if (nextAge !== null && nextAge >= 0 && nextAge < 12) {
+                  onChangeField("is_pregnant", false);
+                  onChangeField("is_lactating", false);
+                }
+                onTouchField("date_of_birth");
+              }}
+              onBlur={() => onTouchField("date_of_birth")}
+              aria-invalid={Boolean(showErr("date_of_birth"))}
+              aria-describedby={
+                showErr("date_of_birth") ? `${idPrefix}-dob-error` : undefined
+              }
             />
+            {showErr("date_of_birth") && (
+              <small
+                id={`${idPrefix}-dob-error`}
+                className="fm-field-error"
+                role="alert"
+              >
+                {showErr("date_of_birth")}
+              </small>
+            )}
           </label>
           <div className="fm-field">
             <span>Age</span>
             <div className="fm-readonly-box">
-              {calculatedAge !== null
+              {calculatedAge !== null && calculatedAge >= 0
                 ? `${calculatedAge} year${calculatedAge === 1 ? "" : "s"} old`
                 : "Calculated from birth date"}
             </div>
           </div>
-          <label className="fm-field">
-            <span>Gender</span>
+          <label className={`fm-field ${showErr("gender") ? "has-error" : ""}`}>
+            <span>
+              Gender <strong className="fm-req">*</strong>
+            </span>
             <select
-              value={memberObj.gender}
-              onChange={(e) => onChangeField("gender", e.target.value)}
+              id={`${idPrefix}-gender`}
+              name="gender"
+              value={memberObj.gender || ""}
+              onChange={(e) => {
+                const nextGender = e.target.value;
+                onChangeField("gender", nextGender);
+                onTouchField("gender");
+                if (nextGender !== "Female") {
+                  onChangeField("is_pregnant", false);
+                  onChangeField("is_lactating", false);
+                }
+              }}
+              onBlur={() => onTouchField("gender")}
+              aria-invalid={Boolean(showErr("gender"))}
+              aria-describedby={
+                showErr("gender") ? `${idPrefix}-gender-error` : undefined
+              }
             >
-              <option value="">Not specified</option>
-              <option value="Female">Female</option>
+              <option value="">Select gender</option>
               <option value="Male">Male</option>
+              <option value="Female">Female</option>
             </select>
+            {showErr("gender") && (
+              <small
+                id={`${idPrefix}-gender-error`}
+                className="fm-field-error"
+                role="alert"
+              >
+                {showErr("gender")}
+              </small>
+            )}
           </label>
-          <label className="fm-field">
-            <span>Relationship to Head</span>
-            {isHeadLocked ? (
-              <div className="fm-readonly-box fm-readonly-badge">
-                <FontAwesomeIcon icon={faUserCheck} /> Household Head
-              </div>
-            ) : (
+          {!isHeadLocked && (
+            <label
+              className={`fm-field ${showErr("relationship_to_head") ? "has-error" : ""}`}
+            >
+              <span>
+                Relationship to Head <strong className="fm-req">*</strong>
+              </span>
               <select
-                value={memberObj.relationship_to_head || "Spouse"}
-                onChange={(e) =>
-                  onChangeField("relationship_to_head", e.target.value)
+                id={`${idPrefix}-relationship`}
+                value={memberObj.relationship_to_head || ""}
+                onChange={(e) => {
+                  const nextRel = e.target.value;
+                  onChangeField("relationship_to_head", nextRel);
+                  onTouchField("relationship_to_head");
+                  if (nextRel === "Spouse" && memberObj.date_of_birth) {
+                    onTouchField("date_of_birth");
+                  }
+                }}
+                onBlur={() => onTouchField("relationship_to_head")}
+                aria-invalid={Boolean(showErr("relationship_to_head"))}
+                aria-describedby={
+                  showErr("relationship_to_head")
+                    ? `${idPrefix}-relationship-error`
+                    : undefined
                 }
               >
+                <option value="">Select relationship</option>
                 {memberObj.relationship_to_head &&
-                  !RELATIONSHIP_OPTIONS.includes(memberObj.relationship_to_head) && (
+                  !allowedRelationships.includes(
+                    memberObj.relationship_to_head
+                  ) && (
                     <option value={memberObj.relationship_to_head}>
                       {memberObj.relationship_to_head}
                     </option>
                   )}
-                {RELATIONSHIP_OPTIONS.map((rel) => (
+                {allowedRelationships.map((rel) => (
                   <option key={rel} value={rel}>
                     {rel}
                   </option>
                 ))}
               </select>
-            )}
-          </label>
+              {showErr("relationship_to_head") && (
+                <small
+                  id={`${idPrefix}-relationship-error`}
+                  className="fm-field-error"
+                  role="alert"
+                >
+                  {showErr("relationship_to_head")}
+                </small>
+              )}
+            </label>
+          )}
         </div>
 
-        <div className="fm-form-grid-2">
-          <label className="fm-field">
+        <div className="fm-form-grid-1">
+          <label
+            className={`fm-field ${showErr("contact_number") ? "has-error" : ""}`}
+          >
             <span>Contact Number</span>
             <input
-              type="text"
+              id={`${idPrefix}-contact`}
+              type="tel"
+              inputMode="tel"
+              maxLength={13}
               value={memberObj.contact_number}
-              onChange={(e) => onChangeField("contact_number", e.target.value)}
-              placeholder="Optional mobile or phone number"
-            />
-          </label>
-          <label className="fm-field">
-            <span>Special Needs Summary (Optional)</span>
-            <input
-              type="text"
-              value={memberObj.vulnerable_members}
-              onChange={(e) =>
-                onChangeField("vulnerable_members", e.target.value)
+              onKeyDown={handlePhoneKeyDown}
+              onChange={(e) => {
+                const cleaned = sanitizePhoneInput(e.target.value);
+                onChangeField("contact_number", cleaned);
+                if (touched.contact_number || cleaned !== "") {
+                  onTouchField("contact_number");
+                }
+              }}
+              onPaste={(e) =>
+                handlePhonePaste(e, (cleaned) => {
+                  onChangeField("contact_number", cleaned);
+                  if (touched.contact_number || cleaned !== "") {
+                    onTouchField("contact_number");
+                  }
+                })
               }
-              placeholder="e.g. Bedridden, Wheelchair user, Infant"
+              onBlur={() => onTouchField("contact_number")}
+              aria-invalid={Boolean(showErr("contact_number"))}
+              aria-describedby={
+                showErr("contact_number") ? `${idPrefix}-contact-error` : undefined
+              }
+              placeholder="e.g. 09171234567 (optional)"
             />
+            {showErr("contact_number") && (
+              <small
+                id={`${idPrefix}-contact-error`}
+                className="fm-field-error"
+                role="alert"
+              >
+                {showErr("contact_number")}
+              </small>
+            )}
           </label>
         </div>
 
@@ -1802,24 +3369,30 @@ export default function FamilyManagement({
               />
               <span>Person with Disability (PWD)</span>
             </label>
-            <label className="fm-check-pill">
-              <input
-                type="checkbox"
-                checked={Boolean(memberObj.is_pregnant)}
-                onChange={(e) => onChangeField("is_pregnant", e.target.checked)}
-              />
-              <span>Pregnant</span>
-            </label>
-            <label className="fm-check-pill">
-              <input
-                type="checkbox"
-                checked={Boolean(memberObj.is_lactating)}
-                onChange={(e) =>
-                  onChangeField("is_lactating", e.target.checked)
-                }
-              />
-              <span>Lactating Mother</span>
-            </label>
+            {showMaternalCheckboxes && (
+              <>
+                <label className="fm-check-pill">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(memberObj.is_pregnant)}
+                    onChange={(e) =>
+                      onChangeField("is_pregnant", e.target.checked)
+                    }
+                  />
+                  <span>Pregnant</span>
+                </label>
+                <label className="fm-check-pill">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(memberObj.is_lactating)}
+                    onChange={(e) =>
+                      onChangeField("is_lactating", e.target.checked)
+                    }
+                  />
+                  <span>Lactating Mother</span>
+                </label>
+              </>
+            )}
             <label className="fm-check-pill">
               <input
                 type="checkbox"
@@ -1829,16 +3402,6 @@ export default function FamilyManagement({
                 }
               />
               <span>Solo Parent</span>
-            </label>
-            <label className="fm-check-pill">
-              <input
-                type="checkbox"
-                checked={Boolean(memberObj.needs_assistance)}
-                onChange={(e) =>
-                  onChangeField("needs_assistance", e.target.checked)
-                }
-              />
-              <span>Needs Evacuation Assistance</span>
             </label>
           </div>
         </div>
@@ -1871,33 +3434,107 @@ export default function FamilyManagement({
         )}
 
         <div className="fm-form-grid-2">
-          <label className="fm-field">
-            <span>Medical Notes</span>
+          <label
+            className={`fm-field ${showErr("medical_notes") ? "has-error" : ""}`}
+          >
+            <span className="fm-field-label-row">
+              <span>Medical Notes</span>
+              <span className="fm-char-count">
+                {(memberObj.medical_notes || "").length}/500
+              </span>
+            </span>
             <textarea
+              id={`${idPrefix}-medical-notes`}
               rows={2}
+              maxLength={500}
               value={memberObj.medical_notes}
-              onChange={(e) => onChangeField("medical_notes", e.target.value)}
+              onChange={(e) => {
+                onChangeField("medical_notes", e.target.value.slice(0, 500));
+                if (touched.medical_notes) onTouchField("medical_notes");
+              }}
+              onBlur={() => onTouchField("medical_notes")}
+              aria-invalid={Boolean(showErr("medical_notes"))}
+              aria-describedby={
+                showErr("medical_notes")
+                  ? `${idPrefix}-medical-notes-error`
+                  : undefined
+              }
               placeholder="Medications, allergies, or health conditions (optional)"
             />
+            {showErr("medical_notes") && (
+              <small
+                id={`${idPrefix}-medical-notes-error`}
+                className="fm-field-error"
+                role="alert"
+              >
+                {showErr("medical_notes")}
+              </small>
+            )}
           </label>
-          <label className="fm-field">
-            <span>Additional Notes</span>
+          <label className={`fm-field ${showErr("notes") ? "has-error" : ""}`}>
+            <span className="fm-field-label-row">
+              <span>Additional Notes</span>
+              <span className="fm-char-count">
+                {(memberObj.notes || "").length}/500
+              </span>
+            </span>
             <textarea
+              id={`${idPrefix}-notes`}
               rows={2}
+              maxLength={500}
               value={memberObj.notes}
-              onChange={(e) => onChangeField("notes", e.target.value)}
+              onChange={(e) => {
+                onChangeField("notes", e.target.value.slice(0, 500));
+                if (touched.notes) onTouchField("notes");
+              }}
+              onBlur={() => onTouchField("notes")}
+              aria-invalid={Boolean(showErr("notes"))}
+              aria-describedby={
+                showErr("notes") ? `${idPrefix}-notes-error` : undefined
+              }
               placeholder="Other notes (optional)"
             />
+            {showErr("notes") && (
+              <small
+                id={`${idPrefix}-notes-error`}
+                className="fm-field-error"
+                role="alert"
+              >
+                {showErr("notes")}
+              </small>
+            )}
           </label>
         </div>
       </div>
     );
   }
 
+  useEffect(() => {
+    if (typeof onScreenChange === "function") {
+      onScreenChange(activeScreen);
+    }
+  }, [activeScreen, onScreenChange]);
+
+  useEffect(() => {
+    if (typeof onRegisterActions === "function") {
+      onRegisterActions({
+        openAddFamilyWizard,
+        exportFamilies,
+      });
+    }
+  });
+
   return (
-    <section className="family-module" aria-label="Household and Resident Management">
+    <section
+      ref={sectionRef}
+      className={`family-module ${hideScreenContent ? "is-screen-hidden" : ""} ${
+        compactMobileAllHouseholds ? "is-compact-mobile-all-households" : ""
+      }`.trim()}
+      data-screen={activeScreen}
+      aria-label="Household and Resident Management"
+    >
       {/* Feedback Banners */}
-      {error && !modal && (
+      {error && !modal && !isAddWizardOpen && (
         <div className="fm-banner fm-banner-error" role="alert">
           <div className="fm-banner-content">
             <FontAwesomeIcon icon={faTriangleExclamation} />
@@ -1909,103 +3546,151 @@ export default function FamilyManagement({
         </div>
       )}
 
-      {notice && (
-        <div className="fm-banner fm-banner-success" role="status">
-          <div className="fm-banner-content">
-            <FontAwesomeIcon icon={faCheckCircle} />
-            <span>{notice}</span>
-          </div>
-          <button type="button" onClick={() => setNotice("")}>
-            Dismiss
-          </button>
+      {toasts.length > 0 && (
+        <div className="fm-toast-viewport" aria-label="Notifications">
+          {toasts.map((t) => (
+            <SuccessToastItem key={t.id} toast={t} onRemove={removeToast} />
+          ))}
         </div>
       )}
 
       {/* =====================================================
-          SCREEN 1: 5-STEP ADD FAMILY WIZARD
+          MODAL: 4-STEP ADD HOUSEHOLD WIZARD
       ===================================================== */}
-      {activeScreen === "add-wizard" && (
-        <div className="fm-surface-card fm-wizard-container">
-          <div className="fm-subpage-topbar">
-            <button
-              type="button"
-              className="fm-back-btn"
-              onClick={backToHouseholdList}
-              disabled={saving}
-            >
-              <FontAwesomeIcon icon={faArrowLeft} /> Back to Households
-            </button>
-            <span className="fm-step-pill">Step {wizardStep} of 3</span>
-          </div>
-
-          <div className="fm-wizard-header">
-            <div>
-              <h3>Add New Household</h3>
-              <p>
-                Follow the steps below to register the household, head of household, and members.
-              </p>
+      {isAddWizardOpen && (
+        <div
+          className="fm-modal-backdrop fm-wizard-modal-backdrop"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="fm-add-household-modal-title"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) requestCloseAddWizard();
+          }}
+        >
+          <div className="fm-modal-dialog fm-wizard-modal">
+            <div className="fm-modal-header fm-wizard-modal-header">
+              <div>
+                <div className="fm-wizard-modal-title-row">
+                  <h3 id="fm-add-household-modal-title">Add Household</h3>
+                  <span className="fm-step-pill">Step {wizardStep} of 4</span>
+                </div>
+                <p>
+                  Follow the steps below to register the household, head of household, and members.
+                </p>
+              </div>
+              <button
+                type="button"
+                className="fm-modal-close"
+                onClick={requestCloseAddWizard}
+                disabled={saving}
+                aria-label="Close modal"
+              >
+                <FontAwesomeIcon icon={faXmark} />
+              </button>
             </div>
-          </div>
 
-          {/* 3-Step Progress Indicator */}
-          <ol className="fm-stepper" aria-label="Registration steps">
-            {ADD_STEPS.map((s) => {
-              const isCurrent = wizardStep === s.number;
-              const isCompleted = wizardStep > s.number;
-              return (
-                <li
-                  key={s.number}
-                  className={`fm-stepper-item ${isCurrent ? "is-current" : ""} ${isCompleted ? "is-completed" : ""}`}
-                >
-                  <button
-                    type="button"
-                    className="fm-stepper-btn"
-                    onClick={() => jumpToWizardStep(s.number)}
-                    disabled={saving}
-                  >
-                    <span className="fm-stepper-num">
-                      {isCompleted ? (
-                        <FontAwesomeIcon icon={faCheckCircle} />
-                      ) : (
-                        s.number
-                      )}
-                    </span>
-                    <span className="fm-stepper-text">
-                      <strong>{s.title}</strong>
-                      <small>{s.subtitle}</small>
-                    </span>
-                  </button>
-                </li>
-              );
-            })}
-          </ol>
+            {/* 4-Step Progress Indicator */}
+            <div className="fm-wizard-stepper-bar">
+              <ol className="fm-stepper" aria-label="Registration steps">
+                {ADD_STEPS.map((s) => {
+                  const isCurrent = wizardStep === s.number;
+                  const isCompleted = wizardStep > s.number;
+                  let canJump = true;
+                  if (s.number > wizardStep) {
+                    for (let stepIdx = wizardStep; stepIdx < s.number; stepIdx += 1) {
+                      if (!isWizardStepValid(stepIdx)) {
+                        canJump = false;
+                        break;
+                      }
+                    }
+                  }
+                  return (
+                    <li
+                      key={s.number}
+                      className={`fm-stepper-item ${isCurrent ? "is-current" : ""} ${isCompleted ? "is-completed" : ""}`}
+                    >
+                      <button
+                        type="button"
+                        className="fm-stepper-btn"
+                        onClick={() => jumpToWizardStep(s.number)}
+                        disabled={saving || (s.number > wizardStep && !canJump)}
+                        aria-current={isCurrent ? "step" : undefined}
+                      >
+                        <span className="fm-stepper-num">
+                          {isCompleted ? (
+                            <FontAwesomeIcon icon={faCheckCircle} />
+                          ) : (
+                            s.number
+                          )}
+                        </span>
+                        <span className="fm-stepper-text">
+                          <strong>{s.title}</strong>
+                          <small>{s.subtitle}</small>
+                        </span>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ol>
+            </div>
 
-          <form onSubmit={submitNewFamily} className="fm-wizard-body">
-            {/* STEP 1: HOUSEHOLD & HEAD INFORMATION */}
+            {error && (
+              <div className="fm-banner fm-banner-error fm-modal-alert" role="alert">
+                <div className="fm-banner-content">
+                  <FontAwesomeIcon icon={faTriangleExclamation} />
+                  <span>{error}</span>
+                </div>
+                <button type="button" onClick={() => setError("")}>
+                  Dismiss
+                </button>
+              </div>
+            )}
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (wizardStep < 4) {
+                  handleWizardNext();
+                } else {
+                  requestSaveNewFamily();
+                }
+              }}
+              className="fm-wizard-form"
+            >
+              <div className="fm-wizard-body fm-wizard-modal-body">
+            {/* STEP 1: HOUSEHOLD DETAILS */}
             {wizardStep === 1 && (
               <div className="fm-step-panel">
                 <div className="fm-step-intro">
-                  <h4>Step 1: Household & Household Head Details</h4>
+                  <h4>Step 1: Household Details</h4>
                   <p>
-                    Enter the barangay, address, contact details, and personal information for the household head.
+                    Enter the barangay, complete household address or purok, contact numbers, and optional remarks.
                   </p>
                 </div>
 
-                <div className="fm-form-grid-2">
-                  <label className="fm-field">
+                <div className="fm-form-grid-1">
+                  <label
+                    className={`fm-field ${wizardTouched.barangay_id && wizardStep1Errors.barangay_id ? "has-error" : ""}`}
+                  >
                     <span>
                       Barangay <strong className="fm-req">*</strong>
                     </span>
                     <select
+                      id="fm-wizard-barangay"
                       value={wizardForm.barangay_id}
-                      onChange={(e) =>
+                      onChange={(e) => {
                         setWizardForm((prev) => ({
                           ...prev,
                           barangay_id: e.target.value,
-                        }))
-                      }
+                        }));
+                        touchWizardField("barangay_id");
+                      }}
+                      onBlur={() => touchWizardField("barangay_id")}
+                      aria-invalid={Boolean(
+                        wizardTouched.barangay_id &&
+                          wizardStep1Errors.barangay_id
+                      )}
                       disabled={Boolean(lockedBarangayId)}
-                      required
                     >
                       <option value="">Select barangay</option>
                       {barangays.map((b) => (
@@ -2014,74 +3699,116 @@ export default function FamilyManagement({
                         </option>
                       ))}
                     </select>
-                  </label>
-
-                  <label className="fm-field">
-                    <span>Household Code (Optional)</span>
-                    <input
-                      type="text"
-                      value={wizardForm.family_code}
-                      onChange={(e) =>
-                        setWizardForm((prev) => ({
-                          ...prev,
-                          family_code: e.target.value,
-                        }))
-                      }
-                      placeholder="Auto-generated if left blank"
-                    />
+                    {wizardTouched.barangay_id &&
+                      wizardStep1Errors.barangay_id && (
+                        <small className="fm-field-error" role="alert">
+                          {wizardStep1Errors.barangay_id}
+                        </small>
+                      )}
                   </label>
                 </div>
 
                 <div className="fm-form-grid-1">
-                  <label className="fm-field">
+                  <label
+                    className={`fm-field ${wizardTouched.address && wizardStep1Errors.address ? "has-error" : ""}`}
+                  >
                     <span>
                       Complete Household Address / Purok{" "}
                       <strong className="fm-req">*</strong>
                     </span>
                     <input
+                      id="fm-wizard-address"
                       type="text"
                       value={wizardForm.address}
-                      onChange={(e) =>
+                      onChange={(e) => {
+                        const val = e.target.value;
                         setWizardForm((prev) => ({
                           ...prev,
-                          address: e.target.value,
-                        }))
-                      }
+                          address: val,
+                        }));
+                        if (wizardTouched.address || val !== "") {
+                          touchWizardField("address");
+                        }
+                      }}
+                      onBlur={() => touchWizardField("address")}
+                      aria-invalid={Boolean(
+                        wizardTouched.address && wizardStep1Errors.address
+                      )}
                       placeholder="e.g. Purok 3, Sitio Malinao, near Barangay Hall"
-                      required
                     />
+                    {wizardTouched.address && wizardStep1Errors.address && (
+                      <small className="fm-field-error" role="alert">
+                        {wizardStep1Errors.address}
+                      </small>
+                    )}
                   </label>
                 </div>
 
                 <div className="fm-form-grid-2">
-                  <label className="fm-field">
+                  <label
+                    className={`fm-field ${wizardTouched.contact_number && wizardStep1Errors.contact_number ? "has-error" : ""}`}
+                  >
                     <span>Household Contact Number</span>
                     <input
+                      id="fm-wizard-contact"
                       type="text"
                       value={wizardForm.contact_number}
-                      onChange={(e) =>
+                      onChange={(e) => {
+                        const val = e.target.value;
                         setWizardForm((prev) => ({
                           ...prev,
-                          contact_number: e.target.value,
-                        }))
-                      }
+                          contact_number: val,
+                        }));
+                        if (wizardTouched.contact_number || val !== "") {
+                          touchWizardField("contact_number");
+                        }
+                      }}
+                      onBlur={() => touchWizardField("contact_number")}
+                      aria-invalid={Boolean(
+                        wizardTouched.contact_number &&
+                          wizardStep1Errors.contact_number
+                      )}
                       placeholder="e.g. 09171234567"
                     />
+                    {wizardTouched.contact_number &&
+                      wizardStep1Errors.contact_number && (
+                        <small className="fm-field-error" role="alert">
+                          {wizardStep1Errors.contact_number}
+                        </small>
+                      )}
                   </label>
 
-                  <label className="fm-field">
+                  <label
+                    className={`fm-field ${wizardTouched.alternate_contact && wizardStep1Errors.alternate_contact ? "has-error" : ""}`}
+                  >
                     <span>Alternate Contact Number</span>
                     <input
+                      id="fm-wizard-alt-contact"
                       type="text"
                       value={wizardForm.alternate_contact}
-                      onChange={(e) =>
+                      onChange={(e) => {
+                        const val = e.target.value;
                         setWizardForm((prev) => ({
                           ...prev,
-                          alternate_contact: e.target.value,
-                        }))
-                      }
-                      placeholder="Optional secondary contact"
+                          alternate_contact: val,
+                        }));
+                        if (wizardTouched.alternate_contact || val !== "") {
+                          touchWizardField("alternate_contact");
+                        }
+                      }}
+                      onBlur={() => touchWizardField("alternate_contact")}
+                      aria-invalid={Boolean(
+                        wizardTouched.alternate_contact &&
+                          wizardStep1Errors.alternate_contact
+                      )}
+                      placeholder="Optional secondary PH mobile number"
                     />
+                    {wizardTouched.alternate_contact &&
+                      wizardStep1Errors.alternate_contact && (
+                        <small className="fm-field-error" role="alert">
+                          {wizardStep1Errors.alternate_contact}
+                        </small>
+                      )}
                   </label>
                 </div>
 
@@ -2101,13 +3828,18 @@ export default function FamilyManagement({
                     />
                   </label>
                 </div>
+              </div>
+            )}
 
-                <div className="fm-step-subhead" style={{ marginTop: "24px", paddingTop: "18px", borderTop: "1px solid #e2e8f0" }}>
+            {/* STEP 2: HOUSEHOLD HEAD PROFILE */}
+            {wizardStep === 2 && (
+              <div className="fm-step-panel">
+                <div className="fm-step-intro">
                   <div className="fm-step-intro-row">
                     <div>
-                      <h4 style={{ margin: 0, fontSize: "16px" }}>Household Head Profile</h4>
-                      <p style={{ margin: "2px 0 0", color: "#64748b", fontSize: "13px" }}>
-                        Personal details for the designated household head (first resident).
+                      <h4>Step 2: Household Head Profile</h4>
+                      <p>
+                        Personal details and health information for the designated household head (must be 18 or older).
                       </p>
                     </div>
                     <span className="fm-badge fm-badge-blue">
@@ -2119,21 +3851,43 @@ export default function FamilyManagement({
                 {renderMemberFormFields(
                   wizardForm.head,
                   updateWizardHead,
-                  true
+                  true,
+                  {
+                    idPrefix: "fm-head",
+                    errors: {
+                      first_name: wizardStep2Errors["head.first_name"],
+                      middle_name: wizardStep2Errors["head.middle_name"],
+                      last_name: wizardStep2Errors["head.last_name"],
+                      date_of_birth: wizardStep2Errors["head.date_of_birth"],
+                      gender: wizardStep2Errors["head.gender"],
+                      contact_number: wizardStep2Errors["head.contact_number"],
+                    },
+                    touched: {
+                      first_name: wizardTouched["head.first_name"],
+                      middle_name: wizardTouched["head.middle_name"],
+                      last_name: wizardTouched["head.last_name"],
+                      date_of_birth:
+                        wizardTouched["head.date_of_birth"] ||
+                        Boolean(wizardForm.head.date_of_birth),
+                      gender: wizardTouched["head.gender"],
+                      contact_number: wizardTouched["head.contact_number"],
+                    },
+                    onTouchField: (f) => touchWizardField(`head.${f}`),
+                  }
                 )}
               </div>
             )}
 
-            {/* STEP 2: ADDITIONAL HOUSEHOLD MEMBERS */}
-            {wizardStep === 2 && (
+            {/* STEP 3: ADDITIONAL HOUSEHOLD MEMBERS */}
+            {wizardStep === 3 && (
               <div className="fm-step-panel">
                 <div className="fm-step-intro">
                   <div className="fm-step-intro-row">
                     <div>
-                      <h4>Step 2: Additional Household Members</h4>
+                      <h4>Step 3: Additional Household Members</h4>
                       <p>
                         Add all additional residents living in this household.
-                        Single-person households can proceed directly to Step 3.
+                        Single-person households can proceed directly to Step 4.
                       </p>
                     </div>
                     {editingOtherIndex === null && (
@@ -2172,9 +3926,9 @@ export default function FamilyManagement({
                   <button
                     type="button"
                     className="fm-btn fm-btn-ghost fm-btn-sm"
-                    onClick={() => setWizardStep(1)}
+                    onClick={() => setWizardStep(2)}
                   >
-                    <FontAwesomeIcon icon={faPenToSquare} /> Edit Head in Step 1
+                    <FontAwesomeIcon icon={faPenToSquare} /> Edit Head in Step 2
                   </button>
                 </div>
 
@@ -2199,7 +3953,21 @@ export default function FamilyManagement({
                       memberDraft,
                       (field, value) =>
                         setMemberDraft((prev) => ({ ...prev, [field]: value })),
-                      false
+                      false,
+                      {
+                        idPrefix: "fm-draft",
+                        errors: memberDraftErrors,
+                        touched: {
+                          ...memberDraftTouched,
+                          date_of_birth:
+                            memberDraftTouched.date_of_birth ||
+                            Boolean(memberDraft.date_of_birth),
+                          relationship_to_head:
+                            memberDraftTouched.relationship_to_head ||
+                            Boolean(memberDraft.relationship_to_head),
+                        },
+                        onTouchField: touchMemberDraftField,
+                      }
                     )}
                     <div className="fm-member-draft-footer">
                       <button
@@ -2210,6 +3978,7 @@ export default function FamilyManagement({
                         Cancel
                       </button>
                       <button
+                        id="fm-draft-save-btn"
                         type="button"
                         className="fm-btn fm-btn-primary"
                         onClick={saveOtherMemberDraft}
@@ -2229,7 +3998,7 @@ export default function FamilyManagement({
                       <strong>No additional household members added yet</strong>
                       <p>
                         Click &ldquo;Add Another Member&rdquo; above to add
-                        dependents, or click &ldquo;Next Step&rdquo; if this is
+                        dependents, or click &ldquo;Next&rdquo; if this is
                         a single-person household.
                       </p>
                     </div>
@@ -2292,11 +4061,11 @@ export default function FamilyManagement({
               </div>
             )}
 
-            {/* STEP 3: EVACUATION ASSIGNMENT & REVIEW */}
-            {wizardStep === 3 && (
+            {/* STEP 4: EVACUATION ASSIGNMENT & REVIEW */}
+            {wizardStep === 4 && (
               <div className="fm-step-panel">
                 <div className="fm-step-intro">
-                  <h4>Step 3: Evacuation Assignment & Confirm Registration</h4>
+                  <h4>Step 4: Evacuation Assignment & Confirm Registration</h4>
                   <p>
                     Optionally assign this household ({1 + wizardForm.otherMembers.length}{" "}
                     total member{wizardForm.otherMembers.length === 0 ? "" : "s"})
@@ -2362,11 +4131,7 @@ export default function FamilyManagement({
                   wizardForm.assignment_mode === "venue") &&
                   (() => {
                     const needed = 1 + wizardForm.otherMembers.length;
-                    const availableCenters = centersList.filter(
-                      (c) =>
-                        getCenterRemainingCapacity(c) >= needed ||
-                        String(c.id) === String(wizardForm.assignment_center_id)
-                    );
+                    const availableCenters = centersList;
                     const selectedWizardCenter = centersList.find(
                       (c) =>
                         String(c.id) === String(wizardForm.assignment_center_id)
@@ -2383,14 +4148,26 @@ export default function FamilyManagement({
                     const wizardAvailableBldgs = getAvailableBuildingsForCenter(
                       selectedWizardCenter,
                       wizardRooms,
-                      needed
+                      0
                     );
                     const wizardFilteredRooms = getFilteredRoomsForSelection(
                       selectedWizardCenter,
                       wizardRooms,
                       wizardForm.assignment_building_id,
-                      needed
+                      0
                     );
+                    const showCenterErr =
+                      (wizardTouched.assignment_center_id ||
+                        Boolean(wizardForm.assignment_center_id)) &&
+                      wizardStep4Errors.assignment_center_id;
+                    const showBldgErr =
+                      (wizardTouched.assignment_building_id ||
+                        Boolean(wizardForm.assignment_building_id)) &&
+                      wizardStep4Errors.assignment_building_id;
+                    const showRoomErr =
+                      (wizardTouched.assignment_room_id ||
+                        Boolean(wizardForm.assignment_room_id)) &&
+                      wizardStep4Errors.assignment_room_id;
 
                     return (
                       <div className="fm-assignment-selector-box">
@@ -2401,21 +4178,29 @@ export default function FamilyManagement({
                               : "fm-form-grid-2"
                           }
                         >
-                          <label className="fm-field">
+                          <label
+                            className={`fm-field ${showCenterErr ? "has-error" : ""}`}
+                          >
                             <span>
                               Evacuation Center{" "}
                               <strong className="fm-req">*</strong>
                             </span>
                             <select
+                              id="fm-wizard-center"
                               value={wizardForm.assignment_center_id}
-                              onChange={(e) =>
+                              onChange={(e) => {
                                 setWizardForm((prev) => ({
                                   ...prev,
                                   assignment_center_id: e.target.value,
                                   assignment_building_id: "",
                                   assignment_room_id: "",
-                                }))
+                                }));
+                                touchWizardField("assignment_center_id");
+                              }}
+                              onBlur={() =>
+                                touchWizardField("assignment_center_id")
                               }
+                              aria-invalid={Boolean(showCenterErr)}
                             >
                               <option value="">Select evacuation center</option>
                               {availableCenters.map((c) => {
@@ -2428,31 +4213,45 @@ export default function FamilyManagement({
                                     {(c.barangays || [])
                                       .map((barangay) => barangay.name)
                                       .join(", ")}
-                                    ) — {occ}/{cap} assigned ({rem} left)
+                                    ) — {occ}/{cap} assigned (
+                                    {rem <= 0 ? "Full" : `${rem} left`})
                                   </option>
                                 );
                               })}
                             </select>
+                            {showCenterErr && (
+                              <small className="fm-field-error" role="alert">
+                                {wizardStep4Errors.assignment_center_id}
+                              </small>
+                            )}
                           </label>
 
                           {!isWizardDirect && wizardHasBldgs && (
-                            <label className="fm-field">
+                            <label
+                              className={`fm-field ${showBldgErr ? "has-error" : ""}`}
+                            >
                               <span>
                                 Building <strong className="fm-req">*</strong>
                               </span>
                               <select
+                                id="fm-wizard-building"
                                 value={wizardForm.assignment_building_id}
                                 disabled={
                                   !wizardForm.assignment_center_id ||
                                   wizardRoomsQuery.isLoading
                                 }
-                                onChange={(e) =>
+                                onChange={(e) => {
                                   setWizardForm((prev) => ({
                                     ...prev,
                                     assignment_building_id: e.target.value,
                                     assignment_room_id: "",
-                                  }))
+                                  }));
+                                  touchWizardField("assignment_building_id");
+                                }}
+                                onBlur={() =>
+                                  touchWizardField("assignment_building_id")
                                 }
+                                aria-invalid={Boolean(showBldgErr)}
                               >
                                 <option value="">
                                   {!wizardForm.assignment_center_id
@@ -2460,7 +4259,7 @@ export default function FamilyManagement({
                                     : wizardRoomsQuery.isLoading
                                       ? "Loading buildings..."
                                       : wizardAvailableBldgs.length === 0
-                                        ? "No buildings with available capacity"
+                                        ? "No buildings available"
                                         : "Select building"}
                                 </option>
                                 {wizardAvailableBldgs.map((b) => (
@@ -2472,15 +4271,23 @@ export default function FamilyManagement({
                                   </option>
                                 ))}
                               </select>
+                              {showBldgErr && (
+                                <small className="fm-field-error" role="alert">
+                                  {wizardStep4Errors.assignment_building_id}
+                                </small>
+                              )}
                             </label>
                           )}
 
                           {!isWizardDirect && (
-                            <label className="fm-field">
+                            <label
+                              className={`fm-field ${showRoomErr ? "has-error" : ""}`}
+                            >
                               <span>
                                 Room <strong className="fm-req">*</strong>
                               </span>
                               <select
+                                id="fm-wizard-room"
                                 value={wizardForm.assignment_room_id}
                                 disabled={
                                   !wizardForm.assignment_center_id ||
@@ -2488,12 +4295,17 @@ export default function FamilyManagement({
                                   (wizardHasBldgs &&
                                     !wizardForm.assignment_building_id)
                                 }
-                                onChange={(e) =>
+                                onChange={(e) => {
                                   setWizardForm((prev) => ({
                                     ...prev,
                                     assignment_room_id: e.target.value,
-                                  }))
+                                  }));
+                                  touchWizardField("assignment_room_id");
+                                }}
+                                onBlur={() =>
+                                  touchWizardField("assignment_room_id")
                                 }
+                                aria-invalid={Boolean(showRoomErr)}
                               >
                                 <option value="">
                                   {!wizardForm.assignment_center_id
@@ -2504,7 +4316,7 @@ export default function FamilyManagement({
                                           !wizardForm.assignment_building_id
                                         ? "Select a building first"
                                         : wizardFilteredRooms.length === 0
-                                          ? "No rooms with available capacity"
+                                          ? "No rooms available"
                                           : "Select room"}
                                 </option>
                                 {wizardFilteredRooms.map((room) => {
@@ -2515,11 +4327,19 @@ export default function FamilyManagement({
                                     <option key={room.id} value={room.id}>
                                       {formatRoomLabel(room.room_number)} —{" "}
                                       {assigned}/{room.capacity} assigned (
-                                      {available} remaining)
+                                      {available <= 0
+                                        ? "Full"
+                                        : `${available} remaining`}
+                                      )
                                     </option>
                                   );
                                 })}
                               </select>
+                              {showRoomErr && (
+                                <small className="fm-field-error" role="alert">
+                                  {wizardStep4Errors.assignment_room_id}
+                                </small>
+                              )}
                             </label>
                           )}
                         </div>
@@ -2593,25 +4413,33 @@ export default function FamilyManagement({
                                 const isSelected =
                                   String(wizardForm.assignment_room_id) ===
                                   String(room.id);
+                                const isFull = available <= 0;
+                                const isInsufficient =
+                                  !isFull && available < needed;
                                 return (
                                   <button
                                     key={room.id}
                                     type="button"
-                                    onClick={() =>
+                                    onClick={() => {
                                       setWizardForm((prev) => ({
                                         ...prev,
                                         assignment_room_id: String(room.id),
-                                      }))
-                                    }
-                                    className={`fm-room-pick-card ${isSelected ? "is-selected" : ""}`}
+                                      }));
+                                      touchWizardField("assignment_room_id");
+                                    }}
+                                    className={`fm-room-pick-card ${isSelected ? "is-selected" : ""} ${isFull || isInsufficient ? "is-full" : ""}`}
                                   >
                                     <div className="fm-room-pick-top">
                                       <strong>
                                         <FontAwesomeIcon icon={faDoorOpen} />{" "}
                                         {formatRoomLabel(room.room_number)}
                                       </strong>
-                                      <span className="fm-badge fm-badge-green">
-                                        {available} remaining
+                                      <span
+                                        className={`fm-badge ${isFull ? "fm-badge-red" : isInsufficient ? "fm-badge-amber" : "fm-badge-green"}`}
+                                      >
+                                        {isFull
+                                          ? "Full"
+                                          : `${available} remaining`}
                                       </span>
                                     </div>
                                     <div className="fm-room-pick-meta">
@@ -2640,13 +4468,22 @@ export default function FamilyManagement({
                       <h5>
                         <FontAwesomeIcon icon={faHouse} /> Household & Head
                       </h5>
-                      <button
-                        type="button"
-                        className="fm-btn fm-btn-ghost fm-btn-sm"
-                        onClick={() => setWizardStep(1)}
-                      >
-                        <FontAwesomeIcon icon={faPenToSquare} /> Edit
-                      </button>
+                      <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                        <button
+                          type="button"
+                          className="fm-btn fm-btn-ghost fm-btn-sm"
+                          onClick={() => setWizardStep(1)}
+                        >
+                          <FontAwesomeIcon icon={faPenToSquare} /> Edit Details
+                        </button>
+                        <button
+                          type="button"
+                          className="fm-btn fm-btn-ghost fm-btn-sm"
+                          onClick={() => setWizardStep(2)}
+                        >
+                          <FontAwesomeIcon icon={faPenToSquare} /> Edit Head
+                        </button>
+                      </div>
                     </div>
                     <dl className="fm-dl-grid">
                       <div>
@@ -2657,10 +4494,6 @@ export default function FamilyManagement({
                               String(b.id) === String(wizardForm.barangay_id)
                           )?.name || "—"}
                         </dd>
-                      </div>
-                      <div>
-                        <dt>Household Code</dt>
-                        <dd>{wizardForm.family_code.trim() || "Auto-generated"}</dd>
                       </div>
                       <div>
                         <dt>Household Head</dt>
@@ -2778,7 +4611,7 @@ export default function FamilyManagement({
                     <button
                       type="button"
                       className="fm-btn fm-btn-ghost fm-btn-sm"
-                      onClick={() => setWizardStep(2)}
+                      onClick={() => setWizardStep(3)}
                     >
                       <FontAwesomeIcon icon={faPenToSquare} /> Edit Members
                     </button>
@@ -2847,94 +4680,167 @@ export default function FamilyManagement({
               </div>
             )}
 
-            {/* Wizard Navigation Footer */}
-            <div className="fm-wizard-footer">
-              <button
-                type="button"
-                className="fm-btn fm-btn-secondary"
-                onClick={
-                  wizardStep === 1 ? backToHouseholdList : handleWizardBack
-                }
-                disabled={saving}
-              >
-                {wizardStep === 1 ? "Cancel" : "Previous Step"}
-              </button>
+              </div>
 
-              <div className="fm-wizard-footer-right">
-                {wizardStep < 3 ? (
+              {/* Wizard Navigation Footer */}
+              <div className="fm-wizard-footer fm-wizard-modal-footer">
+                <button
+                  type="button"
+                  className="fm-btn fm-btn-secondary"
+                  onClick={requestCloseAddWizard}
+                  disabled={saving}
+                >
+                  Cancel
+                </button>
+
+                <div className="fm-wizard-footer-right">
                   <button
                     type="button"
-                    className="fm-btn fm-btn-primary"
-                    onClick={handleWizardNext}
+                    className="fm-btn fm-btn-secondary"
+                    onClick={handleWizardBack}
+                    disabled={wizardStep === 1 || saving}
                   >
-                    Next Step
+                    Back
                   </button>
-                ) : (
-                  <button
-                    type="submit"
-                    className="fm-btn fm-btn-primary"
-                    disabled={saving}
-                  >
-                    <FontAwesomeIcon
-                      icon={saving ? faRotate : faCheckCircle}
-                      spin={saving}
-                    />
-                    {saving
-                      ? "Saving Household..."
-                      : "Confirm & Register Household"}
-                  </button>
-                )}
+                  {wizardStep < 4 ? (
+                    <button
+                      key="wizard-next-btn"
+                      type="button"
+                      className="fm-btn fm-btn-primary"
+                      onClick={handleWizardNext}
+                      disabled={saving}
+                    >
+                      Next
+                    </button>
+                  ) : (
+                    <button
+                      key="wizard-save-btn"
+                      type="button"
+                      className="fm-btn fm-btn-primary"
+                      onClick={requestSaveNewFamily}
+                      disabled={saving}
+                    >
+                      <FontAwesomeIcon
+                        icon={saving ? faRotate : faCheckCircle}
+                        spin={saving}
+                      />
+                      {saving ? "Saving..." : "Save"}
+                    </button>
+                  )}
+                </div>
               </div>
-            </div>
-          </form>
+            </form>
+          </div>
         </div>
       )}
 
       {/* =====================================================
           SCREEN 2: INDIVIDUAL MEMBER DETAILS (Page E)
       ===================================================== */}
-      {activeScreen === "member-detail" && activeFamily && (
-        <div className="fm-surface-card fm-detail-page">
-          <div className="fm-subpage-topbar">
-            <button
-              type="button"
-              className="fm-back-btn"
-              onClick={backToHouseholdDetails}
-            >
-              <FontAwesomeIcon icon={faArrowLeft} /> Back to Household Details (
-              {activeFamily.family_code})
-            </button>
+      {!hideScreenContent && activeScreen === "member-detail" && activeFamily && (() => {
+        const barangayLabel =
+          lockedBarangayName ||
+          activeFamily?.barangay ||
+          "All Households";
 
-            {activeMember && (
-              <div className="fm-inline-actions">
-                <button
-                  type="button"
-                  className="fm-btn fm-btn-secondary"
-                  onClick={() => openEditMemberModal(activeMember)}
-                >
-                  <FontAwesomeIcon icon={faPenToSquare} /> Edit Member Details
-                </button>
-                {!activeMember.is_head_of_family && (
+        return (
+          <div className="fm-detail-page fm-member-detail-page">
+            <div className="fm-detail-topline fm-member-detail-topline">
+              <nav className="fm-detail-breadcrumb" aria-label="Breadcrumb">
+                {typeof onBackToBarangays === "function" ? (
                   <>
                     <button
                       type="button"
-                      className="fm-btn fm-btn-secondary"
-                      onClick={() => confirmPromoteToHead(activeMember)}
+                      className="fm-detail-breadcrumb-link"
+                      onClick={onBackToBarangays}
                     >
-                      <FontAwesomeIcon icon={faUserCheck} /> Set as Household Head
+                      <FontAwesomeIcon
+                        icon={faArrowLeft}
+                        className="fm-detail-breadcrumb-icon"
+                      />
+                      <span>Barangays</span>
                     </button>
+                    <FontAwesomeIcon
+                      icon={faChevronRight}
+                      className="fm-detail-breadcrumb-sep"
+                      aria-hidden="true"
+                    />
                     <button
                       type="button"
-                      className="fm-btn fm-btn-danger-outline"
-                      onClick={() => confirmDeleteMember(activeMember)}
+                      className="fm-detail-breadcrumb-link"
+                      onClick={backToHouseholdList}
                     >
-                      <FontAwesomeIcon icon={faTrashCan} /> Remove Member
+                      <span>{lockedBarangayName ? barangayLabel : "All Households"}</span>
                     </button>
                   </>
+                ) : (
+                  <button
+                    type="button"
+                    className="fm-detail-breadcrumb-link"
+                    onClick={backToHouseholdList}
+                  >
+                    <FontAwesomeIcon
+                      icon={faArrowLeft}
+                      className="fm-detail-breadcrumb-icon"
+                    />
+                    <span>Households</span>
+                  </button>
                 )}
-              </div>
-            )}
-          </div>
+                <FontAwesomeIcon
+                  icon={faChevronRight}
+                  className="fm-detail-breadcrumb-sep"
+                  aria-hidden="true"
+                />
+                <button
+                  type="button"
+                  className="fm-detail-breadcrumb-link"
+                  onClick={backToHouseholdDetails}
+                >
+                  <span>{activeFamily.head_name || "Household Details"}</span>
+                </button>
+                <FontAwesomeIcon
+                  icon={faChevronRight}
+                  className="fm-detail-breadcrumb-sep"
+                  aria-hidden="true"
+                />
+                <span className="fm-detail-breadcrumb-current">
+                  {activeMember ? memberDisplayName(activeMember) : "Member Details"}
+                </span>
+              </nav>
+
+              {activeMember && (
+                <div className="fm-member-detail-actions">
+                  {!activeMember.is_head_of_family && (
+                    <>
+                      <button
+                        type="button"
+                        className="fm-detail-action-btn"
+                        onClick={() => confirmPromoteToHead(activeMember)}
+                      >
+                        <FontAwesomeIcon icon={faUserCheck} />
+                        <span>Set as Household Head</span>
+                      </button>
+                      <button
+                        type="button"
+                        className="fm-detail-action-btn danger"
+                        onClick={() => confirmDeleteMember(activeMember)}
+                      >
+                        <FontAwesomeIcon icon={faTrashCan} />
+                        <span>Remove Member</span>
+                      </button>
+                    </>
+                  )}
+                  <button
+                    type="button"
+                    className="fm-detail-action-btn"
+                    onClick={() => openEditMemberModal(activeMember)}
+                  >
+                    <FontAwesomeIcon icon={faPenToSquare} />
+                    <span>Edit Member Details</span>
+                  </button>
+                </div>
+              )}
+            </div>
 
           {!activeMember ? (
             <LoadingState message="Loading resident profile..." />
@@ -2975,7 +4881,7 @@ export default function FamilyManagement({
                     </div>
                     <p className="fm-profile-subtitle">
                       Household {activeFamily.family_code} (Head: {activeFamily.head_name}) • Barangay{" "}
-                      {activeMember.barangay || activeFamily.barangay || "—"}
+                      {activeMember.barangay || activeFamily.barangay || "N/A"}
                     </p>
                   </div>
                 </div>
@@ -3006,42 +4912,42 @@ export default function FamilyManagement({
                   <dl className="fm-dl-grid">
                     <div>
                       <dt>First Name</dt>
-                      <dd>{activeMember.first_name || "Not recorded"}</dd>
+                      <dd>{activeMember.first_name || "N/A"}</dd>
                     </div>
                     <div>
                       <dt>Middle Name</dt>
-                      <dd>{activeMember.middle_name || "—"}</dd>
+                      <dd>{activeMember.middle_name || "N/A"}</dd>
                     </div>
                     <div>
                       <dt>Last Name</dt>
-                      <dd>{activeMember.last_name || "Not recorded"}</dd>
+                      <dd>{activeMember.last_name || "N/A"}</dd>
                     </div>
                     <div>
                       <dt>Suffix</dt>
-                      <dd>{activeMember.suffix || "—"}</dd>
+                      <dd>{activeMember.suffix || "N/A"}</dd>
                     </div>
                     <div>
                       <dt>Date of Birth</dt>
-                      <dd>{activeMember.date_of_birth || "Not recorded"}</dd>
+                      <dd>{activeMember.date_of_birth || "N/A"}</dd>
                     </div>
                     <div>
                       <dt>Age</dt>
                       <dd>
                         {getAge(activeMember.date_of_birth) !== null
                           ? `${getAge(activeMember.date_of_birth)} years old`
-                          : "Not available"}
+                          : "N/A"}
                       </dd>
                     </div>
                     <div>
                       <dt>Gender</dt>
-                      <dd>{activeMember.gender || "Not specified"}</dd>
+                      <dd>{activeMember.gender || "N/A"}</dd>
                     </div>
                     <div>
                       <dt>Relationship to Head</dt>
                       <dd>
                         {activeMember.is_head_of_family
                           ? "Household Head"
-                          : activeMember.relationship_to_head || "Not specified"}
+                          : activeMember.relationship_to_head || "N/A"}
                       </dd>
                     </div>
                     <div>
@@ -3057,19 +4963,19 @@ export default function FamilyManagement({
                       <dd>
                         {activeMember.contact_number ||
                           activeFamily.contact_number ||
-                          "Not provided"}
+                          "N/A"}
                       </dd>
                     </div>
                     <div>
                       <dt>Alternate Contact</dt>
-                      <dd>{activeMember.alternate_contact || "—"}</dd>
+                      <dd>{activeMember.alternate_contact || "N/A"}</dd>
                     </div>
                     <div>
                       <dt>Household Address</dt>
                       <dd>
                         {activeMember.address ||
                           activeFamily.address ||
-                          "Not recorded"}
+                          "N/A"}
                       </dd>
                     </div>
                   </dl>
@@ -3097,16 +5003,16 @@ export default function FamilyManagement({
                       <dt>Disability Type</dt>
                       <dd>
                         {activeMember.is_pwd
-                          ? activeMember.disability_type || "Unspecified"
-                          : "Not applicable"}
+                          ? activeMember.disability_type || "N/A"
+                          : "N/A"}
                       </dd>
                     </div>
                     <div>
                       <dt>Disability Notes</dt>
                       <dd>
                         {activeMember.is_pwd
-                          ? activeMember.disability_notes || "None recorded"
-                          : "Not applicable"}
+                          ? activeMember.disability_notes || "N/A"
+                          : "N/A"}
                       </dd>
                     </div>
                     <div>
@@ -3139,32 +5045,16 @@ export default function FamilyManagement({
                         </span>
                       </dd>
                     </div>
-                    <div>
-                      <dt>Evacuation Assistance</dt>
-                      <dd>
-                        <span
-                          className={`fm-badge ${activeMember.needs_assistance ? "fm-badge-red" : "fm-badge-neutral"}`}
-                        >
-                          {activeMember.needs_assistance
-                            ? "Needs Assistance"
-                            : "No Special Assistance"}
-                        </span>
-                      </dd>
-                    </div>
-                    <div>
-                      <dt>Special Needs Summary</dt>
-                      <dd>{activeMember.vulnerable_members || "None"}</dd>
-                    </div>
                     <div className="fm-dl-full">
                       <dt>Medical Notes</dt>
-                      <dd>{activeMember.medical_notes || "None recorded"}</dd>
+                      <dd>{activeMember.medical_notes || "N/A"}</dd>
                     </div>
                     <div className="fm-dl-full">
                       <dt>Additional Notes</dt>
                       <dd>
                         {activeMember.notes ||
                           activeMember.remarks ||
-                          "None recorded"}
+                          "N/A"}
                       </dd>
                     </div>
                   </dl>
@@ -3176,9 +5066,9 @@ export default function FamilyManagement({
                 <div className="fm-info-panel-header">
                   <h4>
                     <FontAwesomeIcon icon={faBuilding} />
-                    {activeFamily.current_center_type === 'single_venue'
-                      ? 'Household & Evacuation Venue Assignment'
-                      : 'Household & Evacuation Room Assignment'}
+                    {getFamilyStructureMode(activeFamily) === "open_area"
+                      ? "Household & Evacuation Center Assignment"
+                      : "Household & Evacuation Room Assignment"}
                   </h4>
                   <button
                     type="button"
@@ -3210,7 +5100,18 @@ export default function FamilyManagement({
                       </strong>
                     </dd>
                   </div>
-                  {activeFamily.current_center_type !== 'single_venue' && (
+                  {getFamilyStructureMode(activeFamily) === "buildings_and_rooms" &&
+                    (activeFamily.current_building_name || activeFamily.current_building) && (
+                      <div>
+                        <dt>Assigned Building</dt>
+                        <dd>
+                          <strong>
+                            {activeFamily.current_building_name || activeFamily.current_building}
+                          </strong>
+                        </dd>
+                      </div>
+                    )}
+                  {getFamilyStructureMode(activeFamily) !== "open_area" && (
                     <div>
                       <dt>Assigned Room</dt>
                       <dd>
@@ -3225,109 +5126,109 @@ export default function FamilyManagement({
                       </dd>
                     </div>
                   )}
-                  {activeFamily.current_center_type === 'single_venue' && (
-                    <div>
-                      <dt>Assigned Venue</dt>
-                      <dd>
-                        <strong>
-                          {displayEntityName(
-                            activeFamily.current_center ||
-                              activeFamily.evacuation_center ||
-                              activeFamily.assignments?.[0]?.center
-                          ) || "Unassigned"}
-                        </strong>
-                      </dd>
-                    </div>
-                  )}
                 </dl>
               </div>
             </div>
           )}
         </div>
-      )}
+        );
+      })()}
 
       {/* =====================================================
           SCREEN 3: HOUSEHOLD DETAILS (Page D)
       ===================================================== */}
-      {activeScreen === "household-detail" && (
-        <div className="fm-surface-card fm-detail-page">
-          <div className="fm-subpage-topbar">
-            <button
-              type="button"
-              className="fm-back-btn"
-              onClick={backToHouseholdList}
-            >
-              <FontAwesomeIcon icon={faArrowLeft} /> Back to Households
-            </button>
+      {!hideScreenContent && activeScreen === "household-detail" && (() => {
+        const assigned = activeFamily ? isFamilyAssigned(activeFamily) : false;
+        const memberCount = activeFamily
+          ? activeFamily.members?.length ??
+            activeFamily.resident_count ??
+            activeFamily.member_count ??
+            0
+          : 0;
+        const canDeleteHousehold = activeFamily ? !assigned : false;
+        const barangayLabel =
+          lockedBarangayName ||
+          activeFamily?.barangay ||
+          "All Households";
 
-            {activeFamily && (
-              <div className="fm-inline-actions">
-                <button
-                  type="button"
-                  className="fm-btn fm-btn-secondary"
-                  onClick={() => openEditHouseholdModal(activeFamily)}
-                >
-                  <FontAwesomeIcon icon={faPenToSquare} /> Edit Household
-                </button>
-                <button
-                  type="button"
-                  className="fm-btn fm-btn-primary"
-                  onClick={openAddMemberModal}
-                >
-                  <FontAwesomeIcon icon={faUserPlus} /> Add Member
-                </button>
-                {!isFamilyAssigned(activeFamily) && (
+        return (
+          <div className="fm-detail-page fm-household-detail-page">
+            <div className="fm-detail-topline">
+              <nav className="fm-detail-breadcrumb" aria-label="Breadcrumb">
+                {typeof onBackToBarangays === "function" ? (
+                  <>
+                    <button
+                      type="button"
+                      className="fm-detail-breadcrumb-link"
+                      onClick={onBackToBarangays}
+                    >
+                      <FontAwesomeIcon
+                        icon={faArrowLeft}
+                        className="fm-detail-breadcrumb-icon"
+                      />
+                      <span>Barangays</span>
+                    </button>
+                    <FontAwesomeIcon
+                      icon={faChevronRight}
+                      className="fm-detail-breadcrumb-sep"
+                      aria-hidden="true"
+                    />
+                    <button
+                      type="button"
+                      className="fm-detail-breadcrumb-link"
+                      onClick={backToHouseholdList}
+                    >
+                      <span>{lockedBarangayName ? barangayLabel : "All Households"}</span>
+                    </button>
+                  </>
+                ) : (
                   <button
                     type="button"
-                    className="fm-btn fm-btn-danger-outline"
-                    onClick={() => confirmDeleteFamily(activeFamily)}
+                    className="fm-detail-breadcrumb-link"
+                    onClick={backToHouseholdList}
                   >
-                    <FontAwesomeIcon icon={faTrashCan} /> Delete
+                    <FontAwesomeIcon
+                      icon={faArrowLeft}
+                      className="fm-detail-breadcrumb-icon"
+                    />
+                    <span>Households</span>
                   </button>
                 )}
-              </div>
-            )}
-          </div>
-
-          {familyDetailQuery.isLoading && !activeFamily ? (
-            <LoadingState message="Loading household details..." />
-          ) : !activeFamily ? (
-            <div className="fm-empty-state">
-              <p>Household record could not be found.</p>
+                <FontAwesomeIcon
+                  icon={faChevronRight}
+                  className="fm-detail-breadcrumb-sep"
+                  aria-hidden="true"
+                />
+                <span className="fm-detail-breadcrumb-current">
+                  {activeFamily?.head_name || "Household Details"}
+                </span>
+              </nav>
             </div>
-          ) : (
-            <>
-              {/* Household Header Banner */}
-              <div className="fm-profile-hero">
-                <div className="fm-profile-hero-main">
-                  <div className="fm-member-avatar large is-head">
-                    <FontAwesomeIcon icon={faHouse} />
-                  </div>
-                  <div>
-                    <div className="fm-member-title-row">
-                      <h3>{activeFamily.head_name}</h3>
-                      <span className="fm-code-badge">
-                        {activeFamily.family_code}
-                      </span>
+
+            {familyDetailQuery.isLoading && !activeFamily ? (
+              <LoadingState message="Loading household details..." />
+            ) : !activeFamily ? (
+              <div className="fm-empty-state">
+                <p>Household record could not be found.</p>
+              </div>
+            ) : (
+              <>
+                {/* Full-page Household Header */}
+                <div className="fm-detail-hero">
+                  <div className="fm-detail-hero-main">
+                    <div className="fm-detail-title-row">
+                      <h2 className="fm-detail-title">{activeFamily.head_name}</h2>
                       <span
-                        className={`fm-badge ${isFamilyAssigned(activeFamily) ? "fm-badge-green" : "fm-badge-amber"}`}
+                        className={`fm-detail-status-pill ${assigned ? "complete" : "pending"}`}
                       >
-                        {isFamilyAssigned(activeFamily)
-                          ? "Assigned"
-                          : "Unassigned"}
+                        <FontAwesomeIcon
+                          icon={assigned ? faCheckCircle : faTriangleExclamation}
+                        />
+                        {assigned ? "Assigned" : "Unassigned"}
                       </span>
-                      {isFamilyAssigned(activeFamily) && (
+                      {assigned && (
                         <span
-                          className={`fm-badge ${activeFamily.is_checked_in ? "fm-badge-green" : ""}`}
-                          style={
-                            activeFamily.is_checked_in
-                              ? undefined
-                              : {
-                                  backgroundColor: "#f1f5f9",
-                                  color: "#475569",
-                                  border: "1px solid #cbd5e1",
-                                }
-                          }
+                          className={`fm-badge ${activeFamily.is_checked_in ? "fm-badge-green" : "fm-badge-neutral"}`}
                         >
                           {activeFamily.checkin_status ||
                             (activeFamily.is_checked_in
@@ -3336,26 +5237,90 @@ export default function FamilyManagement({
                         </span>
                       )}
                     </div>
-                    <p className="fm-profile-subtitle">
-                      Barangay {activeFamily.barangay || "—"} •{" "}
-                      {activeFamily.members?.length ??
-                        activeFamily.resident_count ??
-                        activeFamily.member_count ??
-                        0}{" "}
-                      Member
-                      {(activeFamily.members?.length ??
-                        activeFamily.resident_count ??
-                        activeFamily.member_count ??
-                        0) === 1
-                        ? ""
-                        : "s"}
-                    </p>
+
+                    <div className="fm-detail-actions">
+                      <div className="fm-detail-actions-desktop">
+                        <button
+                          type="button"
+                          className="fm-detail-action-btn"
+                          onClick={() => openEditHouseholdModal(activeFamily)}
+                        >
+                          <FontAwesomeIcon icon={faPenToSquare} />
+                          <span>Edit Household</span>
+                        </button>
+                        {canDeleteHousehold && (
+                          <button
+                            type="button"
+                            className="fm-detail-action-btn danger"
+                            onClick={() => confirmDeleteFamily(activeFamily)}
+                          >
+                            <FontAwesomeIcon icon={faTrashCan} />
+                            <span>Delete</span>
+                          </button>
+                        )}
+                      </div>
+
+                      <div className="fm-detail-menu-wrap">
+                        <button
+                          type="button"
+                          className="fm-detail-menu-trigger"
+                          aria-label="Household actions"
+                          aria-expanded={detailMenuOpen}
+                          aria-haspopup="menu"
+                          onClick={() => setDetailMenuOpen((prev) => !prev)}
+                        >
+                          <FontAwesomeIcon icon={faEllipsisVertical} />
+                        </button>
+                        {detailMenuOpen && (
+                          <div className="fm-detail-menu-popover" role="menu">
+                            <button
+                              type="button"
+                              role="menuitem"
+                              className="fm-detail-menu-item"
+                              onClick={() => {
+                                setDetailMenuOpen(false);
+                                openEditHouseholdModal(activeFamily);
+                              }}
+                            >
+                              <FontAwesomeIcon icon={faPenToSquare} />
+                              <span>Edit Household</span>
+                            </button>
+                            {canDeleteHousehold && (
+                              <button
+                                type="button"
+                                role="menuitem"
+                                className="fm-detail-menu-item danger"
+                                onClick={() => {
+                                  setDetailMenuOpen(false);
+                                  confirmDeleteFamily(activeFamily);
+                                }}
+                              >
+                                <FontAwesomeIcon icon={faTrashCan} />
+                                <span>Delete</span>
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="fm-detail-chips">
+                      {activeFamily.family_code && (
+                        <span className="fm-detail-chip fm-detail-chip-code">
+                          {activeFamily.family_code}
+                        </span>
+                      )}
+                      <span className="fm-detail-chip">
+                        Barangay {activeFamily.barangay || lockedBarangayName || "—"} ·{" "}
+                        {memberCount} Member{memberCount === 1 ? "" : "s"}
+                      </span>
+                    </div>
                   </div>
                 </div>
-              </div>
 
-              {/* Two-column Household Info + Evacuation Assignment */}
-              <div className="fm-detail-columns">
+                <div className="fm-detail-sections">
+                  {/* Two-column Household Info + Evacuation Assignment */}
+                  <div className="fm-detail-columns">
                 {/* Household Information */}
                 <div className="fm-info-panel">
                   <div className="fm-info-panel-header">
@@ -3405,9 +5370,9 @@ export default function FamilyManagement({
                   <div className="fm-info-panel-header">
                     <h4>
                       <FontAwesomeIcon icon={faBuilding} />
-                      {activeFamily.current_center_type === 'single_venue'
-                        ? 'Evacuation Venue Assignment'
-                        : 'Evacuation Room Assignment'}
+                      {getFamilyStructureMode(activeFamily) === "open_area"
+                        ? "Evacuation Center Assignment"
+                        : "Evacuation Room Assignment"}
                     </h4>
                   </div>
 
@@ -3426,7 +5391,19 @@ export default function FamilyManagement({
                             </strong>
                           </dd>
                         </div>
-                        {activeFamily.current_center_type !== 'single_venue' && (
+                        {getFamilyStructureMode(activeFamily) === "buildings_and_rooms" &&
+                          (activeFamily.current_building_name || activeFamily.current_building) && (
+                            <div>
+                              <dt>Assigned Building</dt>
+                              <dd>
+                                <strong>
+                                  {activeFamily.current_building_name ||
+                                    activeFamily.current_building}
+                                </strong>
+                              </dd>
+                            </div>
+                          )}
+                        {getFamilyStructureMode(activeFamily) !== "open_area" && (
                           <>
                             <div>
                               <dt>Assigned Room</dt>
@@ -3464,10 +5441,10 @@ export default function FamilyManagement({
                             </div>
                           </>
                         )}
-                        {activeFamily.current_center_type === 'single_venue' && (
+                        {getFamilyStructureMode(activeFamily) === "open_area" && (
                           <>
                             <div>
-                              <dt>Venue Capacity</dt>
+                              <dt>Center Capacity</dt>
                               <dd>
                                 {activeFamily.current_center_capacity ??
                                   activeFamily.assignments?.[0]?.center_capacity ??
@@ -3475,7 +5452,7 @@ export default function FamilyManagement({
                               </dd>
                             </div>
                             <div>
-                              <dt>Venue Occupancy</dt>
+                              <dt>Center Occupancy</dt>
                               <dd>
                                 {activeFamily.current_center_occupied ?? 0} of{" "}
                                 {activeFamily.current_center_capacity ??
@@ -3498,9 +5475,9 @@ export default function FamilyManagement({
                           onClick={() => openMoveModal(activeFamily)}
                         >
                           <FontAwesomeIcon icon={faRightLeft} />
-                          {activeFamily.current_center_type === 'single_venue'
-                            ? 'Change Assigned Venue'
-                            : 'Change Assigned Room'}
+                          {getFamilyStructureMode(activeFamily) === "open_area"
+                            ? "Change Evacuation Center"
+                            : "Change Assigned Room"}
                         </button>
                         <button
                           type="button"
@@ -3523,9 +5500,7 @@ export default function FamilyManagement({
                         onClick={() => openAssignModal(activeFamily)}
                       >
                         <FontAwesomeIcon icon={faDoorOpen} />
-                        {activeFamily.current_center_type === 'single_venue'
-                          ? 'Assign Venue'
-                          : 'Assign Room'}
+                        Assign Shelter
                       </button>
                     </div>
                   )}
@@ -3535,7 +5510,7 @@ export default function FamilyManagement({
               {/* Family Members Section */}
               <div className="fm-members-section">
                 <div className="fm-members-section-header">
-                  <div>
+                  <div className="fm-members-section-heading">
                     <h4>
                       <FontAwesomeIcon icon={faUsers} /> Family Members (
                       {activeFamily.members?.length ??
@@ -3550,7 +5525,7 @@ export default function FamilyManagement({
                   </div>
                   <button
                     type="button"
-                    className="fm-btn fm-btn-primary fm-btn-sm"
+                    className="fm-btn fm-btn-primary fm-btn-sm fm-members-add-btn"
                     onClick={openAddMemberModal}
                   >
                     <FontAwesomeIcon icon={faUserPlus} /> Add Member
@@ -3561,39 +5536,57 @@ export default function FamilyManagement({
                   <LoadingState message="Loading family members..." />
                 ) : !activeFamily.members ||
                   activeFamily.members.length === 0 ? (
-                  <div className="fm-empty-inline">
+                  <div className="fm-empty-inline fm-members-empty">
                     <FontAwesomeIcon icon={faUsers} />
-                    <div>
-                      <strong>No member records found</strong>
+                    <div className="fm-members-empty-copy">
+                      <strong>No members yet</strong>
                       <p>
                         Add a family member to record personal and health information.
                       </p>
                     </div>
+                    <button
+                      type="button"
+                      className="fm-btn fm-btn-primary fm-btn-sm fm-members-empty-btn"
+                      onClick={openAddMemberModal}
+                    >
+                      <FontAwesomeIcon icon={faUserPlus} /> Add Member
+                    </button>
                   </div>
                 ) : (
                   <>
                     {/* Desktop Compact Members Table */}
                     <div className="fm-table-wrap fm-desktop-only">
-                      <table className="fm-table">
+                      <table className="fm-table fm-members-table">
                         <thead>
                           <tr>
                             <th>Full Name</th>
                             <th>Role</th>
                             <th>Birth Date & Age</th>
                             <th>Gender</th>
-                            <th>Special Needs</th>
                             <th className="fm-col-actions">Actions</th>
                           </tr>
                         </thead>
                         <tbody>
                           {activeFamily.members.map((member) => {
                             const age = getAge(member.date_of_birth);
-                            const badges = getVulnerabilityBadges(member);
+                            const displayName = memberDisplayName(member);
                             return (
-                              <tr key={member.id}>
+                              <tr
+                                key={member.id}
+                                className="fm-table-row fm-clickable-row"
+                                tabIndex={0}
+                                aria-label={`View details for ${displayName}`}
+                                onClick={() => openMemberDetails(member)}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter" || e.key === " ") {
+                                    e.preventDefault();
+                                    openMemberDetails(member);
+                                  }
+                                }}
+                              >
                                 <td>
                                   <div className="fm-member-cell-name">
-                                    <strong>{memberDisplayName(member)}</strong>
+                                    <strong className="fm-row-link-text">{displayName}</strong>
                                     {member.is_head_of_family && (
                                       <span className="fm-badge fm-badge-blue">
                                         Household Head
@@ -3624,66 +5617,25 @@ export default function FamilyManagement({
                                     </span>
                                   )}
                                 </td>
-                                <td>{member.gender || "—"}</td>
-                                <td>
-                                  {badges.length > 0 ? (
-                                    <div className="fm-badge-wrap">
-                                      {badges.map((b, idx) => (
-                                        <span
-                                          key={idx}
-                                          className={`fm-badge fm-badge-${b.tone}`}
-                                        >
-                                          {b.label}
-                                        </span>
-                                      ))}
-                                    </div>
-                                  ) : (
-                                    <span className="fm-muted-inline">None</span>
-                                  )}
-                                </td>
+                                <td>{member.gender || "N/A"}</td>
                                 <td className="fm-col-actions">
-                                  <div className="fm-row-actions">
+                                  <div
+                                    className="fm-row-actions"
+                                    onClick={(e) => e.stopPropagation()}
+                                    onKeyDown={(e) => e.stopPropagation()}
+                                  >
                                     <button
                                       type="button"
-                                      className="fm-btn fm-btn-secondary fm-btn-sm"
-                                      onClick={() => openMemberDetails(member)}
-                                    >
-                                      <FontAwesomeIcon icon={faEye} /> Details
-                                    </button>
-                                    <button
-                                      type="button"
-                                      className="fm-btn fm-btn-ghost fm-btn-sm"
-                                      onClick={() =>
-                                        openEditMemberModal(member)
-                                      }
-                                      title="Edit Member"
+                                      className="fm-btn-icon edit"
+                                      aria-label="Edit member"
+                                      title="Edit member"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        openEditMemberModal(member);
+                                      }}
                                     >
                                       <FontAwesomeIcon icon={faPenToSquare} />
                                     </button>
-                                    {!member.is_head_of_family && (
-                                      <>
-                                        <button
-                                          type="button"
-                                          className="fm-btn fm-btn-ghost fm-btn-sm"
-                                          onClick={() =>
-                                            confirmPromoteToHead(member)
-                                          }
-                                          title="Set as Household Head"
-                                        >
-                                          <FontAwesomeIcon icon={faUserCheck} />
-                                        </button>
-                                        <button
-                                          type="button"
-                                          className="fm-btn fm-btn-danger-outline fm-btn-sm"
-                                          onClick={() =>
-                                            confirmDeleteMember(member)
-                                          }
-                                          title="Remove Member"
-                                        >
-                                          <FontAwesomeIcon icon={faTrashCan} />
-                                        </button>
-                                      </>
-                                    )}
                                   </div>
                                 </td>
                               </tr>
@@ -3693,119 +5645,187 @@ export default function FamilyManagement({
                       </table>
                     </div>
 
-                    {/* Mobile Stacked Member Cards */}
-                    <div className="fm-mobile-cards fm-mobile-only">
-                      {activeFamily.members.map((member) => {
+                    {/* Mobile Compact Member Cards (768px and below) */}
+                    <div className="fm-mobile-cards fm-members-mobile-cards fm-mobile-only">
+                      {activeFamily.members.map((member, idx) => {
                         const age = getAge(member.date_of_birth);
                         const badges = getVulnerabilityBadges(member);
+                        const displayName = memberDisplayName(member);
+                        const roleLabel = member.is_head_of_family
+                          ? "Household Head"
+                          : member.relationship_to_head || "Family Member";
+                        const metaParts = [
+                          member.gender || "N/A",
+                          age !== null ? `${age} yrs` : null,
+                          member.date_of_birth ? member.date_of_birth : null,
+                        ].filter(Boolean);
+                        const menuKey = `member-${member.id}`;
+                        const isMenuOpen = openMobileCardMenuId === menuKey;
+                        const openUpward =
+                          activeFamily.members.length >= 3 &&
+                          idx >= activeFamily.members.length - 2;
+
                         return (
-                          <div key={member.id} className="fm-mobile-card">
-                            <div className="fm-mobile-card-top">
-                              <div>
-                                <strong>{memberDisplayName(member)}</strong>
-                                <span className="fm-mobile-sub">
-                                  {member.is_head_of_family
-                                    ? "Household Head"
-                                    : member.relationship_to_head ||
-                                      "Family Member"}
-                                </span>
+                          <article
+                            key={member.id}
+                            className={`fm-mobile-card fm-member-mobile-card ${
+                              isMenuOpen ? "has-open-menu" : ""
+                            }`}
+                            role="button"
+                            tabIndex={0}
+                            aria-label={`View details for ${displayName}`}
+                            onClick={() => {
+                              setOpenMobileCardMenuId(null);
+                              openMemberDetails(member);
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" || e.key === " ") {
+                                e.preventDefault();
+                                setOpenMobileCardMenuId(null);
+                                openMemberDetails(member);
+                              }
+                            }}
+                          >
+                            <div className="fm-mm-row1">
+                              <span className="fm-mm-name">{displayName}</span>
+                              <div
+                                className="fm-mobile-card-menu-wrap fm-mm-menu-wrap"
+                                onClick={(e) => e.stopPropagation()}
+                                onKeyDown={(e) => e.stopPropagation()}
+                              >
+                                <button
+                                  type="button"
+                                  className="fm-mc-menu-trigger"
+                                  aria-label={`Actions for ${displayName}`}
+                                  aria-expanded={isMenuOpen}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setOpenMobileCardMenuId((prev) =>
+                                      prev === menuKey ? null : menuKey
+                                    );
+                                  }}
+                                >
+                                  <FontAwesomeIcon icon={faEllipsisVertical} />
+                                </button>
+                                {isMenuOpen && (
+                                  <div
+                                    className={`fm-mc-menu-popover ${
+                                      openUpward ? "open-upward" : ""
+                                    }`}
+                                    role="menu"
+                                  >
+                                    <button
+                                      type="button"
+                                      role="menuitem"
+                                      className="fm-mc-menu-item"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setOpenMobileCardMenuId(null);
+                                        openMemberDetails(member);
+                                      }}
+                                    >
+                                      <FontAwesomeIcon icon={faEye} />
+                                      <span>Details</span>
+                                    </button>
+                                    <button
+                                      type="button"
+                                      role="menuitem"
+                                      className="fm-mc-menu-item"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setOpenMobileCardMenuId(null);
+                                        openEditMemberModal(member);
+                                      }}
+                                    >
+                                      <FontAwesomeIcon icon={faPenToSquare} />
+                                      <span>Edit</span>
+                                    </button>
+                                  </div>
+                                )}
                               </div>
-                              {member.is_head_of_family && (
-                                <span className="fm-badge fm-badge-blue">
-                                  Head
-                                </span>
-                              )}
                             </div>
-                            <div className="fm-mobile-card-grid">
-                              <div>
-                                <span>Age / DOB</span>
-                                <strong>
-                                  {age !== null
-                                    ? `${age} yrs (${member.date_of_birth})`
-                                    : member.date_of_birth || "Not recorded"}
-                                </strong>
-                              </div>
-                              <div>
-                                <span>Gender</span>
-                                <strong>{member.gender || "—"}</strong>
-                              </div>
+
+                            <div className="fm-mm-role-row">
+                              <span
+                                className={`fm-badge fm-mm-role-pill ${
+                                  member.is_head_of_family
+                                    ? "fm-badge-blue"
+                                    : "fm-badge-neutral"
+                                }`}
+                              >
+                                {roleLabel}
+                              </span>
                             </div>
+
+                            {metaParts.length > 0 && (
+                              <div className="fm-mm-meta">
+                                {metaParts.join(" · ")}
+                              </div>
+                            )}
+
                             {badges.length > 0 && (
-                              <div className="fm-badge-wrap">
-                                {badges.map((b, idx) => (
+                              <div className="fm-mm-needs">
+                                {badges.map((b, bIdx) => (
                                   <span
-                                    key={idx}
-                                    className={`fm-badge fm-badge-${b.tone}`}
+                                    key={bIdx}
+                                    className={`fm-badge fm-badge-${b.tone} fm-mm-need-pill`}
                                   >
                                     {b.label}
                                   </span>
                                 ))}
                               </div>
                             )}
-                            <div className="fm-mobile-card-actions">
-                              <button
-                                type="button"
-                                className="fm-btn fm-btn-primary fm-btn-sm"
-                                onClick={() => openMemberDetails(member)}
-                              >
-                                <FontAwesomeIcon icon={faEye} /> View Member
-                                Details
-                              </button>
-                              <button
-                                type="button"
-                                className="fm-btn fm-btn-secondary fm-btn-sm"
-                                onClick={() => openEditMemberModal(member)}
-                              >
-                                <FontAwesomeIcon icon={faPenToSquare} /> Edit
-                              </button>
-                            </div>
-                          </div>
+                          </article>
                         );
                       })}
                     </div>
                   </>
                 )}
+                </div>
               </div>
             </>
           )}
         </div>
-      )}
+        );
+      })()}
 
       {/* =====================================================
           SCREEN 4: HOUSEHOLD LIST (Page C)
       ===================================================== */}
-      {activeScreen === "list" && (
+      {!hideScreenContent && activeScreen === "list" && (
         <div className="fm-surface-card">
           {/* Toolbar */}
-          <div className="fm-list-header">
-            <div>
-              <h3>
-                {lockedBarangayName
-                  ? `Households in ${lockedBarangayName}`
-                  : "Registered Households"}
-              </h3>
-              <p>
-                Search households, filter by evacuation assignment status, and
-                manage household members and room assignments.
-              </p>
+          {!hideListHeader && (
+            <div className="fm-list-header">
+              <div>
+                <h3>
+                  {lockedBarangayName
+                    ? `Households in ${lockedBarangayName}`
+                    : "Registered Households"}
+                </h3>
+                <p>
+                  Search households, filter by evacuation assignment status, and
+                  manage household members and room assignments.
+                </p>
+              </div>
+              <div className="fm-list-actions">
+                <button
+                  type="button"
+                  className="fm-btn fm-btn-primary"
+                  onClick={openAddFamilyWizard}
+                >
+                  <FontAwesomeIcon icon={faPlus} /> Add Household
+                </button>
+                <button
+                  type="button"
+                  className="fm-btn fm-btn-secondary"
+                  onClick={exportFamilies}
+                >
+                  <FontAwesomeIcon icon={faDownload} /> Export CSV
+                </button>
+              </div>
             </div>
-            <div className="fm-list-actions">
-              <button
-                type="button"
-                className="fm-btn fm-btn-primary"
-                onClick={openAddFamilyWizard}
-              >
-                <FontAwesomeIcon icon={faPlus} /> Add Household
-              </button>
-              <button
-                type="button"
-                className="fm-btn fm-btn-secondary"
-                onClick={exportFamilies}
-              >
-                <FontAwesomeIcon icon={faDownload} /> Export CSV
-              </button>
-            </div>
-          </div>
+          )}
 
           {/* Search & Filters */}
           <div className="fm-filters-bar">
@@ -3815,9 +5835,32 @@ export default function FamilyManagement({
                 type="search"
                 value={searchInput}
                 onChange={(e) => setSearchInput(e.target.value)}
-                placeholder="Search by household ID, household head, or member name..."
+                placeholder={
+                  compactMobileAllHouseholds && isMobileViewport
+                    ? "Search households"
+                    : "Search by household ID, household head, or member name..."
+                }
               />
             </label>
+
+            {compactMobileAllHouseholds && (
+              <button
+                type="button"
+                className="fm-mobile-filters-btn"
+                onClick={openMobileFiltersSheet}
+              >
+                <FontAwesomeIcon icon={faSliders} />
+                <span>Filters</span>
+                {activeMobileFilterCount > 0 && (
+                  <span
+                    className="fm-mobile-filter-badge"
+                    aria-label={`${activeMobileFilterCount} active filters`}
+                  >
+                    {activeMobileFilterCount}
+                  </span>
+                )}
+              </button>
+            )}
 
             <select
               value={yearFilter}
@@ -3867,23 +5910,6 @@ export default function FamilyManagement({
             </select>
 
             <select
-              value={buildingFilter}
-              onChange={(e) => {
-                setPage(1);
-                setBuildingFilter(e.target.value);
-              }}
-              aria-label="Filter by building"
-            >
-              <option value="">All Buildings</option>
-              {buildingOptions.map((b) => (
-                <option key={b.id} value={String(b.id)}>
-                  {b.name}
-                </option>
-              ))}
-              <option value="unmapped">Unmapped rooms</option>
-            </select>
-
-            <select
               value={`${sortBy}:${direction}`}
               onChange={(e) => {
                 const [nextSort, nextDir] = e.target.value.split(":");
@@ -3908,68 +5934,77 @@ export default function FamilyManagement({
               <FontAwesomeIcon icon={faUsers} />
               <h4>No households found</h4>
               <p>
-                {search || assignmentStatus || buildingFilter
+                {search || assignmentStatus
                   ? "No households match your current search or filter criteria."
                   : "Register a household using 'Add Household' to get started."}
               </p>
-              <button
-                type="button"
-                className="fm-btn fm-btn-primary"
-                onClick={openAddFamilyWizard}
-              >
-                <FontAwesomeIcon icon={faPlus} /> Add Household
-              </button>
+              {!hideListHeader && (
+                <button
+                  type="button"
+                  className="fm-btn fm-btn-primary"
+                  onClick={openAddFamilyWizard}
+                >
+                  <FontAwesomeIcon icon={faPlus} /> Add Household
+                </button>
+              )}
             </div>
           ) : (
             <>
-              {/* Count above the table */}
-              <div className="fm-table-meta-bar">
-                <span className="fm-households-count">
-                  {total.toLocaleString()} {total === 1 ? "household" : "households"}
-                </span>
-              </div>
-
               {/* Desktop Table */}
-              <div className="fm-table-wrap fm-desktop-only">
-                <table className="fm-table">
+              <div ref={listTableWrapRef} className="fm-table-wrap fm-desktop-only">
+                <table
+                  className={`fm-table fm-households-table ${
+                    lockedBarangayId ? "is-barangay-tab" : "is-all-tab"
+                  }`}
+                >
                   <thead>
                     <tr>
-                      <th>Household</th>
-                      {!lockedBarangayId && <th>Barangay</th>}
+                      <th className="fm-col-household">Household</th>
+                      {!lockedBarangayId && <th className="fm-col-barangay">Barangay</th>}
                       <th>Members</th>
                       <th>Building &middot; Room</th>
-                      <th>Check-in</th>
                       <th className="fm-col-actions">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
                     {families.map((fam) => {
                       const assigned = isFamilyAssigned(fam);
+                      const structureMode = getFamilyStructureMode(fam);
                       const centerName = displayEntityName(
                         fam.current_center_name || fam.current_center || fam.evacuation_center
                       );
                       const roomNum = fam.current_room_name || fam.current_room || fam.rooms;
-                      const bldgName =
-                        fam.current_building_name || fam.current_building || "Unmapped";
+                      const bldgName = fam.current_building_name || fam.current_building;
+                      const roomLabel = roomNum ? formatRoomLabel(roomNum) : null;
                       const bldgRoomText =
-                        assigned && roomNum
-                          ? `${bldgName} · ${formatRoomLabel(roomNum)}`
+                        assigned && structureMode !== "open_area" && roomLabel
+                          ? (structureMode === "buildings_and_rooms" && bldgName
+                              ? `${bldgName} · ${roomLabel}`
+                              : roomLabel)
                           : null;
                       return (
-                        <tr key={fam.id} className="fm-table-row">
-                          <td>
+                        <tr
+                          key={fam.id}
+                          className="fm-table-row fm-clickable-row"
+                          tabIndex={0}
+                          aria-label={`View household details for ${fam.head_name}`}
+                          onClick={() => openHouseholdDetails(fam)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              openHouseholdDetails(fam);
+                            }
+                          }}
+                        >
+                          <td className="fm-col-household">
                             <div className="fm-household-cell">
                               <div className="fm-avatar-circle" title={fam.head_name}>
                                 {getHouseholdInitials(fam.head_name)}
                               </div>
                               <div className="fm-household-info">
-                                <button
-                                  type="button"
-                                  className="fm-link-btn fm-head-name-btn"
-                                  onClick={() => openHouseholdDetails(fam)}
-                                >
+                                <span className="fm-head-name-text fm-row-link-text">
                                   {fam.head_name}
-                                </button>
+                                </span>
                                 <span
                                   className="fm-household-id-sub"
                                   title={`Full Code: ${fam.family_code}`}
@@ -3980,7 +6015,7 @@ export default function FamilyManagement({
                             </div>
                           </td>
                           {!lockedBarangayId && (
-                            <td>
+                            <td className="fm-col-barangay">
                               <span className="fm-brgy-tag">{fam.barangay || "—"}</span>
                             </td>
                           )}
@@ -3991,15 +6026,23 @@ export default function FamilyManagement({
                             </span>
                           </td>
                           <td>
-                            {bldgRoomText ? (
+                            {assigned ? (
                               <div className="fm-assignment-cell">
-                                <span className="fm-room-badge">
-                                  <FontAwesomeIcon icon={faDoorOpen} />
-                                  <span>{bldgRoomText}</span>
-                                </span>
-                                {centerName && (
-                                  <span className="fm-center-name" title={centerName}>
-                                    <FontAwesomeIcon icon={faBuilding} /> {centerName}
+                                {bldgRoomText ? (
+                                  <>
+                                    <span className="fm-room-badge">
+                                      <FontAwesomeIcon icon={faDoorOpen} />
+                                      <span>{bldgRoomText}</span>
+                                    </span>
+                                    {centerName && (
+                                      <span className="fm-center-name" title={centerName}>
+                                        <FontAwesomeIcon icon={faBuilding} /> {centerName}
+                                      </span>
+                                    )}
+                                  </>
+                                ) : (
+                                  <span className="fm-center-name" title={centerName || "Assigned"}>
+                                    <FontAwesomeIcon icon={faBuilding} /> {centerName || "Evacuation Center"}
                                   </span>
                                 )}
                               </div>
@@ -4009,45 +6052,37 @@ export default function FamilyManagement({
                               </span>
                             )}
                           </td>
-                          <td>
-                            {assigned ? (
-                              <span
-                                className={`fm-checkin-pill ${fam.is_checked_in ? "checked-in" : "pending"}`}
-                              >
-                                <span className={`fm-status-dot ${fam.is_checked_in ? "green" : "slate"}`} />
-                                {fam.checkin_status || (fam.is_checked_in ? "Checked in" : "Not yet arrived")}
-                              </span>
-                            ) : (
-                              <span className="fm-muted-inline">—</span>
-                            )}
-                          </td>
                           <td className="fm-col-actions">
-                            <div className="fm-row-actions">
-                              <button
-                                type="button"
-                                className="fm-btn-icon view"
-                                title="View details"
-                                onClick={() => openHouseholdDetails(fam)}
-                              >
-                                <FontAwesomeIcon icon={faEye} />
-                              </button>
+                            <div
+                              className="fm-row-actions"
+                              onClick={(e) => e.stopPropagation()}
+                              onKeyDown={(e) => e.stopPropagation()}
+                            >
                               <button
                                 type="button"
                                 className="fm-btn-icon edit"
+                                aria-label="Edit household"
                                 title="Edit household"
-                                onClick={() => openEditHouseholdModal(fam)}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  openEditHouseholdModal(fam);
+                                }}
                               >
                                 <FontAwesomeIcon icon={faPenToSquare} />
                               </button>
                               <button
                                 type="button"
                                 className="fm-btn-icon reassign"
-                                title={assigned ? "Reassign Room" : "Assign to Room"}
-                                onClick={() =>
-                                  assigned
-                                    ? openMoveModal(fam)
-                                    : openAssignModal(fam)
-                                }
+                                aria-label="Assign room"
+                                title={assigned ? "Reassign room" : "Assign room"}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (assigned) {
+                                    openMoveModal(fam);
+                                  } else {
+                                    openAssignModal(fam);
+                                  }
+                                }}
                               >
                                 <FontAwesomeIcon icon={faRightLeft} />
                               </button>
@@ -4061,21 +6096,172 @@ export default function FamilyManagement({
               </div>
 
               {/* Mobile Stacked Cards (768px and below) */}
-              <div className="fm-mobile-cards fm-mobile-only">
-                {families.map((fam) => {
+              <div ref={listMobileCardsRef} className="fm-mobile-cards fm-mobile-only">
+                {families.map((fam, idx) => {
                   const assigned = isFamilyAssigned(fam);
+                  const structureMode = getFamilyStructureMode(fam);
                   const centerName = displayEntityName(
                     fam.current_center_name || fam.current_center || fam.evacuation_center
                   );
                   const roomNum = fam.current_room_name || fam.current_room || fam.rooms;
-                  const bldgName =
-                    fam.current_building_name || fam.current_building || "Unmapped";
+                  const bldgName = fam.current_building_name || fam.current_building;
+                  const roomLabel = roomNum ? formatRoomLabel(roomNum) : null;
                   const bldgRoomText =
-                    assigned && roomNum
-                      ? `${bldgName} · ${formatRoomLabel(roomNum)}`
+                    assigned && structureMode !== "open_area" && roomLabel
+                      ? (structureMode === "buildings_and_rooms" && bldgName
+                          ? `${bldgName} · ${roomLabel}`
+                          : roomLabel)
                       : null;
-                  const memberCount =
-                    fam.resident_count ?? fam.member_count ?? 0;
+                  const memberCount = Number(
+                    fam.resident_count ?? fam.member_count ?? 0
+                  );
+
+                  if (compactMobileAllHouseholds) {
+                    const isMenuOpen = openMobileCardMenuId === fam.id;
+                    const openUpward =
+                      families.length >= 3 && idx >= families.length - 2;
+                    const row2Parts = [
+                      formatHouseholdDisplayCode(fam.family_code),
+                      !lockedBarangayId && fam.barangay ? fam.barangay : null,
+                      `${memberCount} ${memberCount === 1 ? "member" : "members"}`,
+                    ].filter(Boolean);
+                    const checkinText =
+                      fam.checkin_status ||
+                      (fam.is_checked_in ? "Checked in" : "Not yet arrived");
+
+                    return (
+                      <article
+                        key={fam.id}
+                        className={`fm-mobile-card fm-mobile-card-compact ${
+                          isMenuOpen ? "has-open-menu" : ""
+                        }`}
+                        role="button"
+                        tabIndex={0}
+                        aria-label={`View household details for ${fam.head_name}`}
+                        onClick={() => openHouseholdDetails(fam)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            openHouseholdDetails(fam);
+                          }
+                        }}
+                      >
+                        <div className="fm-mc-row1">
+                          <div className="fm-avatar-circle" title={fam.head_name}>
+                            {getHouseholdInitials(fam.head_name)}
+                          </div>
+                          <span className="fm-mc-head-name">{fam.head_name}</span>
+                          <div className="fm-mc-row1-right">
+                            {assigned ? (
+                              <span className="fm-badge fm-badge-green fm-mc-status-pill">
+                                Assigned
+                              </span>
+                            ) : (
+                              <span className="fm-badge fm-badge-amber fm-mc-status-pill">
+                                Unassigned
+                              </span>
+                            )}
+                            <div
+                              className="fm-mobile-card-menu-wrap"
+                              onClick={(e) => e.stopPropagation()}
+                              onKeyDown={(e) => e.stopPropagation()}
+                            >
+                              <button
+                                type="button"
+                                className="fm-mc-menu-trigger"
+                                aria-label={`Actions for ${fam.head_name}`}
+                                aria-expanded={isMenuOpen}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setOpenMobileCardMenuId((prev) =>
+                                    prev === fam.id ? null : fam.id
+                                  );
+                                }}
+                              >
+                                <FontAwesomeIcon icon={faEllipsisVertical} />
+                              </button>
+                              {isMenuOpen && (
+                                <div
+                                  className={`fm-mc-menu-popover ${
+                                    openUpward ? "open-upward" : ""
+                                  }`}
+                                  role="menu"
+                                >
+                                  <button
+                                    type="button"
+                                    role="menuitem"
+                                    className="fm-mc-menu-item"
+                                    onClick={() => {
+                                      setOpenMobileCardMenuId(null);
+                                      openEditHouseholdModal(fam);
+                                    }}
+                                  >
+                                    <FontAwesomeIcon icon={faPenToSquare} />
+                                    <span>Edit</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    role="menuitem"
+                                    className="fm-mc-menu-item"
+                                    onClick={() => {
+                                      setOpenMobileCardMenuId(null);
+                                      if (assigned) {
+                                        openMoveModal(fam);
+                                      } else {
+                                        openAssignModal(fam);
+                                      }
+                                    }}
+                                  >
+                                    <FontAwesomeIcon icon={faRightLeft} />
+                                    <span>{assigned ? "Reassign" : "Assign"}</span>
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="fm-mc-row2">{row2Parts.join(" · ")}</div>
+
+                        <div className="fm-mc-row3">
+                          {bldgRoomText ? (
+                            <>
+                              <span className="fm-mc-room-text">
+                                {bldgRoomText}
+                              </span>
+                              <span
+                                className={`fm-mc-checkin-text ${
+                                  fam.is_checked_in ? "checked-in" : "pending"
+                                }`}
+                              >
+                                {" "}
+                                · {checkinText}
+                              </span>
+                            </>
+                          ) : assigned ? (
+                            <>
+                              <span className="fm-mc-room-text">
+                                {centerName || "Assigned"}
+                              </span>
+                              <span
+                                className={`fm-mc-checkin-text ${
+                                  fam.is_checked_in ? "checked-in" : "pending"
+                                }`}
+                              >
+                                {" "}
+                                · {checkinText}
+                              </span>
+                            </>
+                          ) : (
+                            <span className="fm-mc-unassigned-text">
+                              Unassigned
+                            </span>
+                          )}
+                        </div>
+                      </article>
+                    );
+                  }
+
                   return (
                     <article key={fam.id} className="fm-mobile-card">
                       <div className="fm-mobile-card-header">
@@ -4127,15 +6313,23 @@ export default function FamilyManagement({
                         <div className="fm-mobile-info-row">
                           <span className="fm-mobile-loc-label">Shelter Assignment:</span>
                           <div className="fm-mobile-loc-val">
-                            {bldgRoomText ? (
+                            {assigned ? (
                               <div className="fm-assignment-cell">
-                                <span className="fm-room-badge">
-                                  <FontAwesomeIcon icon={faDoorOpen} />
-                                  <span>{bldgRoomText}</span>
-                                </span>
-                                {centerName && (
-                                  <span className="fm-center-name" title={centerName}>
-                                    <FontAwesomeIcon icon={faBuilding} /> {centerName}
+                                {bldgRoomText ? (
+                                  <>
+                                    <span className="fm-room-badge">
+                                      <FontAwesomeIcon icon={faDoorOpen} />
+                                      <span>{bldgRoomText}</span>
+                                    </span>
+                                    {centerName && (
+                                      <span className="fm-center-name" title={centerName}>
+                                        <FontAwesomeIcon icon={faBuilding} /> {centerName}
+                                      </span>
+                                    )}
+                                  </>
+                                ) : (
+                                  <span className="fm-center-name" title={centerName || "Assigned"}>
+                                    <FontAwesomeIcon icon={faBuilding} /> {centerName || "Evacuation Center"}
                                   </span>
                                 )}
                               </div>
@@ -4220,6 +6414,9 @@ export default function FamilyManagement({
                   >
                     Previous
                   </button>
+                  <span className="fm-pagination-page-indicator">
+                    Page {page} of {pages}
+                  </span>
                   <button
                     type="button"
                     className="fm-btn fm-btn-secondary fm-btn-sm"
@@ -4240,7 +6437,11 @@ export default function FamilyManagement({
       ===================================================== */}
       {modal && (
         <div
-          className="fm-modal-backdrop"
+          className={`fm-modal-backdrop ${
+            modal === "edit-household" || modal === "member-form"
+              ? "fm-modal-fullscreen-mobile"
+              : ""
+          }`.trim()}
           role="dialog"
           aria-modal="true"
           onMouseDown={(e) => {
@@ -4248,7 +6449,11 @@ export default function FamilyManagement({
           }}
         >
           <div
-            className={`fm-modal-dialog ${modal === "member-form" ? "fm-modal-wide" : ""}`}
+            className={`fm-modal-dialog ${modal === "member-form" ? "fm-modal-wide" : ""} ${
+              modal === "edit-household" || modal === "member-form"
+                ? "fm-modal-fullscreen-mobile"
+                : ""
+            }`.trim()}
           >
             <div className="fm-modal-header">
               <div>
@@ -4283,7 +6488,7 @@ export default function FamilyManagement({
             </div>
 
             {error && (
-              <div className="fm-banner fm-banner-error fm-modal-alert">
+              <div className="fm-banner fm-banner-error fm-modal-alert" role="alert">
                 <div className="fm-banner-content">
                   <FontAwesomeIcon icon={faTriangleExclamation} />
                   <span>{error}</span>
@@ -4292,196 +6497,404 @@ export default function FamilyManagement({
             )}
 
             {/* MODAL: EDIT HOUSEHOLD */}
-            {modal === "edit-household" && (
-              <form onSubmit={submitEditHousehold} className="fm-modal-body">
-                {activeFamily?.members && activeFamily.members.length > 1 && (
-                  <label className="fm-field">
-                    <span>Designated Household Head (Select Member)</span>
-                    <select
-                      value={editHouseholdForm.head_resident_id}
-                      onChange={(e) => {
-                        const selectedId = e.target.value;
-                        const selectedMem = activeFamily.members.find(
-                          (m) => String(m.id) === String(selectedId)
-                        );
-                        setEditHouseholdForm((prev) => ({
-                          ...prev,
-                          head_resident_id: selectedId,
-                          head_name: selectedMem
-                            ? memberDisplayName(selectedMem)
-                            : prev.head_name,
-                        }));
-                      }}
+            {modal === "edit-household" && (() => {
+              const editShowErr = (field) =>
+                (editHouseholdTouched[field] ||
+                  (field === "alternate_contact" &&
+                    editHouseholdTouched.contact_number)) &&
+                editHouseholdErrors[field]
+                  ? editHouseholdErrors[field]
+                  : "";
+              const headMember =
+                activeFamily?.members?.find(
+                  (m) => String(m.id) === String(editHouseholdForm.head_resident_id)
+                ) || activeFamily?.members?.find((m) => m.is_head_of_family);
+
+              return (
+                <form
+                  className="fm-modal-form"
+                  noValidate
+                  onSubmit={submitEditHousehold}
+                  onKeyDown={handleModalFormKeyDown}
+                >
+                  <div className="fm-modal-body" ref={modalBodyRef}>
+                    {activeFamily?.members && activeFamily.members.length > 1 && (
+                      <label className="fm-field">
+                        <span>Designated Household Head (Select Member)</span>
+                        <select
+                          value={editHouseholdForm.head_resident_id}
+                          onChange={(e) => {
+                            const selectedId = e.target.value;
+                            const selectedMem = activeFamily.members.find(
+                              (m) => String(m.id) === String(selectedId)
+                            );
+                            setEditHouseholdForm((prev) => ({
+                              ...prev,
+                              head_resident_id: selectedId,
+                              head_name: selectedMem
+                                ? memberDisplayName(selectedMem)
+                                : prev.head_name,
+                            }));
+                          }}
+                        >
+                          {activeFamily.members.map((m) => (
+                            <option key={m.id} value={m.id}>
+                              {memberDisplayName(m)}
+                              {m.is_head_of_family
+                                ? " (Current Head)"
+                                : ` (${m.relationship_to_head || "Member"})`}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    )}
+
+                    <div className="fm-form-grid-2">
+                      <div className="fm-field">
+                        <span>Household Head</span>
+                        <div className="fm-readonly-box fm-readonly-head-box">
+                          <span>
+                            {editHouseholdForm.head_name ||
+                              (headMember ? memberDisplayName(headMember) : "—")}
+                          </span>
+                          {headMember && (
+                            <button
+                              type="button"
+                              className="fm-readonly-link-btn"
+                              onClick={openHeadProfileFromEdit}
+                            >
+                              View Profile
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                      <label
+                        className={`fm-field ${editShowErr("barangay_id") ? "has-error" : ""}`}
+                      >
+                        <span>
+                          Barangay <strong className="fm-req">*</strong>
+                        </span>
+                        <select
+                          id="fm-edit-hh-barangay"
+                          value={editHouseholdForm.barangay_id}
+                          onChange={(e) => handleEditBarangayChange(e.target.value)}
+                          onBlur={() => touchEditHouseholdField("barangay_id")}
+                          aria-invalid={Boolean(editShowErr("barangay_id"))}
+                          aria-describedby={
+                            editShowErr("barangay_id")
+                              ? "fm-edit-hh-barangay-error"
+                              : undefined
+                          }
+                        >
+                          <option value="">Select barangay</option>
+                          {barangays.map((b) => (
+                            <option key={b.id} value={b.id}>
+                              {b.name}
+                            </option>
+                          ))}
+                        </select>
+                        {editShowErr("barangay_id") && (
+                          <small
+                            id="fm-edit-hh-barangay-error"
+                            className="fm-field-error"
+                            role="alert"
+                          >
+                            {editShowErr("barangay_id")}
+                          </small>
+                        )}
+                      </label>
+                    </div>
+
+                    <label
+                      className={`fm-field ${editShowErr("address") ? "has-error" : ""}`}
                     >
-                      {activeFamily.members.map((m) => (
-                        <option key={m.id} value={m.id}>
-                          {memberDisplayName(m)}
-                          {m.is_head_of_family ? " (Current Head)" : ` (${m.relationship_to_head || "Member"})`}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                )}
+                      <span>
+                        Complete Household Address{" "}
+                        <strong className="fm-req">*</strong>
+                      </span>
+                      <input
+                        id="fm-edit-hh-address"
+                        type="text"
+                        value={editHouseholdForm.address}
+                        onChange={(e) => {
+                          setEditHouseholdForm((prev) => ({
+                            ...prev,
+                            address: e.target.value,
+                          }));
+                          if (editHouseholdTouched.address) {
+                            touchEditHouseholdField("address");
+                          }
+                        }}
+                        onBlur={() => touchEditHouseholdField("address")}
+                        aria-invalid={Boolean(editShowErr("address"))}
+                        aria-describedby={
+                          editShowErr("address")
+                            ? "fm-edit-hh-address-error"
+                            : undefined
+                        }
+                        placeholder="Purok / Street / Sitio"
+                      />
+                      {editShowErr("address") && (
+                        <small
+                          id="fm-edit-hh-address-error"
+                          className="fm-field-error"
+                          role="alert"
+                        >
+                          {editShowErr("address")}
+                        </small>
+                      )}
+                    </label>
 
-                <div className="fm-form-grid-2">
-                  <label className="fm-field">
-                    <span>
-                      Household Head Name <strong className="fm-req">*</strong>
-                    </span>
-                    <input
-                      type="text"
-                      value={editHouseholdForm.head_name}
-                      onChange={(e) =>
-                        setEditHouseholdForm((prev) => ({
-                          ...prev,
-                          head_name: e.target.value,
-                        }))
-                      }
-                      required
-                    />
-                  </label>
-                  <label className="fm-field">
-                    <span>Barangay</span>
-                    <select
-                      value={editHouseholdForm.barangay_id}
-                      onChange={(e) =>
-                        setEditHouseholdForm((prev) => ({
-                          ...prev,
-                          barangay_id: e.target.value,
-                        }))
+                    <div className="fm-form-grid-2">
+                      <label
+                        className={`fm-field ${editShowErr("contact_number") ? "has-error" : ""}`}
+                      >
+                        <span>Contact Number</span>
+                        <input
+                          id="fm-edit-hh-contact"
+                          type="tel"
+                          inputMode="tel"
+                          maxLength={13}
+                          value={editHouseholdForm.contact_number}
+                          onKeyDown={handlePhoneKeyDown}
+                          onChange={(e) => {
+                            const cleaned = sanitizePhoneInput(e.target.value);
+                            setEditHouseholdForm((prev) => ({
+                              ...prev,
+                              contact_number: cleaned,
+                            }));
+                            if (
+                              editHouseholdTouched.contact_number ||
+                              cleaned !== ""
+                            ) {
+                              touchEditHouseholdField("contact_number");
+                            }
+                          }}
+                          onPaste={(e) =>
+                            handlePhonePaste(e, (cleaned) => {
+                              setEditHouseholdForm((prev) => ({
+                                ...prev,
+                                contact_number: cleaned,
+                              }));
+                              touchEditHouseholdField("contact_number");
+                            })
+                          }
+                          onBlur={() => touchEditHouseholdField("contact_number")}
+                          aria-invalid={Boolean(editShowErr("contact_number"))}
+                          aria-describedby={
+                            editShowErr("contact_number")
+                              ? "fm-edit-hh-contact-error"
+                              : undefined
+                          }
+                          placeholder="e.g. 09171234567 (optional)"
+                        />
+                        {editShowErr("contact_number") && (
+                          <small
+                            id="fm-edit-hh-contact-error"
+                            className="fm-field-error"
+                            role="alert"
+                          >
+                            {editShowErr("contact_number")}
+                          </small>
+                        )}
+                      </label>
+                      <label
+                        className={`fm-field ${editShowErr("alternate_contact") ? "has-error" : ""}`}
+                      >
+                        <span>Alternate Contact</span>
+                        <input
+                          id="fm-edit-hh-alt-contact"
+                          type="tel"
+                          inputMode="tel"
+                          maxLength={13}
+                          value={editHouseholdForm.alternate_contact}
+                          onKeyDown={handlePhoneKeyDown}
+                          onChange={(e) => {
+                            const cleaned = sanitizePhoneInput(e.target.value);
+                            setEditHouseholdForm((prev) => ({
+                              ...prev,
+                              alternate_contact: cleaned,
+                            }));
+                            if (
+                              editHouseholdTouched.alternate_contact ||
+                              cleaned !== ""
+                            ) {
+                              touchEditHouseholdField("alternate_contact");
+                            }
+                          }}
+                          onPaste={(e) =>
+                            handlePhonePaste(e, (cleaned) => {
+                              setEditHouseholdForm((prev) => ({
+                                ...prev,
+                                alternate_contact: cleaned,
+                              }));
+                              touchEditHouseholdField("alternate_contact");
+                            })
+                          }
+                          onBlur={() =>
+                            touchEditHouseholdField("alternate_contact")
+                          }
+                          aria-invalid={Boolean(editShowErr("alternate_contact"))}
+                          aria-describedby={
+                            editShowErr("alternate_contact")
+                              ? "fm-edit-hh-alt-contact-error"
+                              : undefined
+                          }
+                          placeholder="e.g. 09181234567 (optional)"
+                        />
+                        {editShowErr("alternate_contact") && (
+                          <small
+                            id="fm-edit-hh-alt-contact-error"
+                            className="fm-field-error"
+                            role="alert"
+                          >
+                            {editShowErr("alternate_contact")}
+                          </small>
+                        )}
+                      </label>
+                    </div>
+
+                    <label
+                      className={`fm-field ${editShowErr("remarks") ? "has-error" : ""}`}
+                    >
+                      <span className="fm-field-label-row">
+                        <span>Household Remarks</span>
+                        <span className="fm-char-count">
+                          {(editHouseholdForm.remarks || "").length}/500
+                        </span>
+                      </span>
+                      <textarea
+                        id="fm-edit-hh-remarks"
+                        rows={3}
+                        maxLength={500}
+                        value={editHouseholdForm.remarks}
+                        onChange={(e) => {
+                          setEditHouseholdForm((prev) => ({
+                            ...prev,
+                            remarks: e.target.value.slice(0, 500),
+                          }));
+                          if (editHouseholdTouched.remarks) {
+                            touchEditHouseholdField("remarks");
+                          }
+                        }}
+                        onBlur={() => touchEditHouseholdField("remarks")}
+                        aria-invalid={Boolean(editShowErr("remarks"))}
+                        aria-describedby={
+                          editShowErr("remarks")
+                            ? "fm-edit-hh-remarks-error"
+                            : undefined
+                        }
+                        placeholder="Optional household notes"
+                      />
+                      {editShowErr("remarks") && (
+                        <small
+                          id="fm-edit-hh-remarks-error"
+                          className="fm-field-error"
+                          role="alert"
+                        >
+                          {editShowErr("remarks")}
+                        </small>
+                      )}
+                    </label>
+                  </div>
+
+                  <div className="fm-modal-footer">
+                    <button
+                      type="button"
+                      className="fm-btn fm-btn-secondary"
+                      onClick={closeModal}
+                      disabled={saving}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      className="fm-btn fm-btn-primary"
+                      disabled={
+                        saving || !isEditHouseholdDirty || !isEditHouseholdValid
                       }
                     >
-                      <option value="">Select barangay</option>
-                      {barangays.map((b) => (
-                        <option key={b.id} value={b.id}>
-                          {b.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                </div>
-
-                <label className="fm-field">
-                  <span>Complete Household Address</span>
-                  <input
-                    type="text"
-                    value={editHouseholdForm.address}
-                    onChange={(e) =>
-                      setEditHouseholdForm((prev) => ({
-                        ...prev,
-                        address: e.target.value,
-                      }))
-                    }
-                    placeholder="Purok / Street / Sitio"
-                  />
-                </label>
-
-                <div className="fm-form-grid-2">
-                  <label className="fm-field">
-                    <span>Contact Number</span>
-                    <input
-                      type="text"
-                      value={editHouseholdForm.contact_number}
-                      onChange={(e) =>
-                        setEditHouseholdForm((prev) => ({
-                          ...prev,
-                          contact_number: e.target.value,
-                        }))
-                      }
-                    />
-                  </label>
-                  <label className="fm-field">
-                    <span>Alternate Contact</span>
-                    <input
-                      type="text"
-                      value={editHouseholdForm.alternate_contact}
-                      onChange={(e) =>
-                        setEditHouseholdForm((prev) => ({
-                          ...prev,
-                          alternate_contact: e.target.value,
-                        }))
-                      }
-                    />
-                  </label>
-                </div>
-
-                <label className="fm-field">
-                  <span>Household Remarks</span>
-                  <textarea
-                    rows={3}
-                    value={editHouseholdForm.remarks}
-                    onChange={(e) =>
-                      setEditHouseholdForm((prev) => ({
-                        ...prev,
-                        remarks: e.target.value,
-                      }))
-                    }
-                  />
-                </label>
-
-                <div className="fm-modal-footer">
-                  <button
-                    type="button"
-                    className="fm-btn fm-btn-secondary"
-                    onClick={closeModal}
-                    disabled={saving}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    className="fm-btn fm-btn-primary"
-                    disabled={saving}
-                  >
-                    {saving ? "Saving..." : "Save Changes"}
-                  </button>
-                </div>
-              </form>
-            )}
+                      {saving ? (
+                        <>
+                          <FontAwesomeIcon icon={faRotate} spin />
+                          Saving...
+                        </>
+                      ) : (
+                        "Save Changes"
+                      )}
+                    </button>
+                  </div>
+                </form>
+              );
+            })()}
 
             {/* MODAL: ADD / EDIT MEMBER */}
             {modal === "member-form" && (
-              <form onSubmit={submitMemberModal} className="fm-modal-body">
-                {memberModalMode === "edit" && (
-                  <label className="fm-check-pill" style={{ marginBottom: "0.75rem" }}>
-                    <input
-                      type="checkbox"
-                      checked={Boolean(memberModalForm.is_head_of_family)}
-                      disabled={Boolean(
-                        activeFamily?.members?.find(
+              <form
+                className="fm-modal-form"
+                noValidate
+                onSubmit={submitMemberModal}
+                onKeyDown={handleModalFormKeyDown}
+              >
+                <div className="fm-modal-body" ref={modalBodyRef}>
+                  {memberDuplicateWarning && (
+                    <div className="fm-banner fm-banner-warning" role="status">
+                      <div className="fm-banner-content">
+                        <FontAwesomeIcon icon={faTriangleExclamation} />
+                        <span>{memberDuplicateWarning}</span>
+                      </div>
+                    </div>
+                  )}
+                  {memberModalMode === "edit" && (
+                    <label
+                      className="fm-check-pill"
+                      style={{ marginBottom: "0.75rem" }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={Boolean(memberModalForm.is_head_of_family)}
+                        disabled={Boolean(
+                          activeFamily?.members?.find(
+                            (m) => Number(m.id) === Number(memberModalTargetId)
+                          )?.is_head_of_family
+                        )}
+                        onChange={(e) =>
+                          setMemberModalForm((prev) => ({
+                            ...prev,
+                            is_head_of_family: e.target.checked,
+                            relationship_to_head: e.target.checked
+                              ? "Household Head"
+                              : prev.relationship_to_head === "Household Head"
+                                ? ""
+                                : prev.relationship_to_head,
+                          }))
+                        }
+                      />
+                      <span>
+                        {activeFamily?.members?.find(
                           (m) => Number(m.id) === Number(memberModalTargetId)
                         )?.is_head_of_family
-                      )}
-                      onChange={(e) =>
-                        setMemberModalForm((prev) => ({
-                          ...prev,
-                          is_head_of_family: e.target.checked,
-                          relationship_to_head: e.target.checked
-                            ? "Household Head"
-                            : prev.relationship_to_head === "Household Head"
-                              ? "Spouse"
-                              : prev.relationship_to_head,
-                        }))
-                      }
-                    />
-                    <span>
-                      {activeFamily?.members?.find(
-                        (m) => Number(m.id) === Number(memberModalTargetId)
-                      )?.is_head_of_family
-                        ? "Current Household Head"
-                        : "Set this resident as the Household Head"}
-                    </span>
-                  </label>
-                )}
-                {renderMemberFormFields(
-                  memberModalForm,
-                  (field, value) =>
-                    setMemberModalForm((prev) => ({
-                      ...prev,
-                      [field]: value,
-                    })),
-                  Boolean(memberModalForm.is_head_of_family)
-                )}
+                          ? "Current Household Head"
+                          : "Set this resident as the Household Head"}
+                      </span>
+                    </label>
+                  )}
+                  {renderMemberFormFields(
+                    memberModalForm,
+                    (field, value) =>
+                      setMemberModalForm((prev) => ({
+                        ...prev,
+                        [field]: value,
+                      })),
+                    Boolean(memberModalForm.is_head_of_family),
+                    {
+                      idPrefix: "fm-modal-member",
+                      errors: memberModalErrors,
+                      touched: memberModalTouched,
+                      onTouchField: touchMemberModalField,
+                    }
+                  )}
+                </div>
                 <div className="fm-modal-footer">
                   <button
                     type="button"
@@ -4496,11 +6909,16 @@ export default function FamilyManagement({
                     className="fm-btn fm-btn-primary"
                     disabled={saving}
                   >
-                    {saving
-                      ? "Saving..."
-                      : memberModalMode === "add"
-                        ? "Add Member"
-                        : "Save Member"}
+                    {saving ? (
+                      <>
+                        <FontAwesomeIcon icon={faRotate} spin />
+                        Saving...
+                      </>
+                    ) : memberModalMode === "add" ? (
+                      "Add Member"
+                    ) : (
+                      "Save Member"
+                    )}
                   </button>
                 </div>
               </form>
@@ -4539,7 +6957,7 @@ export default function FamilyManagement({
               const venueCap = selectedCenter?.capacity ?? 0;
               const venueOcc = getCenterAssignedCount(selectedCenter);
               const venueAvailable = getCenterRemainingCapacity(selectedCenter);
-              const venueHasCapacity = venueAvailable >= needed;
+              const venueHasCapacity = Number(venueCap) > 0 && venueAvailable >= needed;
 
               return (
                 <form onSubmit={submitAssignment} className="fm-modal-body">
@@ -4815,7 +7233,7 @@ export default function FamilyManagement({
               const venueCap = destCenter?.capacity ?? 0;
               const venueOcc = getCenterAssignedCount(destCenter);
               const venueAvailable = getCenterRemainingCapacity(destCenter);
-              const venueHasCapacity = venueAvailable >= needed;
+              const venueHasCapacity = Number(venueCap) > 0 && venueAvailable >= needed;
 
               const currentCenterName = displayEntityName(
                 activeFamily.current_center || activeFamily.evacuation_center
@@ -4823,7 +7241,7 @@ export default function FamilyManagement({
               const currentRoomLabel =
                 activeFamily.current_room || activeFamily.rooms;
               const isCurrentDirectVenue =
-                activeFamily.current_center_type === "single_venue" ||
+                getFamilyStructureMode(activeFamily) === "open_area" ||
                 !currentRoomLabel ||
                 currentRoomLabel === "Single Venue";
 
@@ -5074,7 +7492,7 @@ export default function FamilyManagement({
       {/* Confirmation Dialog */}
       {confirmDialog && (
         <div
-          className="fm-modal-backdrop"
+          className="fm-modal-backdrop fm-confirm-backdrop"
           role="dialog"
           aria-modal="true"
           onMouseDown={(e) => {
@@ -5088,6 +7506,7 @@ export default function FamilyManagement({
                 type="button"
                 className="fm-modal-close"
                 onClick={() => setConfirmDialog(null)}
+                aria-label="Close confirmation dialog"
               >
                 <FontAwesomeIcon icon={faXmark} />
               </button>
@@ -5099,17 +7518,146 @@ export default function FamilyManagement({
                   type="button"
                   className="fm-btn fm-btn-secondary"
                   onClick={() => setConfirmDialog(null)}
+                  disabled={saving}
                 >
-                  Cancel
+                  {confirmDialog.cancelText || "Cancel"}
                 </button>
                 <button
                   type="button"
                   className={`fm-btn ${confirmDialog.danger ? "fm-btn-danger" : "fm-btn-primary"}`}
                   onClick={confirmDialog.onConfirm}
+                  disabled={saving}
                 >
-                  {confirmDialog.confirmText || "Confirm"}
+                  {saving ? "Saving..." : confirmDialog.confirmText || "Confirm"}
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Mobile Filters Bottom Sheet */}
+      {compactMobileAllHouseholds && isMobileFiltersOpen && (
+        <div
+          className="fm-mobile-filter-sheet-backdrop"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Filter households"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setIsMobileFiltersOpen(false);
+          }}
+        >
+          <div className="fm-mobile-filter-sheet">
+            <div className="fm-mobile-filter-sheet-header">
+              <h3>Filters</h3>
+              <button
+                type="button"
+                className="fm-modal-close"
+                aria-label="Close filters"
+                onClick={() => setIsMobileFiltersOpen(false)}
+              >
+                <FontAwesomeIcon icon={faXmark} />
+              </button>
+            </div>
+
+            <div className="fm-mobile-filter-sheet-body">
+              <label className="fm-mobile-sheet-field">
+                <span>Census Year</span>
+                <select
+                  value={draftMobileFilters.yearFilter}
+                  onChange={(e) =>
+                    setDraftMobileFilters((prev) => ({
+                      ...prev,
+                      yearFilter: e.target.value,
+                    }))
+                  }
+                  aria-label="Filter by census year"
+                >
+                  <option value="">All Years</option>
+                  {rosterYears.map((ry) => (
+                    <option key={ry.id || ry.year} value={String(ry.year)}>
+                      Census Year {ry.year} {ry.is_active ? "(Active)" : ""}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              {!lockedBarangayId && (
+                <label className="fm-mobile-sheet-field">
+                  <span>Barangay</span>
+                  <select
+                    value={draftMobileFilters.barangayFilter}
+                    onChange={(e) =>
+                      setDraftMobileFilters((prev) => ({
+                        ...prev,
+                        barangayFilter: e.target.value,
+                      }))
+                    }
+                    aria-label="Filter by barangay"
+                  >
+                    <option value="">All Barangays</option>
+                    {barangays.map((b) => (
+                      <option key={b.id} value={String(b.id)}>
+                        {b.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+
+              <label className="fm-mobile-sheet-field">
+                <span>Status</span>
+                <select
+                  value={draftMobileFilters.assignmentStatus}
+                  onChange={(e) =>
+                    setDraftMobileFilters((prev) => ({
+                      ...prev,
+                      assignmentStatus: e.target.value,
+                    }))
+                  }
+                  aria-label="Filter by assignment status"
+                >
+                  <option value="">All Statuses</option>
+                  <option value="assigned">Assigned</option>
+                  <option value="unassigned">Unassigned</option>
+                </select>
+              </label>
+
+              <label className="fm-mobile-sheet-field">
+                <span>Sort</span>
+                <select
+                  value={draftMobileFilters.sortKey}
+                  onChange={(e) =>
+                    setDraftMobileFilters((prev) => ({
+                      ...prev,
+                      sortKey: e.target.value,
+                    }))
+                  }
+                  aria-label="Sort households"
+                >
+                  <option value="family_code:asc">Household ID (A–Z)</option>
+                  <option value="head_name:asc">Household Head (A–Z)</option>
+                  <option value="member_count:desc">Most Members</option>
+                  <option value="created_at:desc">Recently Added</option>
+                </select>
+              </label>
+            </div>
+
+            <div className="fm-mobile-filter-sheet-footer">
+              <button
+                type="button"
+                className="fm-btn fm-btn-secondary"
+                onClick={resetMobileFilters}
+              >
+                Reset
+              </button>
+              <button
+                type="button"
+                className="fm-btn fm-btn-primary"
+                onClick={applyMobileFilters}
+              >
+                Apply
+              </button>
             </div>
           </div>
         </div>

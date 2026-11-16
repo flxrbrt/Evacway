@@ -81,6 +81,19 @@ def add_cors_headers(response):
 
 db.init_app(app)
 
+with app.app_context():
+    try:
+        from migrate_center_type_structure import ensure_center_type_structure_column
+        ensure_center_type_structure_column(db)
+    except Exception as e:
+        app.logger.warning("Could not ensure center_types.structure_mode: %s", e)
+
+    try:
+        from migrate_hazard_reporter import ensure_hazard_report_reporter_columns
+        ensure_hazard_report_reporter_columns(db)
+    except Exception as e:
+        app.logger.warning("Could not ensure hazard_reports reporter columns: %s", e)
+
 
 # =========================================================
 # BLUEPRINTS

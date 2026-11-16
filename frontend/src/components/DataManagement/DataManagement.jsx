@@ -343,8 +343,26 @@ function DataManagement() {
   const familyTotalPages = Math.max(1, Math.ceil(filteredFamilies.length / yearPerPage));
 
   // =========================================================================
+  // BARANGAYS QUERY & IMPORT RESIDENTS STATE
+  // =========================================================================
+  const barangaysQuery = useBarangays();
+  const barangays = useMemo(
+    () => (Array.isArray(barangaysQuery.data) ? barangaysQuery.data : []),
+    [barangaysQuery.data]
+  );
+  const sortedBarangays = useMemo(
+    () => [...barangays].sort((a, b) => (a.name || "").localeCompare(b.name || "")),
+    [barangays]
+  );
+
+  // =========================================================================
   // SUB-TAB 1: IMPORT RESIDENTS STATE
   // =========================================================================
+  const [selectedImportBarangayId, setSelectedImportBarangayId] = useState("");
+  const selectedImportBarangay = useMemo(
+    () => barangays.find((b) => String(b.id) === String(selectedImportBarangayId)) || null,
+    [barangays, selectedImportBarangayId]
+  );
   const [importFile, setImportFile] = useState(null);
   const [dragActive, setDragActive] = useState(false);
   const [validating, setValidating] = useState(false);
@@ -376,8 +394,12 @@ function DataManagement() {
   }
 
   // Stage an upload: validates the file but saves nothing to live data.
-  async function runStageValidation(file) {
+  async function runStageValidation(file, barangayIdOverride = selectedImportBarangayId) {
     if (!file) return;
+    if (!barangayIdOverride) {
+      setErrorMsg("Please select a barangay before uploading an Excel file.");
+      return;
+    }
     const requestId = ++stageRequestRef.current;
     setValidating(true);
     setErrorMsg("");
@@ -388,12 +410,14 @@ function DataManagement() {
     setImportStep("upload");
 
     try {
-      const staged = await api.stageFamilyImport(file);
+      const staged = await api.stageFamilyImport(file, barangayIdOverride);
       if (requestId !== stageRequestRef.current) return;
       setStagingToken(staged.staging_token);
       setStagedResult(staged);
       const hasUpdated = staged.families?.some((f) => f.status === "updated");
-      setReviewTab(hasUpdated ? "updated" : "new");
+      const hasNew = staged.families?.some((f) => f.status === "new");
+      const hasSkipped = staged.families?.some((f) => f.status === "skipped");
+      setReviewTab(hasUpdated ? "updated" : hasNew ? "new" : hasSkipped ? "skipped" : "new");
       setReviewSearch("");
       setReviewPage(1);
       setExpandedRowKey(null);
@@ -411,6 +435,10 @@ function DataManagement() {
 
   function handleFileSelect(selected) {
     if (!selected) return;
+    if (!selectedImportBarangayId) {
+      setErrorMsg("Please select a barangay before uploading an Excel file.");
+      return;
+    }
     const name = selected.name || "";
     if (name.match(/\.xls$/i)) {
       setErrorMsg("Please save the file as .xlsx and upload again.");
@@ -421,13 +449,14 @@ function DataManagement() {
       return;
     }
     setImportFile(selected);
-    runStageValidation(selected);
+    runStageValidation(selected, selectedImportBarangayId);
   }
 
   // Drag and drop handlers
   function handleDragOver(e) {
     e.preventDefault();
     e.stopPropagation();
+    if (!selectedImportBarangayId) return;
     setDragActive(true);
   }
 
@@ -441,9 +470,18 @@ function DataManagement() {
     e.preventDefault();
     e.stopPropagation();
     setDragActive(false);
+    if (!selectedImportBarangayId) return;
     if (e.dataTransfer.files && e.dataTransfer.files[0]) {
       handleFileSelect(e.dataTransfer.files[0]);
     }
+  }
+
+  function handleImportBarangayChange(e) {
+    const nextId = e.target.value;
+    setSelectedImportBarangayId(nextId);
+    clearSelectedFile();
+    setSuccessMsg("");
+    setShowConfirmModal(false);
   }
 
   function clearSelectedFile() {
@@ -485,13 +523,19 @@ function DataManagement() {
       const updated = result.families_updated ?? 0;
       const skipped = result.families_skipped ?? 0;
       const membersFilled = result.members_filled ?? 0;
+      const otherBarangaySkipped = result.other_barangay_rows_skipped ?? 0;
+      const barangayName = result.barangay?.name || selectedImportBarangay?.name || "";
       setImportResult({
         status: "success",
-        message: `Import completed successfully. ${created} created, ${updated} updated, ${skipped} skipped.`,
+        message:
+          result.message ||
+          `Import completed${barangayName ? ` for ${barangayName}` : ""}. ${created} created, ${updated} updated, ${skipped} skipped.`,
         filename: importFile?.name || stagedResult?.filename || "",
+        barangayName,
         created,
         updated,
         skipped,
+        otherBarangaySkipped,
         residentsAdded: result.residents_created ?? 0,
         membersFilled,
       });
@@ -519,14 +563,28 @@ function DataManagement() {
   const [exportingMasterlist, setExportingMasterlist] = useState(false);
   const [showExcelPreview, setShowExcelPreview] = useState(false);
 
+  function toFilenameSlug(value) {
+    return (
+      String(value || "")
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "_")
+        .replace(/^_+|_+$/g, "") || "barangay"
+    );
+  }
+
   async function handleDownloadTemplate() {
     try {
       setDownloadingTemplate(true);
-      const blob = await api.downloadFamilyTemplate();
+      const barangayIdToUse = selectedImportBarangayId || undefined;
+      const blob = await api.downloadFamilyTemplate(barangayIdToUse);
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
-      link.setAttribute("download", "EvacWay_Household_Import_Template.xlsx");
+      const filename = selectedImportBarangay
+        ? `EvacWay_Household_Import_Template_${toFilenameSlug(selectedImportBarangay.name)}.xlsx`
+        : "EvacWay_Household_Import_Template.xlsx";
+      link.setAttribute("download", filename);
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -539,24 +597,47 @@ function DataManagement() {
     }
   }
 
-  async function handleExportMasterlist(targetYear = null) {
-    const yearToExport = targetYear || null;
+  async function handleExportMasterlist(arg = null) {
+    const isPlainYear =
+      typeof arg === "number" || (typeof arg === "string" && /^\d{4}$/.test(arg));
+    const yearToExport = isPlainYear
+      ? arg
+      : arg && typeof arg === "object" && "year" in arg
+        ? arg.year
+        : null;
+    const barangayIdToExport =
+      arg && typeof arg === "object" && "barangayId" in arg
+        ? arg.barangayId
+        : null;
+    const targetBarangay = barangayIdToExport
+      ? barangays.find((b) => String(b.id) === String(barangayIdToExport)) || null
+      : null;
+
     try {
       setExportingMasterlist(true);
       setErrorMsg("");
-      const blob = await api.exportFamilies(yearToExport ? { year: yearToExport } : {});
+      const filters = {};
+      if (yearToExport) filters.year = yearToExport;
+      if (barangayIdToExport) filters.barangay_id = barangayIdToExport;
+
+      const blob = await api.exportFamilies(filters);
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
       const today = new Date().toISOString().slice(0, 10);
-      const fileLabel = yearToExport ? `_${yearToExport}` : "";
+      const fileParts = [];
+      if (targetBarangay) fileParts.push(toFilenameSlug(targetBarangay.name));
+      if (yearToExport) fileParts.push(yearToExport);
+      const fileLabel = fileParts.length > 0 ? `_${fileParts.join("_")}` : "";
       link.setAttribute("download", `EvacWay_Resident_Masterlist${fileLabel}_${today}.xlsx`);
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
       window.URL.revokeObjectURL(url);
       setSuccessMsg(
-        `Resident masterlist ${yearToExport ? `for year ${yearToExport} ` : ""}exported successfully.`
+        targetBarangay
+          ? `Resident masterlist for Barangay ${targetBarangay.name} exported successfully.`
+          : `Resident masterlist ${yearToExport ? `for year ${yearToExport} ` : ""}exported successfully.`
       );
     } catch (err) {
       console.error("Export masterlist failed:", err);
@@ -646,8 +727,6 @@ function DataManagement() {
   // =========================================================================
   // SUB-TAB 2: BARANGAYS STATE
   // =========================================================================
-  const barangaysQuery = useBarangays();
-  const barangays = Array.isArray(barangaysQuery.data) ? barangaysQuery.data : [];
   const [searchQuery, setSearchQuery] = useState("");
 
   // Add Barangay Modal
@@ -774,6 +853,10 @@ function DataManagement() {
       setDeletingBarangay(true);
       setDeleteError("");
       await api.deleteBarangay(deleteTarget.id);
+      if (String(deleteTarget.id) === String(selectedImportBarangayId)) {
+        setSelectedImportBarangayId("");
+        clearSelectedFile();
+      }
       await refreshDependentData();
       setSuccessMsg(`Barangay "${deleteTarget.name}" deleted successfully.`);
       setDeleteTarget(null);
@@ -2206,8 +2289,8 @@ function DataManagement() {
               <div className="dm-import-heading">
                 <h3>Excel Resident Roster Import</h3>
                 <p>
-                  Upload an Excel file (.xlsx) containing household heads and family members.
-                  The system will check the file first and show you what will be added, updated, or left unchanged before anything is saved.
+                  Select a barangay, then upload an Excel file (.xlsx) containing household heads and family members.
+                  The preview, summary, and saved data apply only to that barangay.
                 </p>
               </div>
 
@@ -2228,7 +2311,11 @@ function DataManagement() {
                   className="dm-template-btn"
                   onClick={handleDownloadTemplate}
                   disabled={downloadingTemplate}
-                  title="Download blank template with guidelines"
+                  title={
+                    selectedImportBarangay
+                      ? `Download Excel template pre-filled for ${selectedImportBarangay.name}`
+                      : "Download blank template with guidelines"
+                  }
                 >
                   <FontAwesomeIcon icon={downloadingTemplate ? faCircleNotch : faDownload} spin={downloadingTemplate} />
                   {downloadingTemplate ? "Downloading..." : "Download Excel Template"}
@@ -2237,48 +2324,89 @@ function DataManagement() {
                 <button
                   type="button"
                   className="dm-btn dm-btn-secondary"
-                  onClick={handleExportMasterlist}
+                  onClick={() =>
+                    handleExportMasterlist({
+                      barangayId: selectedImportBarangayId || undefined,
+                    })
+                  }
                   disabled={exportingMasterlist}
-                  title="Export all registered households and residents in the municipality to Excel"
+                  title={
+                    selectedImportBarangay
+                      ? `Export registered households and residents for ${selectedImportBarangay.name} (.xlsx)`
+                      : "Export registered households and residents to Excel"
+                  }
                   style={{ fontSize: "13px", padding: "8px 14px", background: "#f8fafc", borderColor: "#cbd5e1", color: "#334155" }}
                 >
                   <FontAwesomeIcon icon={exportingMasterlist ? faCircleNotch : faFileExport} spin={exportingMasterlist} />
                   {exportingMasterlist ? "Exporting..." : "Export Area Masterlist"}
                 </button>
-
-                <button
-                  type="button"
-                  className="dm-btn dm-btn-secondary"
-                  onClick={handleExportCenters}
-                  disabled={exportingCenters}
-                  title="Export all evacuation centers with their Center Types, Materials, and Amenities to Excel"
-                  style={{ fontSize: "13px", padding: "8px 14px", background: "#f0fdf4", borderColor: "#bbf7d0", color: "#166534" }}
-                >
-                  <FontAwesomeIcon icon={exportingCenters ? faCircleNotch : faBuilding} spin={exportingCenters} />
-                  {exportingCenters ? "Exporting..." : "Export Centers (.xlsx)"}
-                </button>
               </div>
+            </div>
+
+            {/* Required Target Barangay Selector */}
+            <div className="dm-import-barangay-bar">
+              <div className="dm-import-barangay-field">
+                <label htmlFor="dm-import-barangay-select" className="dm-import-barangay-label">
+                  Select barangay <span className="dm-required-star" aria-hidden="true">*</span>
+                </label>
+                <select
+                  id="dm-import-barangay-select"
+                  required
+                  aria-required="true"
+                  className="dm-import-barangay-select"
+                  value={selectedImportBarangayId}
+                  onChange={handleImportBarangayChange}
+                  disabled={validating || importing || barangaysQuery.isLoading}
+                >
+                  <option value="">
+                    {barangaysQuery.isLoading ? "Loading barangays..." : "-- Select a barangay --"}
+                  </option>
+                  {sortedBarangays.map((b) => (
+                    <option key={b.id} value={String(b.id)}>
+                      {b.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <p className="dm-import-barangay-hint">
+                {selectedImportBarangay
+                  ? `Preview, counts, and saved records apply only to Barangay ${selectedImportBarangay.name}. Rows for other barangays will be flagged and skipped.`
+                  : "Required: choose a barangay before uploading a roster file."}
+              </p>
             </div>
 
             {/* Drag & Drop File Upload Area */}
             {!importFile ? (
               <div
-                className={`dm-dropzone ${dragActive ? "is-dragging" : ""}`}
+                className={`dm-dropzone ${dragActive ? "is-dragging" : ""} ${!selectedImportBarangayId ? "is-disabled" : ""}`}
                 onDragOver={handleDragOver}
                 onDragLeave={handleDragLeave}
                 onDrop={handleDrop}
-                onClick={() => fileInputRef.current?.click()}
+                onClick={() => {
+                  if (!selectedImportBarangayId) return;
+                  fileInputRef.current?.click();
+                }}
+                aria-disabled={!selectedImportBarangayId}
               >
                 <input
                   ref={fileInputRef}
                   type="file"
                   accept=".xlsx"
                   className="dm-file-input"
+                  disabled={!selectedImportBarangayId}
                   onChange={(e) => handleFileSelect(e.target.files?.[0])}
                 />
                 <FontAwesomeIcon icon={faUpload} className="dm-dropzone-icon" />
-                <h4 className="dm-dropzone-title">Click to upload or drag & drop Excel file</h4>
-                <p className="dm-dropzone-sub">Supports .xlsx files only</p>
+                <h4 className="dm-dropzone-title">
+                  {selectedImportBarangay
+                    ? "Click to upload or drag & drop Excel file"
+                    : "Select a barangay to enable file upload"}
+                </h4>
+                <p className="dm-dropzone-sub">
+                  {selectedImportBarangay
+                    ? `Importing for Barangay ${selectedImportBarangay.name} • Supports .xlsx files only`
+                    : "Choose a barangay above before uploading a .xlsx file"}
+                </p>
               </div>
             ) : (
               <div className="dm-file-info">
@@ -2286,15 +2414,18 @@ function DataManagement() {
                   <FontAwesomeIcon icon={faFileExcel} className="dm-file-icon" />
                   <div>
                     <div className="dm-file-name">{importFile.name}</div>
-                    <div className="dm-file-size">{(importFile.size / 1024).toFixed(1)} KB</div>
+                    <div className="dm-file-size">
+                      {(importFile.size / 1024).toFixed(1)} KB
+                      {selectedImportBarangay ? ` • Barangay ${selectedImportBarangay.name}` : ""}
+                    </div>
                   </div>
                 </div>
                 <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
                   <button
                     type="button"
                     className="dm-btn dm-btn-secondary dm-btn-sm"
-                    onClick={() => runStageValidation(importFile)}
-                    disabled={validating || importing}
+                    onClick={() => runStageValidation(importFile, selectedImportBarangayId)}
+                    disabled={validating || importing || !selectedImportBarangayId}
                   >
                     <FontAwesomeIcon icon={faRotate} spin={validating} />
                     {validating ? "Checking..." : "Re-check"}
@@ -2323,17 +2454,36 @@ function DataManagement() {
             {/* Validation Summary & Review */}
             {importStep === "review" && stagedResult && !validating && (() => {
               const hasErrors = stagedResult.errors?.length > 0;
+              const targetBarangayLabel =
+                stagedResult.target_barangay?.name || selectedImportBarangay?.name || "Selected Barangay";
               const newHouseholds = stagedResult.families?.filter((f) => f.status === "new") || [];
               const updatedHouseholds = stagedResult.families?.filter((f) => f.status === "updated") || [];
               const skippedHouseholds = stagedResult.families?.filter((f) => f.status === "skipped") || [];
+              const otherBarangayRows = stagedResult.other_barangay_rows || [];
+              const otherBarangaySkipped =
+                stagedResult.other_barangay_skipped ?? otherBarangayRows.length ?? 0;
+              const barangayRowCount = stagedResult.barangay_rows ?? stagedResult.rows ?? 0;
+              const filteredWarnings =
+                otherBarangayRows.length > 0
+                  ? (stagedResult.warnings || []).filter(
+                      (w) => !String(w).includes("belonged to another barangay")
+                    )
+                  : stagedResult.warnings || [];
               const canImport = Boolean(stagedResult.can_import && !hasErrors);
 
               return (
                 <>
                   <div className="dm-summary-grid">
                     <div className="dm-summary-card">
-                      <span className="dm-summary-label">Rows Read</span>
-                      <span className="dm-summary-val">{stagedResult.rows ?? 0}</span>
+                      <span className="dm-summary-label">Rows for {targetBarangayLabel}</span>
+                      <span className="dm-summary-val">
+                        {barangayRowCount}
+                        {otherBarangaySkipped > 0 && (
+                          <span className="dm-summary-sub">
+                            ({otherBarangaySkipped} other barangay skipped)
+                          </span>
+                        )}
+                      </span>
                     </div>
                     <div className="dm-summary-card">
                       <span className="dm-summary-label">New Households</span>
@@ -2350,7 +2500,7 @@ function DataManagement() {
                       </span>
                     </div>
                     <div className="dm-summary-card">
-                      <span className="dm-summary-label">Skipped</span>
+                      <span className="dm-summary-label">Unchanged</span>
                       <span className="dm-summary-val">
                         {stagedResult.skipped_households ?? 0}
                         <span className="dm-summary-sub">Already registered</span>
@@ -2403,15 +2553,52 @@ function DataManagement() {
                     </div>
                   )}
 
+                  {/* Flagged Other-Barangay Rows */}
+                  {otherBarangayRows.length > 0 && (
+                    <div className="dm-issues-box is-warning dm-other-brgy-box">
+                      <h5 className="dm-issues-title">
+                        <FontAwesomeIcon icon={faTriangleExclamation} />
+                        {otherBarangayRows.length} Row{otherBarangayRows.length === 1 ? "" : "s"} from Other Barangays Flagged &amp; Skipped
+                      </h5>
+                      <p className="dm-other-brgy-desc">
+                        This import applies only to <strong>{targetBarangayLabel}</strong>. The following row{otherBarangayRows.length === 1 ? "" : "s"} belong to another barangay and will not be saved:
+                      </p>
+                      <div className="dm-other-brgy-table-wrap">
+                        <table className="dm-other-brgy-table">
+                          <thead>
+                            <tr>
+                              <th>Row</th>
+                              <th>Barangay in File</th>
+                              <th>Household Head</th>
+                              <th>Member</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {otherBarangayRows.map((item, idx) => (
+                              <tr key={`${item.row}-${idx}`}>
+                                <td>Row {item.row}</td>
+                                <td>
+                                  <span className="dm-other-brgy-pill">{item.barangay}</span>
+                                </td>
+                                <td>{item.head_name || "—"}</td>
+                                <td>{item.member_name || "—"}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
                   {/* Warnings List */}
-                  {stagedResult.warnings?.length > 0 && (
+                  {filteredWarnings.length > 0 && (
                     <div className="dm-issues-box is-warning">
                       <h5 className="dm-issues-title">
                         <FontAwesomeIcon icon={faTriangleExclamation} />
-                        Warnings ({stagedResult.warnings.length})
+                        Warnings ({filteredWarnings.length})
                       </h5>
                       <ul className="dm-issues-list">
-                        {stagedResult.warnings.map((w, idx) => (
+                        {filteredWarnings.map((w, idx) => (
                           <li key={idx}>{w}</li>
                         ))}
                       </ul>
@@ -2696,7 +2883,9 @@ function DataManagement() {
                   <div className="dm-import-actions">
                     {!canImport && !hasErrors && (
                       <span style={{ fontSize: "13px", color: "var(--muted, #64748b)", marginRight: "auto" }}>
-                        Nothing to add. Everyone in this file is already registered.
+                        {barangayRowCount === 0 && otherBarangaySkipped > 0
+                          ? `No rows matched Barangay ${targetBarangayLabel}. All ${otherBarangaySkipped} row${otherBarangaySkipped === 1 ? "" : "s"} belonged to another barangay and were skipped.`
+                          : `Nothing to add. Everyone for Barangay ${targetBarangayLabel} in this file is already registered.`}
                       </span>
                     )}
                     <button
@@ -2743,8 +2932,15 @@ function DataManagement() {
                     <span className="dm-summary-val">{importResult.updated}</span>
                   </div>
                   <div className="dm-summary-card">
-                    <span className="dm-summary-label">Skipped</span>
-                    <span className="dm-summary-val">{importResult.skipped}</span>
+                    <span className="dm-summary-label">Unchanged</span>
+                    <span className="dm-summary-val">
+                      {importResult.skipped}
+                      {importResult.otherBarangaySkipped > 0 && (
+                        <span className="dm-summary-sub">
+                          (+{importResult.otherBarangaySkipped} other barangay row{importResult.otherBarangaySkipped === 1 ? "" : "s"} skipped)
+                        </span>
+                      )}
+                    </span>
                   </div>
                   <div className="dm-summary-card is-status">
                     <span className="dm-summary-label">Residents Added</span>
@@ -2760,9 +2956,6 @@ function DataManagement() {
                 </div>
               </>
             )}
-
-            {/* Resident Masterlist Table Data in this area */}
-            {importStep !== "review" && renderResidentDirectorySection()}
           </div>
         )}
 
@@ -3224,7 +3417,7 @@ function DataManagement() {
                       <tr style={{ borderBottom: "1px solid #e2e8f0", background: "#ffffff" }}>
                         <td style={{ padding: "8px 12px", fontWeight: "600", color: "#0f172a" }}>FAM-001</td>
                         <td style={{ padding: "8px 12px" }}>Juan Dela Cruz</td>
-                        <td style={{ padding: "8px 12px" }}>Poblacion</td>
+                        <td style={{ padding: "8px 12px" }}>{selectedImportBarangay?.name || "Poblacion"}</td>
                         <td style={{ padding: "8px 12px" }}>09171234567</td>
                         <td style={{ padding: "8px 12px" }}>Purok 1</td>
                         <td style={{ padding: "8px 12px", fontWeight: "600" }}>Juan</td>
@@ -3245,7 +3438,7 @@ function DataManagement() {
                       <tr style={{ borderBottom: "1px solid #e2e8f0", background: "#f8fafc" }}>
                         <td style={{ padding: "8px 12px", fontWeight: "600", color: "#0f172a" }}>FAM-001</td>
                         <td style={{ padding: "8px 12px" }}>Juan Dela Cruz</td>
-                        <td style={{ padding: "8px 12px" }}>Poblacion</td>
+                        <td style={{ padding: "8px 12px" }}>{selectedImportBarangay?.name || "Poblacion"}</td>
                         <td style={{ padding: "8px 12px" }}>09171234567</td>
                         <td style={{ padding: "8px 12px" }}>Purok 1</td>
                         <td style={{ padding: "8px 12px", fontWeight: "600" }}>Maria</td>
@@ -3266,7 +3459,7 @@ function DataManagement() {
                       <tr style={{ borderBottom: "1px solid #e2e8f0", background: "#ffffff" }}>
                         <td style={{ padding: "8px 12px", fontWeight: "600", color: "#0f172a" }}>FAM-001</td>
                         <td style={{ padding: "8px 12px" }}>Juan Dela Cruz</td>
-                        <td style={{ padding: "8px 12px" }}>Poblacion</td>
+                        <td style={{ padding: "8px 12px" }}>{selectedImportBarangay?.name || "Poblacion"}</td>
                         <td style={{ padding: "8px 12px" }}>09171234567</td>
                         <td style={{ padding: "8px 12px" }}>Purok 1</td>
                         <td style={{ padding: "8px 12px", fontWeight: "600" }}>Angela</td>
@@ -3454,6 +3647,9 @@ function DataManagement() {
           const updatedCount = stagedResult?.updated_households ?? 0;
           const updatedMembersCount = stagedResult?.new_members_to_add ?? 0;
           const skippedCount = stagedResult?.skipped_households ?? 0;
+          const otherBarangaySkipped = stagedResult?.other_barangay_skipped ?? 0;
+          const targetBarangayName =
+            stagedResult?.target_barangay?.name || selectedImportBarangay?.name || "selected barangay";
 
           return (
             <div className="dm-modal-overlay" onClick={() => !importing && setShowConfirmModal(false)}>
@@ -3471,7 +3667,7 @@ function DataManagement() {
                 </div>
                 <div className="dm-modal-body">
                   <p style={{ margin: "0 0 10px", fontWeight: "600", color: "var(--text-0, #0f172a)" }}>
-                    You are about to commit:
+                    You are about to commit to <strong>Barangay {targetBarangayName}</strong>:
                   </p>
                   <ul style={{ margin: "0 0 14px 20px", padding: 0, fontSize: "13.5px", lineHeight: "1.6", color: "var(--text-0, #0f172a)" }}>
                     <li>
@@ -3482,8 +3678,13 @@ function DataManagement() {
                       {stagedResult?.members_to_fill > 0 && `, ${stagedResult.members_to_fill} existing member${stagedResult.members_to_fill === 1 ? "" : "s"} with blank fields filled`})
                     </li>
                     <li>
-                      <strong>{skippedCount} household{skippedCount === 1 ? "" : "s"} skipped</strong> (already up to date)
+                      <strong>{skippedCount} household{skippedCount === 1 ? "" : "s"} unchanged</strong> (already up to date)
                     </li>
+                    {otherBarangaySkipped > 0 && (
+                      <li>
+                        <strong>{otherBarangaySkipped} row{otherBarangaySkipped === 1 ? "" : "s"} from other barangays skipped</strong> (not saved)
+                      </li>
+                    )}
                   </ul>
                   <div className="dm-alert dm-alert-warning" style={{ margin: "0 0 12px" }}>
                     <div className="dm-alert-content">

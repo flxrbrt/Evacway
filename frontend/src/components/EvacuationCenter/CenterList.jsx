@@ -4,7 +4,7 @@ import {
   faPlus, faBuilding, faCircleCheck, faTriangleExclamation,
   faCircleStop, faMapPin, faBan, faPen, faLocationDot,
   faFilter, faXmark, faSearch, faHome, faWarehouse,
-  faCircleXmark, faDrawPolygon, faChevronRight,
+  faCircleXmark, faDrawPolygon, faChevronRight, faCheck,
 } from '@fortawesome/free-solid-svg-icons'
 
 import { useAuth } from '../../context/AuthContext'
@@ -145,6 +145,24 @@ export default function CenterList({
   const [quickFilter, setQuickFilter] = useState('all')
   const [dropdownOpen, setDropdownOpen] = useState(false)
   const [activeIndex, setActiveIndex] = useState(-1)
+  const [isMobileViewport, setIsMobileViewport] = useState(() =>
+    typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+      ? window.matchMedia('(max-width: 768px)').matches
+      : false
+  )
+  const [mobileBrgySheetOpen, setMobileBrgySheetOpen] = useState(false)
+  const [draftBarangayFilter, setDraftBarangayFilter] = useState('')
+  const [mobileSheetSearch, setMobileSheetSearch] = useState('')
+  const [mobilePage, setMobilePage] = useState(1)
+  const MOBILE_PAGE_SIZE = 10
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return undefined
+    const mql = window.matchMedia('(max-width: 768px)')
+    const syncViewport = (e) => setIsMobileViewport(e.matches)
+    mql.addEventListener('change', syncViewport)
+    return () => mql.removeEventListener('change', syncViewport)
+  }, [])
 
   const dropdownContainerRef = useRef(null)
   const triggerRef = useRef(null)
@@ -201,6 +219,7 @@ export default function CenterList({
       onBarangayChange?.(val)
       setBarangaySearchText('')
       setDropdownOpen(false)
+      setMobilePage(1)
       triggerRef.current?.focus()
     },
     [onBarangayChange]
@@ -362,7 +381,65 @@ export default function CenterList({
     setBarangaySearchText('')
     onBarangayChange?.('')
     setQuickFilter('all')
+    setMobilePage(1)
   }, [onBarangayChange])
+
+  useEffect(() => {
+    if (!mobileBrgySheetOpen) return undefined
+    const onKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        setMobileBrgySheetOpen(false)
+      }
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [mobileBrgySheetOpen])
+
+  const mobileSheetOptions = useMemo(() => {
+    const q = mobileSheetSearch.trim().toLowerCase()
+    const allOpt = { id: '', name: 'All Barangays' }
+    const mapped = barangays.map((b) => ({
+      id: String(typeof b === 'object' && b !== null ? b.id : b),
+      name: typeof b === 'object' && b !== null ? b.name || b.title || String(b.id) : String(b),
+    }))
+    if (!q) return [allOpt, ...mapped]
+    const out = []
+    if ('all barangays'.includes(q)) out.push(allOpt)
+    mapped.forEach((opt) => {
+      if (opt.name.toLowerCase().includes(q)) out.push(opt)
+    })
+    return out
+  }, [barangays, mobileSheetSearch])
+
+  const openMobileBrgySheet = useCallback(() => {
+    setDraftBarangayFilter(barangayFilter)
+    setMobileSheetSearch('')
+    setMobileBrgySheetOpen(true)
+  }, [barangayFilter])
+
+  const applyMobileBrgySheet = useCallback(() => {
+    const val = draftBarangayFilter ? String(draftBarangayFilter) : ''
+    setBarangayFilter(val)
+    onBarangayChange?.(val)
+    setMobileBrgySheetOpen(false)
+    setMobilePage(1)
+  }, [draftBarangayFilter, onBarangayChange])
+
+  const resetMobileBrgySheet = useCallback(() => {
+    setDraftBarangayFilter('')
+    setBarangayFilter('')
+    onBarangayChange?.('')
+    setMobileSheetSearch('')
+    setMobileBrgySheetOpen(false)
+    setMobilePage(1)
+  }, [onBarangayChange])
+
+  const totalMobilePages = Math.max(1, Math.ceil(filtered.length / MOBILE_PAGE_SIZE))
+  const safeMobilePage = Math.min(mobilePage, totalMobilePages)
+  const mobilePaginated = useMemo(() => {
+    const start = (safeMobilePage - 1) * MOBILE_PAGE_SIZE
+    return filtered.slice(start, start + MOBILE_PAGE_SIZE)
+  }, [filtered, safeMobilePage])
 
   const handleRetry = useCallback(() => {
     onRefresh?.()
@@ -447,8 +524,14 @@ export default function CenterList({
         </div>
         <div className="ec-list-controls">
           {isAdmin && onAddCenter && (
-            <button type="button" className="ds-btn ds-btn--primary" onClick={onAddCenter}>
-              <FontAwesomeIcon icon={faPlus} /> Add Center
+            <button
+              type="button"
+              className="ds-btn ds-btn--primary ec-add-center-btn"
+              onClick={onAddCenter}
+              aria-label="Add center"
+            >
+              <FontAwesomeIcon icon={faPlus} aria-hidden="true" />
+              <span className="ec-add-btn-label">Add Center</span>
             </button>
           )}
         </div>
@@ -466,7 +549,10 @@ export default function CenterList({
               role="button"
               aria-pressed={active}
               className={`ec-filter-card ec-filter-card--${card.colorToken} ${active ? 'is-active' : ''}`}
-              onClick={() => setQuickFilter(card.key)}
+              onClick={() => {
+                setQuickFilter(card.key)
+                setMobilePage(1)
+              }}
             >
               <div className="ec-fcard-top">
                 <span className={`ec-fcard-icon ec-fcard-icon--${card.colorToken}`} aria-hidden="true">
@@ -491,22 +577,36 @@ export default function CenterList({
           <div className="ec-toolbar-search">
             <SearchInput
               value={searchQuery}
-              onChange={setSearchQuery}
-              placeholder="Search center or barangay…"
+              onChange={(val) => {
+                setSearchQuery(val)
+                setMobilePage(1)
+              }}
+              placeholder={isMobileViewport ? 'Search centers' : 'Search center or barangay…'}
               ariaLabel="Search centers"
             />
           </div>
 
+          <button
+            type="button"
+            className={`ec-mobile-filter-btn ${barangayFilter ? 'has-active' : ''}`}
+            onClick={openMobileBrgySheet}
+            aria-label={selectedBarangayName ? `Filter by barangay (${selectedBarangayName})` : 'Filter by barangay'}
+            title={selectedBarangayName ? `Barangay: ${selectedBarangayName}` : 'Filter by barangay'}
+          >
+            <FontAwesomeIcon icon={faFilter} aria-hidden="true" />
+            {barangayFilter && <span className="ec-mfilter-dot" aria-hidden="true" />}
+          </button>
+
           <div className="ec-toolbar-select" ref={dropdownContainerRef}>
-            <button
+            <div
               ref={triggerRef}
-              type="button"
               id="ec-barangay-select-button"
               className="ds-select ec-barangay-select"
               onClick={() => {
                 setDropdownOpen((prev) => !prev)
               }}
               role="combobox"
+              tabIndex={0}
               aria-expanded={dropdownOpen}
               aria-haspopup="listbox"
               aria-controls="ec-barangay-listbox"
@@ -536,7 +636,7 @@ export default function CenterList({
                 className="ec-barangay-filter-icon"
                 aria-hidden="true"
               />
-            </button>
+            </div>
 
             {dropdownOpen && (
               <div className="ec-dropdown ec-dropdown--open">
@@ -737,7 +837,7 @@ export default function CenterList({
 
             {/* Mobile Cards View (<= 768px) */}
             <div className="ec-mobile-cards">
-              {filtered.map((feature) => {
+              {mobilePaginated.map((feature) => {
                 const props = feature.properties || feature
                 const id = props.id
                 const name = props.name || 'Unnamed Center'
@@ -748,6 +848,9 @@ export default function CenterList({
                 }))
                 const extraBrgy = Math.max(0, brgyList.length - 2)
                 const allBrgyNames = brgyList.map((b) => (typeof b === 'string' ? b : b.name || b)).join(', ')
+                const brgyLineText = brgyShown.length > 0
+                  ? `${brgyShown.map((b) => b.name).join(', ')}${extraBrgy > 0 ? ` +${extraBrgy}` : ''}`
+                  : '—'
                 const cap = Number(props.capacity || 0)
                 const assigned = Number(props.assigned || 0)
                 const arrived = Number(props.occupied || 0)
@@ -764,14 +867,10 @@ export default function CenterList({
                     onClick={() => handleRowOpen(feature)}
                     onKeyDown={(e) => handleRowKeyDown(e, feature)}
                   >
-                    {/* Line 1: Name with status pill on line 1 */}
+                    {/* Row 1: Center name (wraps cleanly) + 3-dot button on right */}
                     <div className="ec-mcard-line1">
                       <span className="ec-mcard-name">{name}</span>
                       <div className="ec-mcard-line1-right" onClick={(e) => e.stopPropagation()}>
-                        <span className={`ec-status-pill ec-status-pill--${statusKey}`}>
-                          <span className="ec-status-dot" aria-hidden="true" />
-                          {statusLabel}
-                        </span>
                         <FloatingMenuTrigger
                           items={kebabItems(feature)}
                           label={`Actions for ${name}`}
@@ -780,12 +879,16 @@ export default function CenterList({
                       </div>
                     </div>
 
-                    {/* Line 2: Structure below it */}
+                    {/* Row 2: Type/rooms + Status pill with dot */}
                     <div className="ec-mcard-line2">
                       <span className="ec-mcard-structure">{structureText(props)}</span>
+                      <span className={`ec-status-pill ec-status-pill--${statusKey}`}>
+                        <span className="ec-status-dot" aria-hidden="true" />
+                        {statusLabel}
+                      </span>
                     </div>
 
-                    {/* Line 3: Occupancy bar with text */}
+                    {/* Row 3: Occupancy bar + assigned / arrived */}
                     <div className="ec-mcard-line3">
                       <div className="ec-occupancy-bar-track">
                         <div
@@ -803,28 +906,11 @@ export default function CenterList({
                       </div>
                     </div>
 
-                    {/* Line 4: Barangay pills at the bottom */}
+                    {/* Row 4: Plain muted barangays text */}
                     <div className="ec-mcard-line4">
-                      <div className="ec-barangay-badges">
-                        {brgyShown.map((b) => (
-                          <span
-                            key={b.id}
-                            className="ec-barangay-pill"
-                            title={b.name}
-                          >
-                            {b.name}
-                          </span>
-                        ))}
-                        {extraBrgy > 0 && (
-                          <span className="ec-barangay-pill ec-barangay-pill--more" title={allBrgyNames}>
-                            +{extraBrgy}
-                          </span>
-                        )}
-                        {brgyShown.length === 0 && (
-                          <span className="ec-barangay-empty">—</span>
-                        )}
-                      </div>
-                      <FontAwesomeIcon icon={faChevronRight} className="ec-row-chevron" aria-hidden="true" />
+                      <span className="ec-mcard-barangays" title={allBrgyNames || undefined}>
+                        {brgyLineText}
+                      </span>
                     </div>
                   </div>
                 )
@@ -836,7 +922,101 @@ export default function CenterList({
         <footer className="ec-table-footer">
           Showing <strong>{filtered.length}</strong> of <strong>{allCenters.length}</strong> centers
         </footer>
+
+        {!isLoading && !error && filtered.length > 0 && (
+          <nav className="ec-mobile-pagination" aria-label="Center list pagination">
+            <button
+              type="button"
+              className="ec-mpage-btn"
+              disabled={safeMobilePage <= 1}
+              onClick={() => setMobilePage((p) => Math.max(1, p - 1))}
+            >
+              Previous
+            </button>
+            <span className="ec-mpage-indicator">
+              Page {safeMobilePage} of {totalMobilePages}
+            </span>
+            <button
+              type="button"
+              className="ec-mpage-btn"
+              disabled={safeMobilePage >= totalMobilePages}
+              onClick={() => setMobilePage((p) => Math.min(totalMobilePages, p + 1))}
+            >
+              Next
+            </button>
+          </nav>
+        )}
       </div>
+
+      {mobileBrgySheetOpen && (
+        <div
+          className="ec-mobile-sheet-backdrop"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Filter by barangay"
+          onClick={() => setMobileBrgySheetOpen(false)}
+        >
+          <div className="ec-mobile-sheet" onClick={(e) => e.stopPropagation()}>
+            <div className="ec-mobile-sheet-header">
+              <h3>Barangay</h3>
+              <button
+                type="button"
+                className="ec-mobile-sheet-close"
+                onClick={() => setMobileBrgySheetOpen(false)}
+                aria-label="Close barangay filter"
+              >
+                <FontAwesomeIcon icon={faXmark} />
+              </button>
+            </div>
+            <div className="ec-mobile-sheet-search">
+              <SearchInput
+                value={mobileSheetSearch}
+                onChange={setMobileSheetSearch}
+                placeholder="Search barangays…"
+                ariaLabel="Search barangays"
+              />
+            </div>
+            <div className="ec-mobile-sheet-body" role="listbox" aria-label="Barangays">
+              {mobileSheetOptions.length === 0 ? (
+                <div className="ec-mobile-sheet-empty">No barangays found</div>
+              ) : (
+                mobileSheetOptions.map((opt) => {
+                  const selected = String(draftBarangayFilter) === String(opt.id)
+                  return (
+                    <button
+                      key={opt.id || 'all'}
+                      type="button"
+                      role="option"
+                      aria-selected={selected}
+                      className={`ec-mobile-sheet-option ${selected ? 'is-selected' : ''}`}
+                      onClick={() => setDraftBarangayFilter(opt.id)}
+                    >
+                      <span className="ec-mobile-sheet-option-label">{opt.name}</span>
+                      {selected && <FontAwesomeIcon icon={faCheck} className="ec-mobile-sheet-check" aria-hidden="true" />}
+                    </button>
+                  )
+                })
+              )}
+            </div>
+            <div className="ec-mobile-sheet-footer">
+              <button
+                type="button"
+                className="ec-msheet-btn ec-msheet-btn--secondary"
+                onClick={resetMobileBrgySheet}
+              >
+                Reset
+              </button>
+              <button
+                type="button"
+                className="ec-msheet-btn ec-msheet-btn--primary"
+                onClick={applyMobileBrgySheet}
+              >
+                Apply
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   )
 }

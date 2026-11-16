@@ -34,9 +34,25 @@ def invalidate_road_network_cache():
 
 
 def get_road_network():
-    """Builds and caches the road network graph and spatial index for fast edge snapping."""
+    """
+    Builds and caches the road network graph and spatial index for fast edge snapping.
+    Closed segments are completely excluded from the graph.
+    Any intersection node that touches a closed segment is made impassable (removed
+    from the graph) so that routes cannot cross a closed road at an intersection crossing.
+    Automatically detects if closed road segments changed in the database and rebuilds.
+    """
     global _cached_network
-    if _cached_network is not None:
+
+    closed_ids = tuple(
+        sorted(
+            r.id
+            for r in RoadSegment.query.filter_by(is_closed=True)
+            .with_entities(RoadSegment.id)
+            .all()
+        )
+    )
+
+    if _cached_network is not None and _cached_network.get("closed_ids") == closed_ids:
         return _cached_network
 
     G = nx.Graph()
@@ -44,6 +60,10 @@ def get_road_network():
     sub_lines = []
 
     segments = RoadSegment.query.all()
+
+    # 1. Collect all nodes touching closed segments
+    impassable_nodes = set()
+    open_segments = []
 
     for seg in segments:
         if not seg.geom:
@@ -54,6 +74,15 @@ def get_road_network():
             logger.warning(f"Failed to parse geometry for road segment {seg.id}: {e}")
             continue
 
+        if seg.is_closed:
+            coords = list(line.coords)
+            for lng, lat in coords:
+                impassable_nodes.add((round(lat, 6), round(lng, 6)))
+        else:
+            open_segments.append((seg, line))
+
+    # 2. Build graph and spatial index exclusively from open segments
+    for seg, line in open_segments:
         coords = list(line.coords)
         for i in range(len(coords) - 1):
             lng1, lat1 = coords[i]
@@ -64,15 +93,13 @@ def get_road_network():
 
             dist_km = haversine(lat1, lng1, lat2, lng2)
             weight = dist_km * (seg.base_weight or 1.0)
-            if seg.is_closed:
-                weight *= CLOSED_ROAD_PENALTY
 
             G.add_edge(
                 u,
                 v,
                 weight=weight,
                 base_weight=seg.base_weight or 1.0,
-                is_closed=bool(seg.is_closed),
+                is_closed=False,
                 seg_id=seg.id,
                 road_name=seg.road_name or "Road",
             )
@@ -87,9 +114,14 @@ def get_road_network():
                     "seg_id": seg.id,
                     "road_name": seg.road_name or "Road",
                     "base_weight": seg.base_weight or 1.0,
-                    "is_closed": bool(seg.is_closed),
+                    "is_closed": False,
                 }
             )
+
+    # 3. Any intersection node touching a closed segment is made impassable
+    for node in impassable_nodes:
+        if G.has_node(node):
+            G.remove_node(node)
 
     spatial_tree = STRtree(sub_lines) if sub_lines else None
 
@@ -106,6 +138,8 @@ def get_road_network():
         "sub_lines": sub_lines,
         "spatial_tree": spatial_tree,
         "largest_cc": largest_cc,
+        "closed_ids": closed_ids,
+        "impassable_nodes": impassable_nodes,
     }
     return _cached_network
 
@@ -171,6 +205,7 @@ def calculate_route_with_edge_snapping(start_lat, start_lng, target_lat, target_
     """
     net = get_road_network()
     G_base = net["graph"]
+    impassable_nodes = net.get("impassable_nodes", set())
     if G_base.number_of_nodes() == 0:
         return None
 
@@ -181,6 +216,10 @@ def calculate_route_with_edge_snapping(start_lat, start_lng, target_lat, target_
         logger.warning(
             f"Point disconnected from main road network: start_connected={u_connected}, target_connected={t_connected}"
         )
+
+    # If snap points themselves fall on impassable nodes, routing is blocked
+    if u_snap in impassable_nodes or t_snap in impassable_nodes:
+        return None
 
     # Work on a copy of the graph to insert temporary split nodes
     G = G_base.copy()
@@ -201,11 +240,14 @@ def calculate_route_with_edge_snapping(start_lat, start_lng, target_lat, target_
 
         def add_split_edge(n1, n2):
             if n1 != n2:
+                # Never reconnect to nodes that are impassable / absent in G_base
+                if n1 in (u_node, v_node) and not G_base.has_node(n1):
+                    return
+                if n2 in (u_node, v_node) and not G_base.has_node(n2):
+                    return
                 d = haversine(n1[0], n1[1], n2[0], n2[1])
-                w = d * u_sub["base_weight"]
-                if u_sub["is_closed"]:
-                    w *= CLOSED_ROAD_PENALTY
-                G.add_edge(n1, n2, weight=w, is_closed=bool(u_sub["is_closed"]))
+                w = d * (u_sub["base_weight"] or 1.0)
+                G.add_edge(n1, n2, weight=w, is_closed=False)
 
         add_split_edge(u_node, first_pt)
         add_split_edge(first_pt, second_pt)
@@ -220,33 +262,24 @@ def calculate_route_with_edge_snapping(start_lat, start_lng, target_lat, target_
                     G.remove_edge(u_node, v_node)
 
                 d1 = haversine(u_node[0], u_node[1], snap_pt[0], snap_pt[1])
-                w1 = d1 * sub["base_weight"]
-                if sub["is_closed"]:
-                    w1 *= CLOSED_ROAD_PENALTY
+                w1 = d1 * (sub["base_weight"] or 1.0)
 
                 d2 = haversine(snap_pt[0], snap_pt[1], v_node[0], v_node[1])
-                w2 = d2 * sub["base_weight"]
-                if sub["is_closed"]:
-                    w2 *= CLOSED_ROAD_PENALTY
+                w2 = d2 * (sub["base_weight"] or 1.0)
 
-                G.add_edge(u_node, snap_pt, weight=w1, is_closed=bool(sub["is_closed"]))
-                G.add_edge(snap_pt, v_node, weight=w2, is_closed=bool(sub["is_closed"]))
-
-    # Pass 1: Strictly avoid blocked/closed roads
-    open_edges = [
-        (u, v)
-        for u, v, d in G.edges(data=True)
-        if not d.get("is_closed", False)
-    ]
-    G_open = G.edge_subgraph(open_edges)
+                # Only connect to u_node/v_node if they exist in G_base (not impassable)
+                if G_base.has_node(u_node):
+                    G.add_edge(u_node, snap_pt, weight=w1, is_closed=False)
+                if G_base.has_node(v_node):
+                    G.add_edge(snap_pt, v_node, weight=w2, is_closed=False)
 
     path = None
     road_km = 0.0
 
-    if G_open.has_node(u_snap) and G_open.has_node(t_snap):
+    if G.has_node(u_snap) and G.has_node(t_snap):
         try:
-            path = nx.dijkstra_path(G_open, u_snap, t_snap, weight="weight")
-            road_km = nx.dijkstra_path_length(G_open, u_snap, t_snap, weight="weight")
+            path = nx.dijkstra_path(G, u_snap, t_snap, weight="weight")
+            road_km = nx.dijkstra_path_length(G, u_snap, t_snap, weight="weight")
         except (nx.NetworkXNoPath, nx.NodeNotFound):
             path = None
 

@@ -1,4 +1,5 @@
-import { useState, useMemo, useEffect, useRef } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
@@ -16,15 +17,13 @@ import {
   faKey,
   faBan,
   faCheck,
-  faClockRotateLeft,
   faTriangleExclamation,
   faEnvelope,
   faPhone,
-  faUser,
 } from "@fortawesome/free-solid-svg-icons";
 import { api } from "../../services/api";
 import { useAuth } from "../../context/AuthContext";
-import { queryKeys, useLogs, useUsers } from "../../hooks/useEvacuationQueries";
+import { queryKeys, useUsers } from "../../hooks/useEvacuationQueries";
 import "./UserManagement.css";
 
 const ROLE_LABELS = {
@@ -47,23 +46,21 @@ function UserManagement() {
   const { user: currentUser } = useAuth();
   const queryClient = useQueryClient();
   const usersQuery = useUsers();
-  const logsQuery = useLogs();
-  const users = usersQuery.data || [];
-  const logs = logsQuery.data || [];
+  const users = useMemo(() => usersQuery.data || [], [usersQuery.data]);
 
   // Filter and search states
   const [searchQuery, setSearchQuery] = useState("");
   const [roleFilter, setRoleFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
-  const [selectedStatCard, setSelectedStatCard] = useState(null);
+  const [totalCardSelected, setTotalCardSelected] = useState(false);
 
-  // Dropdown action menu state (stores open user id)
-  const [openActionMenuId, setOpenActionMenuId] = useState(null);
+  // Dropdown action menu state ({ userId, top, bottom, right, openAbove } | null)
+  const [openActionMenu, setOpenActionMenu] = useState(null);
 
   // Modal states
   const [showForm, setShowForm] = useState(false);
   const [selectedUser, setSelectedUser] = useState(null);
-  const [modalMode, setModalMode] = useState("overview"); // "overview" | "activity" | "edit"
+  const [modalMode, setModalMode] = useState("overview"); // "overview" | "edit"
   const [deactivatingUser, setDeactivatingUser] = useState(null);
 
   // Form states
@@ -111,10 +108,26 @@ function UserManagement() {
   const inactiveCount = users.filter((u) => !u.is_active).length;
   const adminCount = users.filter((u) => u.role === "admin").length;
 
+  const selectedStatCard = useMemo(() => {
+    if (roleFilter === "admin" && !statusFilter) {
+      return "admins";
+    }
+    if (statusFilter === "active" && !roleFilter) {
+      return "active";
+    }
+    if (statusFilter === "inactive" && !roleFilter) {
+      return "inactive";
+    }
+    if (!roleFilter && !statusFilter && totalCardSelected) {
+      return "total";
+    }
+    return null;
+  }, [roleFilter, statusFilter, totalCardSelected]);
+
   // Stat card clicking logic (toggles the filter; clicking selected card clears it)
   function handleStatCardClick(cardKey) {
     if (selectedStatCard === cardKey) {
-      setSelectedStatCard(null);
+      setTotalCardSelected(false);
       if (cardKey === "active" || cardKey === "inactive") {
         setStatusFilter("");
       } else if (cardKey === "admins") {
@@ -123,7 +136,7 @@ function UserManagement() {
       return;
     }
 
-    setSelectedStatCard(cardKey);
+    setTotalCardSelected(cardKey === "total");
     if (cardKey === "total") {
       setRoleFilter("");
       setStatusFilter("");
@@ -136,19 +149,6 @@ function UserManagement() {
     }
   }
 
-  // Synchronize stat card highlight when dropdowns change
-  useEffect(() => {
-    if (roleFilter === "admin" && !statusFilter) {
-      setSelectedStatCard("admins");
-    } else if (statusFilter === "active" && !roleFilter) {
-      setSelectedStatCard("active");
-    } else if (statusFilter === "inactive" && !roleFilter) {
-      setSelectedStatCard("inactive");
-    } else if (!roleFilter && !statusFilter && selectedStatCard !== "total") {
-      setSelectedStatCard(null);
-    }
-  }, [roleFilter, statusFilter, selectedStatCard]);
-
   const isAnyFilterActive = Boolean(
     searchQuery.trim() || roleFilter || statusFilter || selectedStatCard
   );
@@ -157,7 +157,7 @@ function UserManagement() {
     setSearchQuery("");
     setRoleFilter("");
     setStatusFilter("");
-    setSelectedStatCard(null);
+    setTotalCardSelected(false);
   }
 
   // Filtered users list
@@ -192,28 +192,51 @@ function UserManagement() {
     });
   }, [users, roleFilter, statusFilter, searchQuery]);
 
-  // Click outside listener for the row action menu
+  // Click outside / scroll / resize listener for the row action menu
   useEffect(() => {
-    if (!openActionMenuId) return undefined;
+    if (!openActionMenu) return undefined;
     function handleClickOutside(e) {
-      if (!e.target.closest(".um-action-cell")) {
-        setOpenActionMenuId(null);
+      if (
+        !e.target.closest(".um-action-cell") &&
+        !e.target.closest("[data-um-menu='true']")
+      ) {
+        setOpenActionMenu(null);
       }
+    }
+    function handleCloseOnViewportChange() {
+      setOpenActionMenu(null);
     }
     document.addEventListener("mousedown", handleClickOutside);
     document.addEventListener("touchstart", handleClickOutside);
+    window.addEventListener("scroll", handleCloseOnViewportChange, true);
+    window.addEventListener("resize", handleCloseOnViewportChange);
     return () => {
       document.removeEventListener("mousedown", handleClickOutside);
       document.removeEventListener("touchstart", handleClickOutside);
+      window.removeEventListener("scroll", handleCloseOnViewportChange, true);
+      window.removeEventListener("resize", handleCloseOnViewportChange);
     };
-  }, [openActionMenuId]);
+  }, [openActionMenu]);
+
+  const closeModal = useCallback(() => {
+    setShowForm(false);
+    setFormError("");
+    setEmailError("");
+    setEmailAvailable(null);
+  }, []);
+
+  const closeUserModal = useCallback(() => {
+    setSelectedUser(null);
+    setModalMode("overview");
+    setEditError("");
+  }, []);
 
   // Global escape key handler to close menus/modals
   useEffect(() => {
     function handleKeyDown(e) {
       if (e.key === "Escape") {
-        if (openActionMenuId) {
-          setOpenActionMenuId(null);
+        if (openActionMenu) {
+          setOpenActionMenu(null);
         } else if (deactivatingUser) {
           setDeactivatingUser(null);
         } else if (selectedUser) {
@@ -225,7 +248,25 @@ function UserManagement() {
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [openActionMenuId, deactivatingUser, selectedUser, showForm]);
+  }, [openActionMenu, deactivatingUser, selectedUser, showForm, closeUserModal, closeModal]);
+
+  function toggleRowActionMenu(userRecord, triggerEl) {
+    setOpenActionMenu((prev) => {
+      if (prev?.userId === userRecord.id) return null;
+      const rect = triggerEl.getBoundingClientRect();
+      const estimatedMenuHeight = 148;
+      const spaceBelow = window.innerHeight - rect.bottom;
+      const spaceAbove = rect.top;
+      const openAbove = spaceBelow < estimatedMenuHeight + 12 && spaceAbove > spaceBelow;
+      return {
+        userId: userRecord.id,
+        right: Math.max(12, window.innerWidth - rect.right),
+        top: openAbove ? null : rect.bottom + 4,
+        bottom: openAbove ? window.innerHeight - rect.top + 4 : null,
+        openAbove,
+      };
+    });
+  }
 
   // Check if deactivation is disallowed
   function getDeactivateRestriction(targetUser) {
@@ -304,34 +345,6 @@ function UserManagement() {
     } finally {
       setEmailChecking(false);
     }
-  }
-
-  function getUserActivities(targetUser) {
-    if (!targetUser) return [];
-    const userId = String(targetUser.id);
-
-    return logs
-      .filter((entry) => {
-        const actorId =
-          entry.actor_id ?? entry.actorId ?? entry.performed_by_id ?? entry.user_id;
-        const targetId =
-          entry.user_id ?? entry.userId ?? entry.target_user_id ?? entry.targetUserId;
-        const actorName =
-          entry.actor?.name ?? entry.user?.name ?? entry.created_by ?? entry.name;
-        const actorEmail = entry.actor?.email ?? entry.user?.email ?? entry.email;
-
-        return (
-          String(actorId) === userId ||
-          String(targetId) === userId ||
-          (actorName &&
-            targetUser.name &&
-            actorName.toLowerCase() === targetUser.name.toLowerCase()) ||
-          (actorEmail &&
-            targetUser.email &&
-            actorEmail.toLowerCase() === targetUser.email.toLowerCase())
-        );
-      })
-      .slice(0, 10);
   }
 
   async function handleResetPassword(targetUser) {
@@ -420,20 +433,11 @@ function UserManagement() {
     }
   }
 
-  function closeModal() {
-    setShowForm(false);
-    setFormError("");
-    setEmailError("");
-    setEmailAvailable(null);
-  }
-
-  function closeUserModal() {
-    setSelectedUser(null);
-    setModalMode("overview");
-    setEditError("");
-  }
-
   const displayError = usersQuery.error || actionError;
+  const activeMenuUser = openActionMenu
+    ? filteredUsers.find((u) => u.id === openActionMenu.userId) || null
+    : null;
+  const activeMenuRestriction = activeMenuUser ? getDeactivateRestriction(activeMenuUser) : null;
 
   return (
     <div className="um-page">
@@ -567,7 +571,10 @@ function UserManagement() {
             <select
               id="um-role-select"
               value={roleFilter}
-              onChange={(e) => setRoleFilter(e.target.value)}
+              onChange={(e) => {
+                setTotalCardSelected(false);
+                setRoleFilter(e.target.value);
+              }}
               className="um-input um-select-filter"
             >
               <option value="">All Roles</option>
@@ -583,7 +590,10 @@ function UserManagement() {
             <select
               id="um-status-select"
               value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
+              onChange={(e) => {
+                setTotalCardSelected(false);
+                setStatusFilter(e.target.value);
+              }}
               className="um-input um-select-filter"
             >
               <option value="">All Statuses</option>
@@ -712,9 +722,8 @@ function UserManagement() {
                 </thead>
                 <tbody>
                   {filteredUsers.map((u) => {
-                    const restriction = getDeactivateRestriction(u);
                     const isMuted = !u.is_active;
-                    const isMenuOpen = openActionMenuId === u.id;
+                    const isMenuOpen = openActionMenu?.userId === u.id;
 
                     return (
                       <tr
@@ -780,9 +789,7 @@ function UserManagement() {
                             <button
                               type="button"
                               className={`um-action-trigger-btn ${isMenuOpen ? "is-open" : ""}`}
-                              onClick={() =>
-                                setOpenActionMenuId((prev) => (prev === u.id ? null : u.id))
-                              }
+                              onClick={(e) => toggleRowActionMenu(u, e.currentTarget)}
                               aria-label={`Actions for ${u.name}`}
                               aria-haspopup="true"
                               aria-expanded={isMenuOpen}
@@ -790,87 +797,6 @@ function UserManagement() {
                             >
                               <FontAwesomeIcon icon={faEllipsisVertical} />
                             </button>
-
-                            {isMenuOpen && (
-                              <div
-                                className="um-action-menu-dropdown"
-                                role="menu"
-                                aria-label={`Actions for ${u.name}`}
-                              >
-                                <button
-                                  type="button"
-                                  className="um-menu-item"
-                                  role="menuitem"
-                                  onClick={() => {
-                                    setOpenActionMenuId(null);
-                                    openDetailsModal(u, "overview");
-                                  }}
-                                >
-                                  <FontAwesomeIcon icon={faEye} className="um-menu-icon" />
-                                  <span>Details</span>
-                                </button>
-
-                                <button
-                                  type="button"
-                                  className="um-menu-item"
-                                  role="menuitem"
-                                  onClick={() => {
-                                    setOpenActionMenuId(null);
-                                    openDetailsModal(u, "edit");
-                                  }}
-                                >
-                                  <FontAwesomeIcon icon={faPen} className="um-menu-icon" />
-                                  <span>Edit</span>
-                                </button>
-
-                                <button
-                                  type="button"
-                                  className="um-menu-item"
-                                  role="menuitem"
-                                  onClick={() => {
-                                    setOpenActionMenuId(null);
-                                    handleResetPassword(u);
-                                  }}
-                                >
-                                  <FontAwesomeIcon icon={faKey} className="um-menu-icon" />
-                                  <span>Email password reset</span>
-                                </button>
-
-                                {/* Deactivate / Reactivate */}
-                                {u.is_active ? (
-                                  !restriction.isSelf && (
-                                    <button
-                                      type="button"
-                                      className="um-menu-item is-danger"
-                                      role="menuitem"
-                                      disabled={restriction.disabled || togglingId === u.id}
-                                      title={restriction.tooltip || undefined}
-                                      onClick={() => {
-                                        setOpenActionMenuId(null);
-                                        setDeactivatingUser(u);
-                                      }}
-                                    >
-                                      <FontAwesomeIcon icon={faBan} className="um-menu-icon" />
-                                      <span>Deactivate</span>
-                                    </button>
-                                  )
-                                ) : (
-                                  <button
-                                    type="button"
-                                    className="um-menu-item is-success"
-                                    role="menuitem"
-                                    disabled={togglingId === u.id}
-                                    onClick={() => {
-                                      setOpenActionMenuId(null);
-                                      handleReactivate(u);
-                                    }}
-                                  >
-                                    <FontAwesomeIcon icon={faCheck} className="um-menu-icon" />
-                                    <span>Reactivate</span>
-                                  </button>
-                                )}
-                              </div>
-                            )}
                           </div>
                         </td>
                       </tr>
@@ -880,12 +806,92 @@ function UserManagement() {
               </table>
             </div>
 
+            {openActionMenu && activeMenuUser && activeMenuRestriction &&
+              createPortal(
+                <div
+                  data-um-menu="true"
+                  className={`um-action-menu-dropdown um-action-menu-dropdown--portal ${
+                    openActionMenu.openAbove ? "is-upward" : ""
+                  }`}
+                  style={{
+                    right: `${openActionMenu.right}px`,
+                    ...(openActionMenu.openAbove
+                      ? { bottom: `${openActionMenu.bottom}px` }
+                      : { top: `${openActionMenu.top}px` }),
+                  }}
+                  role="menu"
+                  aria-label={`Actions for ${activeMenuUser.name}`}
+                >
+                  <button
+                    type="button"
+                    className="um-menu-item"
+                    role="menuitem"
+                    onClick={() => {
+                      setOpenActionMenu(null);
+                      openDetailsModal(activeMenuUser, "edit");
+                    }}
+                  >
+                    <FontAwesomeIcon icon={faPen} className="um-menu-icon" />
+                    <span>Edit</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    className="um-menu-item"
+                    role="menuitem"
+                    onClick={() => {
+                      setOpenActionMenu(null);
+                      handleResetPassword(activeMenuUser);
+                    }}
+                  >
+                    <FontAwesomeIcon icon={faKey} className="um-menu-icon" />
+                    <span>Email password reset</span>
+                  </button>
+
+                  {activeMenuUser.is_active ? (
+                    !activeMenuRestriction.isSelf && (
+                      <button
+                        type="button"
+                        className="um-menu-item is-danger"
+                        role="menuitem"
+                        disabled={
+                          activeMenuRestriction.disabled ||
+                          togglingId === activeMenuUser.id
+                        }
+                        title={activeMenuRestriction.tooltip || undefined}
+                        onClick={() => {
+                          setOpenActionMenu(null);
+                          setDeactivatingUser(activeMenuUser);
+                        }}
+                      >
+                        <FontAwesomeIcon icon={faBan} className="um-menu-icon" />
+                        <span>Deactivate</span>
+                      </button>
+                    )
+                  ) : (
+                    <button
+                      type="button"
+                      className="um-menu-item is-success"
+                      role="menuitem"
+                      disabled={togglingId === activeMenuUser.id}
+                      onClick={() => {
+                        setOpenActionMenu(null);
+                        handleReactivate(activeMenuUser);
+                      }}
+                    >
+                      <FontAwesomeIcon icon={faCheck} className="um-menu-icon" />
+                      <span>Reactivate</span>
+                    </button>
+                  )}
+                </div>,
+                document.body
+              )}
+
             {/* MOBILE STACKED CARDS VIEW (Visible <= 768px) */}
             <div className="um-cards-wrapper">
               {filteredUsers.map((u) => {
-                const restriction = getDeactivateRestriction(u);
                 const isMuted = !u.is_active;
-                const isMenuOpen = openActionMenuId === u.id;
+                const isMenuOpen = openActionMenu?.userId === u.id;
 
                 return (
                   <article
@@ -893,123 +899,48 @@ function UserManagement() {
                     className={`um-user-card ${isMuted ? "is-muted" : ""}`}
                   >
                     <div className="um-card-header">
-                      <div
-                        className={`um-avatar ${
-                          u.role === "admin" ? "is-admin" : "is-personnel"
-                        }`}
-                        aria-hidden="true"
+                      <button
+                        type="button"
+                        className="um-card-user-btn"
+                        onClick={() => openDetailsModal(u, "overview")}
+                        aria-label={`View account details for ${u.name}`}
                       >
-                        {initials(u.name)}
-                      </div>
-
-                      <div className="um-card-header-meta">
-                        <div className="um-card-title-row">
-                          <h2 className="um-card-name">{u.name}</h2>
-                          <span
-                            className={`um-status-pill ${
-                              u.is_active ? "is-active" : "is-inactive"
-                            }`}
-                          >
-                            <span className="um-status-dot" aria-hidden="true" />
-                            {u.is_active ? "Active" : "Inactive"}
-                          </span>
+                        <div
+                          className={`um-avatar ${
+                            u.role === "admin" ? "is-admin" : "is-personnel"
+                          }`}
+                          aria-hidden="true"
+                        >
+                          {initials(u.name)}
                         </div>
-                        <p className="um-card-email">{u.email}</p>
-                      </div>
+
+                        <div className="um-card-header-meta">
+                          <div className="um-card-title-row">
+                            <h2 className="um-card-name">{u.name}</h2>
+                            <span
+                              className={`um-status-pill ${
+                                u.is_active ? "is-active" : "is-inactive"
+                              }`}
+                            >
+                              <span className="um-status-dot" aria-hidden="true" />
+                              {u.is_active ? "Active" : "Inactive"}
+                            </span>
+                          </div>
+                          <p className="um-card-email">{u.email}</p>
+                        </div>
+                      </button>
 
                       <div className="um-action-cell um-card-action-cell">
                         <button
                           type="button"
                           className={`um-action-trigger-btn ${isMenuOpen ? "is-open" : ""}`}
-                          onClick={() =>
-                            setOpenActionMenuId((prev) => (prev === u.id ? null : u.id))
-                          }
+                          onClick={(e) => toggleRowActionMenu(u, e.currentTarget)}
                           aria-label={`Actions for ${u.name}`}
                           aria-haspopup="true"
                           aria-expanded={isMenuOpen}
                         >
                           <FontAwesomeIcon icon={faEllipsisVertical} />
                         </button>
-
-                        {isMenuOpen && (
-                          <div
-                            className="um-action-menu-dropdown um-card-menu-dropdown"
-                            role="menu"
-                            aria-label={`Actions for ${u.name}`}
-                          >
-                            <button
-                              type="button"
-                              className="um-menu-item"
-                              role="menuitem"
-                              onClick={() => {
-                                setOpenActionMenuId(null);
-                                openDetailsModal(u, "overview");
-                              }}
-                            >
-                              <FontAwesomeIcon icon={faEye} className="um-menu-icon" />
-                              <span>Details</span>
-                            </button>
-
-                            <button
-                              type="button"
-                              className="um-menu-item"
-                              role="menuitem"
-                              onClick={() => {
-                                setOpenActionMenuId(null);
-                                openDetailsModal(u, "edit");
-                              }}
-                            >
-                              <FontAwesomeIcon icon={faPen} className="um-menu-icon" />
-                              <span>Edit</span>
-                            </button>
-
-                            <button
-                              type="button"
-                              className="um-menu-item"
-                              role="menuitem"
-                              onClick={() => {
-                                setOpenActionMenuId(null);
-                                handleResetPassword(u);
-                              }}
-                            >
-                              <FontAwesomeIcon icon={faKey} className="um-menu-icon" />
-                              <span>Email password reset</span>
-                            </button>
-
-                            {u.is_active ? (
-                              !restriction.isSelf && (
-                                <button
-                                  type="button"
-                                  className="um-menu-item is-danger"
-                                  role="menuitem"
-                                  disabled={restriction.disabled || togglingId === u.id}
-                                  title={restriction.tooltip || undefined}
-                                  onClick={() => {
-                                    setOpenActionMenuId(null);
-                                    setDeactivatingUser(u);
-                                  }}
-                                >
-                                  <FontAwesomeIcon icon={faBan} className="um-menu-icon" />
-                                  <span>Deactivate</span>
-                                </button>
-                              )
-                            ) : (
-                              <button
-                                type="button"
-                                className="um-menu-item is-success"
-                                role="menuitem"
-                                disabled={togglingId === u.id}
-                                onClick={() => {
-                                  setOpenActionMenuId(null);
-                                  handleReactivate(u);
-                                }}
-                              >
-                                <FontAwesomeIcon icon={faCheck} className="um-menu-icon" />
-                                <span>Reactivate</span>
-                              </button>
-                            )}
-                          </div>
-                        )}
                       </div>
                     </div>
 
@@ -1252,9 +1183,13 @@ function UserManagement() {
         </div>
       )}
 
-      {/* 6. MERGED DETAILS & EDIT MODAL (SINGLE SURFACE, NO NESTED MODALS) */}
+      {/* 6. ACCOUNT PROFILE & EDIT MODAL (SINGLE SURFACE, NO TABS) */}
       {selectedUser && (
-        <div className="um-overlay" onClick={closeUserModal} role="presentation">
+        <div
+          className="um-overlay um-overlay--details"
+          onClick={closeUserModal}
+          role="presentation"
+        >
           <div
             className="um-modal um-modal--details"
             onClick={(e) => e.stopPropagation()}
@@ -1265,21 +1200,30 @@ function UserManagement() {
             {/* MODAL HEADER */}
             <div className="um-modal-header">
               <div className="um-modal-header-copy">
-                <div className="um-kicker">
-                  {modalMode === "edit" ? "Edit Mode" : "Account Profile"}
-                </div>
                 <h2 className="um-modal-title" id="um-details-title">
-                  {selectedUser.name}
+                  {modalMode === "edit" ? "Edit Account" : "Account Profile"}
                 </h2>
               </div>
-              <button
-                type="button"
-                onClick={closeUserModal}
-                className="um-modal-close"
-                aria-label="Close modal"
-              >
-                <FontAwesomeIcon icon={faXmark} />
-              </button>
+              <div className="um-modal-header-actions">
+                {modalMode !== "edit" && (
+                  <button
+                    type="button"
+                    onClick={() => setModalMode("edit")}
+                    className="um-inline-edit-btn"
+                  >
+                    <FontAwesomeIcon icon={faPen} />
+                    <span>Edit details</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={closeUserModal}
+                  className="um-modal-close"
+                  aria-label="Close modal"
+                >
+                  <FontAwesomeIcon icon={faXmark} />
+                </button>
+              </div>
             </div>
 
             {/* IF IN EDIT MODE: DISPLAY IN-PLACE EDIT FORM */}
@@ -1383,146 +1327,62 @@ function UserManagement() {
                 </div>
               </form>
             ) : (
-              /* VIEW MODE: TABS (OVERVIEW / ACTIVITY) */
+              /* VIEW MODE: DETAILS ONLY (NO TABS / NO ACTIVITY) */
               <div className="um-modal-content">
-                <div className="um-modal-nav-row">
-                  <div className="um-tab-group" role="tablist">
-                    <button
-                      type="button"
-                      role="tab"
-                      aria-selected={modalMode === "overview"}
-                      className={`um-tab-btn ${modalMode === "overview" ? "is-active" : ""}`}
-                      onClick={() => setModalMode("overview")}
+                <div className="um-profile-body">
+                  <div className="um-profile-banner">
+                    <div
+                      className={`um-avatar is-large ${
+                        selectedUser.role === "admin" ? "is-admin" : "is-personnel"
+                      }`}
+                      aria-hidden="true"
                     >
-                      <FontAwesomeIcon icon={faUser} />
-                      <span>Overview</span>
-                    </button>
+                      {initials(selectedUser.name)}
+                    </div>
 
-                    <button
-                      type="button"
-                      role="tab"
-                      aria-selected={modalMode === "activity"}
-                      className={`um-tab-btn ${modalMode === "activity" ? "is-active" : ""}`}
-                      onClick={() => setModalMode("activity")}
-                    >
-                      <FontAwesomeIcon icon={faClockRotateLeft} />
-                      <span>Activity</span>
-                    </button>
+                    <div className="um-profile-meta">
+                      <h3 className="um-profile-name">{selectedUser.name}</h3>
+                      <div className="um-profile-badge-row">
+                        <span
+                          className={`um-role-badge ${
+                            selectedUser.role === "admin" ? "is-admin" : "is-personnel"
+                          }`}
+                        >
+                          {ROLE_LABELS[selectedUser.role] ||
+                            selectedUser.role.replace("_", " ")}
+                        </span>
+                        <span
+                          className={`um-status-pill ${
+                            selectedUser.is_active ? "is-active" : "is-inactive"
+                          }`}
+                        >
+                          <span className="um-status-dot" aria-hidden="true" />
+                          {selectedUser.is_active ? "Active" : "Inactive"}
+                        </span>
+                      </div>
+                    </div>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={() => setModalMode("edit")}
-                    className="um-inline-edit-btn"
-                  >
-                    <FontAwesomeIcon icon={faPen} />
-                    <span>Edit details</span>
-                  </button>
+                  <div className="um-detail-grid">
+                    <div className="um-detail-card">
+                      <div className="um-detail-label">
+                        <FontAwesomeIcon icon={faEnvelope} />
+                        <span>Email address</span>
+                      </div>
+                      <div className="um-detail-value">{selectedUser.email}</div>
+                    </div>
+
+                    <div className="um-detail-card">
+                      <div className="um-detail-label">
+                        <FontAwesomeIcon icon={faPhone} />
+                        <span>Contact number</span>
+                      </div>
+                      <div className="um-detail-value">
+                        {selectedUser.contact_number || "Not specified"}
+                      </div>
+                    </div>
+                  </div>
                 </div>
-
-                {/* TAB 1: OVERVIEW */}
-                {modalMode === "overview" && (
-                  <div className="um-tab-panel" role="tabpanel">
-                    <div className="um-profile-banner">
-                      <div
-                        className={`um-avatar is-large ${
-                          selectedUser.role === "admin" ? "is-admin" : "is-personnel"
-                        }`}
-                        aria-hidden="true"
-                      >
-                        {initials(selectedUser.name)}
-                      </div>
-
-                      <div className="um-profile-meta">
-                        <div className="um-profile-badge-row">
-                          <span
-                            className={`um-role-badge ${
-                              selectedUser.role === "admin" ? "is-admin" : "is-personnel"
-                            }`}
-                          >
-                            {ROLE_LABELS[selectedUser.role] ||
-                              selectedUser.role.replace("_", " ")}
-                          </span>
-                          <span
-                            className={`um-status-pill ${
-                              selectedUser.is_active ? "is-active" : "is-inactive"
-                            }`}
-                          >
-                            <span className="um-status-dot" aria-hidden="true" />
-                            {selectedUser.is_active ? "Active" : "Inactive"}
-                          </span>
-                        </div>
-                        <h3 className="um-profile-name">{selectedUser.name}</h3>
-                        <p className="um-profile-email">{selectedUser.email}</p>
-                      </div>
-                    </div>
-
-                    <div className="um-detail-grid">
-                      <div className="um-detail-card">
-                        <div className="um-detail-label">
-                          <FontAwesomeIcon icon={faEnvelope} />
-                          <span>Email address</span>
-                        </div>
-                        <div className="um-detail-value">{selectedUser.email}</div>
-                      </div>
-
-                      <div className="um-detail-card">
-                        <div className="um-detail-label">
-                          <FontAwesomeIcon icon={faPhone} />
-                          <span>Contact number</span>
-                        </div>
-                        <div className="um-detail-value">
-                          {selectedUser.contact_number || "Not specified"}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* TAB 2: ACTIVITY */}
-                {modalMode === "activity" && (
-                  <div className="um-tab-panel" role="tabpanel">
-                    {getUserActivities(selectedUser).length > 0 ? (
-                      <div className="um-timeline">
-                        {getUserActivities(selectedUser).map((entry, index) => (
-                          <div
-                            key={`${entry.id ?? entry.timestamp ?? index}`}
-                            className="um-timeline-item"
-                          >
-                            <div className="um-timeline-dot" aria-hidden="true" />
-                            <div className="um-timeline-body">
-                              <span className="um-timeline-title">
-                                {entry.action ||
-                                  entry.event ||
-                                  entry.type ||
-                                  "User activity"}
-                              </span>
-                              <p className="um-timeline-desc">
-                                {entry.details ||
-                                  entry.description ||
-                                  entry.message ||
-                                  "No additional notes recorded."}
-                              </p>
-                              {entry.created_at && (
-                                <time className="um-timeline-time">
-                                  {new Date(entry.created_at).toLocaleString()}
-                                </time>
-                              )}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="um-empty-state um-empty-state--compact">
-                        <FontAwesomeIcon icon={faClockRotateLeft} className="um-empty-icon" />
-                        <h4 className="um-empty-title">No recent activity</h4>
-                        <p className="um-empty-text">
-                          There are no logged audit activities for this account yet.
-                        </p>
-                      </div>
-                    )}
-                  </div>
-                )}
 
                 {/* MODAL FOOTER WITH PASSWORD RESET ON LEFT & CLOSE ON RIGHT */}
                 <div className="um-modal-footer um-modal-footer--split">
@@ -1543,7 +1403,7 @@ function UserManagement() {
                     onClick={closeUserModal}
                     className="um-primary-action-btn"
                   >
-                    Done
+                    Close
                   </button>
                 </div>
               </div>

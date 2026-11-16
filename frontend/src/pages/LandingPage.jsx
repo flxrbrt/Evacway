@@ -1,16 +1,19 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faXmark } from "@fortawesome/free-solid-svg-icons";
 import { useAuth } from "../context/AuthContext"; // adjust the path to match where AuthContext lives
 import { api } from "../services/api";
+import {
+  useEvacuationCenters,
+  usePublicHazardReports,
+  useRoadSegments,
+} from "../hooks/useEvacuationQueries";
 import "./LandingPage.css";
 import "./LandingPage.motion.css";
 import { LoginDialog, ResidentSignUpDialog } from "../components/AuthModals/AuthModals"; // must come after LandingPage.css
 
 const MAP_KEY = [
-  { id: "flood", label: "Flood-prone areas", text: "Where flooding is most likely." },
-  { id: "slide", label: "Landslide-prone areas", text: "Slopes with higher landslide risk." },
   { id: "closed", label: "Closed roads", text: "Routes go around these." },
   { id: "center", label: "Evacuation centers", text: "Where you can go, with details." },
   { id: "route", label: "Safe route", text: "From your location to a center." },
@@ -18,7 +21,7 @@ const MAP_KEY = [
 
 const STEPS = [
   { kind: "locate", title: "Share your location", text: "EvacWay finds where you are on the map." },
-  { kind: "hazards", title: "See what is blocked", text: "Flood and landslide areas and closed roads show up in place." },
+  { kind: "hazards", title: "See what is blocked", text: "Reported dangers and closed roads show up on the map." },
   { kind: "route", title: "Follow the route", text: "Head along the safest route to an evacuation center." },
 ];
 
@@ -49,17 +52,14 @@ function Logo() {
  * concentric "YOU ARE HERE" radar node, glowing blue safe route, aqua-glowing "EVACUATION CENTER" pin,
  * and notched callout tags ("FLOOD RISK: HIGH", "ROAD CLOSED AHEAD", "ROUTE FOUND").
  */
-function MapArt() {
+function MapArt({ preserveAspectRatio = "xMidYMid slice" }) {
   const routeD = "M598 634L1218 456";
-  const floodD = "M674 636C712 620 834 618 886 632C902 638 880 654 812 658C744 662 666 650 674 636Z";
-  const slideD =
-    "M812 430C822 396 896 384 972 394C1006 398 1024 406 1042 406C1056 406 1038 442 990 458C930 476 838 470 814 446Z";
 
   return (
     <svg
       className="ew-mapart"
       viewBox="0 0 1440 860"
-      preserveAspectRatio="xMidYMid slice"
+      preserveAspectRatio={preserveAspectRatio}
       aria-hidden="true"
     >
       <defs>
@@ -90,24 +90,8 @@ function MapArt() {
           <stop offset="100%" stopColor="#38BDF8" />
         </linearGradient>
 
-        <pattern id="ew-hatch-slide" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(42)">
-          <line x1="0" y1="0" x2="0" y2="8" stroke="#EA580C" strokeWidth="1.4" strokeOpacity="0.62" />
-        </pattern>
-
-        <pattern id="ew-hatch-flood" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(42)">
-          <line x1="0" y1="0" x2="0" y2="7" stroke="#E06D3B" strokeWidth="1.35" strokeOpacity="0.58" />
-        </pattern>
-
         <filter id="ew-land-shadow" x="-5%" y="-5%" width="110%" height="110%">
           <feDropShadow dx="0" dy="4" stdDeviation="6" floodColor="#7B99C4" floodOpacity="0.22" />
-        </filter>
-
-        <filter id="ew-orange-glow" x="-25%" y="-25%" width="150%" height="150%">
-          <feDropShadow dx="0" dy="2" stdDeviation="9" floodColor="#F97316" floodOpacity="0.42" />
-        </filter>
-
-        <filter id="ew-flood-glow" x="-25%" y="-25%" width="150%" height="150%">
-          <feDropShadow dx="0" dy="3" stdDeviation="8" floodColor="#F97316" floodOpacity="0.32" />
         </filter>
 
         <filter id="ew-route-glow" x="-20%" y="-20%" width="140%" height="140%">
@@ -122,10 +106,6 @@ function MapArt() {
         <filter id="ew-tag-shadow" x="-15%" y="-20%" width="130%" height="150%">
           <feDropShadow dx="0" dy="4" stdDeviation="6" floodColor="#0D203B" floodOpacity="0.1" />
         </filter>
-
-        <clipPath id="ew-floodclip">
-          <path d={floodD} />
-        </clipPath>
 
         <path id="ew-route-path" d={routeD} />
       </defs>
@@ -280,178 +260,243 @@ function MapArt() {
       {/* ==========================================================================
          ROADS, HAZARD ZONES, SAFE ROUTE & WAYPOINT NODES
          ========================================================================== */}
-      {/* Secondary / Approach Grey Road Lines */}
-      <g className="ew-roads-layer">
-        {/* Bottom-left approach road into YOU ARE HERE */}
+      <g className="ew-map-foreground">
+        {/* Secondary / Approach Grey Road Lines */}
+        <g className="ew-roads-layer">
+          {/* Bottom-left approach road into YOU ARE HERE */}
+          <path
+            className="m-road"
+            d="M78 860C148 776 208 738 308 700C408 662 496 636 598 634"
+          />
+          {/* Bypassed lower road through flood & closure, reconnecting up-right */}
+          <path
+            className="m-road"
+            d="M598 634C690 634 785 634 878 630M1072 602C1168 580 1260 556 1348 532L1218 456"
+          />
+          {/* Continuation road past Evacuation Center to right edge */}
+          <path className="m-road" d="M1218 456L1440 412" />
+        </g>
+
+        {/* Small Waypoint Nodes on Approach Road & Far-Right Road */}
+        <g transform="translate(210 744)">
+          <circle r="7" fill="rgba(59, 130, 246, 0.18)" />
+          <circle r="3.5" fill="#64748B" />
+        </g>
+        <g transform="translate(254 720)">
+          <circle r="9" fill="rgba(59, 130, 246, 0.25)" />
+          <circle r="3.8" fill="#3B82F6" stroke="#FFFFFF" strokeWidth="1.2" />
+        </g>
+        <g transform="translate(1332 433)">
+          <circle className="ew-node-halo" r="14" />
+          <circle r="6" fill="#3B82F6" stroke="#FFFFFF" strokeWidth="2" />
+        </g>
+
+        {/* CLOSED ROAD: Red Dashed Road + Red Circle X + Red Dashed Leader Line */}
+        <g className="m-closed-marker">
+          <path
+            className="m-closed"
+            d="M878 630C946 628 1012 616 1072 602"
+          />
+          <line
+            x1="986"
+            y1="566"
+            x2="1052"
+            y2="606"
+            stroke="#DC2626"
+            strokeWidth="1.8"
+            strokeDasharray="4 4"
+          />
+          <line
+            x1="1040"
+            y1="598"
+            x2="1066"
+            y2="614"
+            stroke="#DC2626"
+            strokeWidth="1.4"
+          />
+          <g transform="translate(918 629)">
+            <circle r="8.5" className="m-sign" />
+            <path className="m-x" d="M-3.2 -3.2L3.2 3.2M3.2 -3.2L-3.2 3.2" />
+          </g>
+        </g>
+
+        {/* INITIAL DIRECT ROUTE (draws first, fades when road closes) */}
         <path
-          className="m-road"
-          d="M78 860C148 776 208 738 308 700C408 662 496 636 598 634"
+          className="m-route-initial"
+          pathLength="1"
+          d="M598 634C720 634 830 628 918 629C1020 618 1120 550 1218 456"
         />
-        {/* Bypassed lower road through flood & closure, reconnecting up-right */}
-        <path
-          className="m-road"
-          d="M598 634C690 634 785 634 878 630M1072 602C1168 580 1260 556 1348 532L1218 456"
-        />
-        {/* Continuation road past Evacuation Center to right edge */}
-        <path className="m-road" d="M1218 456L1440 412" />
-      </g>
 
-      {/* Small Waypoint Nodes on Approach Road & Far-Right Road */}
-      <g transform="translate(210 744)">
-        <circle r="7" fill="rgba(59, 130, 246, 0.18)" />
-        <circle r="3.5" fill="#64748B" />
-      </g>
-      <g transform="translate(254 720)">
-        <circle r="9" fill="rgba(59, 130, 246, 0.25)" />
-        <circle r="3.8" fill="#3B82F6" stroke="#FFFFFF" strokeWidth="1.2" />
-      </g>
-      <g transform="translate(1332 433)">
-        <circle className="ew-node-halo" r="14" />
-        <circle r="6" fill="#3B82F6" stroke="#FFFFFF" strokeWidth="2" />
-      </g>
+        {/* GLOWING BLUE SAFE DETOUR ROUTE (From YOU ARE HERE to EVACUATION CENTER) */}
+        <g className="m-route-detour-wrap">
+          <path
+            d={routeD}
+            fill="none"
+            stroke="rgba(37, 99, 235, 0.24)"
+            strokeWidth="14"
+            strokeLinecap="round"
+          />
+          <path className="m-route m-route-detour" pathLength="1" d={routeD} filter="url(#ew-route-glow)" />
+        </g>
+        <path className="m-flow" pathLength="1" d={routeD} />
 
-      {/* UPPER HAZARD ZONE: Orange Hatched Landslide Contour */}
-      <g className="ew-hazard-slide" filter="url(#ew-orange-glow)">
-        <path
-          d={slideD}
-          fill="rgba(251, 146, 60, 0.16)"
-        />
-        <path
-          className="m-slide"
-          fill="url(#ew-hatch-slide)"
-          d={slideD}
-        />
-      </g>
+        {/* ORIGIN: YOU ARE HERE (Concentric Blue Radar Rings) */}
+        <g transform="translate(598 634)">
+          <circle r="34" fill="none" stroke="rgba(59, 130, 246, 0.16)" strokeWidth="1.2" />
+          <circle r="25" fill="none" stroke="rgba(59, 130, 246, 0.26)" strokeWidth="1.2" />
+          <circle className="m-pulse" r="16" />
+          <circle r="11" fill="none" stroke="rgba(37, 99, 235, 0.5)" strokeWidth="1.5" />
+          <circle className="m-you" r="5.5" />
+          <text x="0" y="48" textAnchor="middle" className="m-label">YOU ARE HERE</text>
+        </g>
 
-      {/* LOWER HAZARD ZONE: Teal-Rimmed Hatched Flood-Prone Basin */}
-      <g className="ew-hazard-flood" filter="url(#ew-flood-glow)">
-        <path
-          d={floodD}
-          fill="rgba(251, 146, 60, 0.14)"
-        />
-        <path
-          className="m-flood"
-          fill="url(#ew-hatch-flood)"
-          d={floodD}
-        />
-      </g>
-      <g clipPath="url(#ew-floodclip)" className="m-ripples">
-        <path d="M680 638Q780 632 880 638" />
-      </g>
+        {/* DESTINATION: EVACUATION CENTER (Aqua-Glowing House Pin) */}
+        <g className="m-center-g" transform="translate(1218 456)">
+          <text x="0" y="-36" textAnchor="middle" className="m-label">EVACUATION CENTER</text>
+          <circle className="m-center-ring" r="24" />
+          <circle className="ew-node-halo" r="28" filter="url(#ew-center-glow)" />
+          <circle cx="0" cy="0" r="16" className="m-center" />
+          <path className="m-house" d="M-6.5 1.2L0 -5L6.5 1.2M-4.5 -0.2V6H4.5V-0.2" />
+          <rect x="-1.6" y="2" width="3.2" height="4" fill="#1D58C8" />
+        </g>
 
-      {/* CLOSED ROAD: Red Dashed Road + Red Circle X + Red Dashed Leader Line */}
-      <path
-        className="m-closed"
-        d="M878 630C946 628 1012 616 1072 602"
-      />
-      {/* Red diagonal bar & dashed leader from ROAD CLOSED AHEAD tag */}
-      <line
-        x1="986"
-        y1="566"
-        x2="1052"
-        y2="606"
-        stroke="#DC2626"
-        strokeWidth="1.8"
-        strokeDasharray="4 4"
-      />
-      <line
-        x1="1040"
-        y1="598"
-        x2="1066"
-        y2="614"
-        stroke="#DC2626"
-        strokeWidth="1.4"
-      />
-      <g transform="translate(918 629)">
-        <circle r="8.5" className="m-sign" />
-        <path className="m-x" d="M-3.2 -3.2L3.2 3.2M3.2 -3.2L-3.2 3.2" />
-      </g>
+        {/* ==========================================================================
+           CHAMFERED CALLOUT TAGS LOCKED TO EXACT SVG FEATURES
+           ========================================================================== */}
+        {/* Tag 1: ROAD CLOSED AHEAD */}
+        <g className="ew-svg-chip ew-svg-chip-b" transform="translate(890 532)" filter="url(#ew-tag-shadow)">
+          <path
+            d="M0 6C0 2.7 2.7 0 6 0H168L178 10V28C178 31.3 175.3 34 172 34H6C2.7 34 0 31.3 0 28Z"
+            fill="rgba(255, 255, 255, 0.94)"
+            stroke="#DCE7F5"
+            strokeWidth="1"
+          />
+          <circle cx="16" cy="17" r="4.2" fill="#DC2626" />
+          <text x="28" y="21" className="ew-svg-chip-text">ROAD CLOSED AHEAD</text>
+        </g>
 
-      {/* GLOWING BLUE SAFE ROUTE (From YOU ARE HERE to EVACUATION CENTER) */}
-      <path
-        d={routeD}
-        fill="none"
-        stroke="rgba(37, 99, 235, 0.24)"
-        strokeWidth="14"
-        strokeLinecap="round"
-      />
-      <path className="m-route" pathLength="1" d={routeD} filter="url(#ew-route-glow)" />
-      <path className="m-flow" pathLength="1" d={routeD} />
-
-      {/* ORIGIN: YOU ARE HERE (Concentric Blue Radar Rings) */}
-      <g transform="translate(598 634)">
-        <circle r="34" fill="none" stroke="rgba(59, 130, 246, 0.16)" strokeWidth="1.2" />
-        <circle r="25" fill="none" stroke="rgba(59, 130, 246, 0.26)" strokeWidth="1.2" />
-        <circle className="m-pulse" r="16" />
-        <circle r="11" fill="none" stroke="rgba(37, 99, 235, 0.5)" strokeWidth="1.5" />
-        <circle className="m-you" r="5.5" />
-        <text x="0" y="48" textAnchor="middle" className="m-label">YOU ARE HERE</text>
-      </g>
-
-      <circle className="m-walker" r="4.5" visibility="hidden">
-        <set attributeName="visibility" to="visible" begin="2.7s" />
-        <animateMotion dur="5s" begin="2.7s" repeatCount="indefinite" keyPoints="0;1" keyTimes="0;1" calcMode="linear">
-          <mpath href="#ew-route-path" />
-        </animateMotion>
-      </circle>
-
-      {/* DESTINATION: EVACUATION CENTER (Aqua-Glowing House Pin) */}
-      <g className="m-center-g" transform="translate(1218 456)">
-        <text x="0" y="-36" textAnchor="middle" className="m-label">EVACUATION CENTER</text>
-        <circle className="ew-node-halo" r="28" filter="url(#ew-center-glow)" />
-        <circle cx="0" cy="0" r="16" className="m-center" />
-        <path className="m-house" d="M-6.5 1.2L0 -5L6.5 1.2M-4.5 -0.2V6H4.5V-0.2" />
-        <rect x="-1.6" y="2" width="3.2" height="4" fill="#1D58C8" />
-      </g>
-
-      {/* ==========================================================================
-         CHAMFERED CALLOUT TAGS LOCKED TO EXACT SVG FEATURES
-         ========================================================================== */}
-      {/* Tag 1: FLOOD RISK: HIGH */}
-      <g className="ew-svg-chip ew-svg-chip-a" transform="translate(668 588)" filter="url(#ew-tag-shadow)">
-        <path
-          d="M0 6C0 2.7 2.7 0 6 0H160L170 10V28C170 31.3 167.3 34 164 34H6C2.7 34 0 31.3 0 28Z"
-          fill="rgba(255, 255, 255, 0.94)"
-          stroke="#DCE7F5"
-          strokeWidth="1"
-        />
-        <circle cx="16" cy="17" r="4.2" fill="#0EA5E9" />
-        <text x="28" y="21" className="ew-svg-chip-text">FLOOD RISK: HIGH</text>
-      </g>
-
-      {/* Tag 2: ROAD CLOSED AHEAD */}
-      <g className="ew-svg-chip ew-svg-chip-b" transform="translate(890 532)" filter="url(#ew-tag-shadow)">
-        <path
-          d="M0 6C0 2.7 2.7 0 6 0H168L178 10V28C178 31.3 175.3 34 172 34H6C2.7 34 0 31.3 0 28Z"
-          fill="rgba(255, 255, 255, 0.94)"
-          stroke="#DCE7F5"
-          strokeWidth="1"
-        />
-        <circle cx="16" cy="17" r="4.2" fill="#DC2626" />
-        <text x="28" y="21" className="ew-svg-chip-text">ROAD CLOSED AHEAD</text>
-      </g>
-
-      {/* Tag 3: ROUTE FOUND */}
-      <g className="ew-svg-chip ew-svg-chip-c" transform="translate(1158 486)" filter="url(#ew-tag-shadow)">
-        <path
-          d="M0 6C0 2.7 2.7 0 6 0H126L136 10V28C136 31.3 133.3 34 130 34H6C2.7 34 0 31.3 0 28Z"
-          fill="rgba(255, 255, 255, 0.94)"
-          stroke="#DCE7F5"
-          strokeWidth="1"
-        />
-        <path
-          d="M12 17.5L15.5 21L22 13.5"
-          fill="none"
-          stroke="#10B981"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-        <text x="29" y="21" className="ew-svg-chip-text">ROUTE FOUND</text>
+        {/* Tag 3: ROUTE FOUND */}
+        <g className="ew-svg-chip ew-svg-chip-c" transform="translate(1158 486)" filter="url(#ew-tag-shadow)">
+          <path
+            d="M0 6C0 2.7 2.7 0 6 0H126L136 10V28C136 31.3 133.3 34 130 34H6C2.7 34 0 31.3 0 28Z"
+            fill="rgba(255, 255, 255, 0.94)"
+            stroke="#DCE7F5"
+            strokeWidth="1"
+          />
+          <path
+            d="M12 17.5L15.5 21L22 13.5"
+            fill="none"
+            stroke="#10B981"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+          <text x="29" y="21" className="ew-svg-chip-text">ROUTE FOUND</text>
+        </g>
       </g>
 
       <g className="m-rain" aria-hidden="true" />
     </svg>
+  );
+}
+
+function MobileRouteCard() {
+  const safeRouteD = "M52 162C96 102 182 72 302 58";
+
+  return (
+    <div className="ew-mobile-map-card" aria-hidden="true">
+      <svg
+        className="ew-mobile-map-svg"
+        viewBox="0 0 360 220"
+        preserveAspectRatio="xMidYMid meet"
+      >
+        <defs>
+          <linearGradient id="ew-m-route-grad" x1="0%" y1="100%" x2="100%" y2="0%">
+            <stop offset="0%" stopColor="#1D5ED8" />
+            <stop offset="65%" stopColor="#2B7FFF" />
+            <stop offset="100%" stopColor="#38BDF8" />
+          </linearGradient>
+        </defs>
+
+        {/* Soft topographic contour background */}
+        <path
+          d="M0 156C44 134 94 146 138 124C182 102 228 118 282 94C320 78 344 82 360 76V220H0Z"
+          fill="#E4EEF9"
+          stroke="#B8CBE3"
+          strokeWidth="1"
+        />
+        <path
+          d="M0 186C58 166 112 178 166 156C220 134 274 144 360 116V220H0Z"
+          fill="#DCE8F7"
+          stroke="#C2D2E8"
+          strokeWidth="1"
+        />
+
+        {/* Closed road bypass & red marker */}
+        <path className="m-road" d="M52 162C116 170 166 168 214 156C256 146 286 110 302 58" />
+        <path
+          className="m-route-initial"
+          pathLength="1"
+          d="M52 162C116 170 166 168 214 156C256 146 286 110 302 58"
+        />
+        <g className="m-closed-marker">
+          <path className="m-closed" d="M126 166C158 166 190 162 214 156" />
+          <g transform="translate(172 163)">
+            <circle r="8.5" className="m-sign" />
+            <path className="m-x" d="M-3.2 -3.2L3.2 3.2M3.2 -3.2L-3.2 3.2" />
+          </g>
+        </g>
+
+        {/* Safe detour route line */}
+        <g className="m-route-detour-wrap">
+          <path
+            d={safeRouteD}
+            fill="none"
+            stroke="rgba(37, 99, 235, 0.22)"
+            strokeWidth="11"
+            strokeLinecap="round"
+          />
+          <path className="m-route m-route-detour" pathLength="1" stroke="url(#ew-m-route-grad)" d={safeRouteD} />
+        </g>
+
+        {/* You-are-here origin */}
+        <g transform="translate(52 162)">
+          <circle r="22" fill="none" stroke="rgba(59, 130, 246, 0.18)" strokeWidth="1.2" />
+          <circle className="m-pulse" r="13" />
+          <circle className="m-you" r="5" />
+        </g>
+
+        {/* Evacuation center pin */}
+        <g className="m-center-g" transform="translate(302 58)">
+          <circle className="m-center-ring" r="20" />
+          <circle className="ew-node-halo" r="22" />
+          <circle cx="0" cy="0" r="14" className="m-center" />
+          <path className="m-house" d="M-5.5 1L0 -4.5L5.5 1M-3.8 -0.2V5H3.8V-0.2" />
+          <rect x="-1.4" y="1.8" width="2.8" height="3.2" fill="#1D58C8" />
+        </g>
+
+        {/* Label 1: Route found */}
+        <g className="ew-svg-chip ew-svg-chip-c" transform="translate(92 22)">
+          <rect width="118" height="28" rx="6" fill="rgba(255, 255, 255, 0.96)" stroke="#DCE7F5" strokeWidth="1" />
+          <path
+            d="M11 14L14 17L20 10.5"
+            fill="none"
+            stroke="#10B981"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+          <text x="27" y="18" className="ew-svg-chip-text">ROUTE FOUND</text>
+        </g>
+
+        {/* Label 2: Road closed ahead */}
+        <g className="ew-svg-chip ew-svg-chip-b" transform="translate(186 178)">
+          <rect width="154" height="28" rx="6" fill="rgba(255, 255, 255, 0.96)" stroke="#DCE7F5" strokeWidth="1" />
+          <circle cx="14" cy="14" r="4" fill="#DC2626" />
+          <text x="25" y="18" className="ew-svg-chip-text">ROAD CLOSED AHEAD</text>
+        </g>
+      </svg>
+    </div>
   );
 }
 
@@ -483,11 +528,208 @@ function StepIcon({ kind }) {
   );
 }
 
+function LegendSampleMap({ activeKey }) {
+  const symClass = (id) => {
+    if (!activeKey) return "ew-legend-sym";
+    return activeKey === id
+      ? "ew-legend-sym is-highlighted"
+      : "ew-legend-sym is-dimmed";
+  };
+
+  return (
+    <div className="ew-legend-map-wrap" aria-hidden="true">
+      <svg className="ew-legend-map" viewBox="0 0 260 156" preserveAspectRatio="xMidYMid meet">
+        <rect width="260" height="156" rx="14" fill="#F4F8FD" />
+        <path
+          d="M0 104C45 86 92 98 142 78C192 58 228 66 260 52V156H0Z"
+          fill="#E4EEF9"
+          stroke="#C2D2E8"
+          strokeWidth="1"
+        />
+        <path d="M24 118C68 110 112 108 158 100C194 94 218 68 226 42" className="m-road" />
+
+        {/* Closed road */}
+        <g className={symClass("closed")}>
+          <path d="M98 106C124 104 146 100 166 96" className="m-closed" />
+          <g transform="translate(134 102)">
+            <circle r="8" className="m-sign" />
+            <path className="m-x" d="M-3 -3L3 3M3 -3L-3 3" />
+          </g>
+        </g>
+
+        {/* Safe route */}
+        <g className={symClass("route")}>
+          <path
+            d="M34 116C62 66 138 56 218 42"
+            fill="none"
+            stroke="rgba(37, 99, 235, 0.22)"
+            strokeWidth="10"
+            strokeLinecap="round"
+          />
+          <path
+            d="M34 116C62 66 138 56 218 42"
+            fill="none"
+            stroke="#2362C7"
+            strokeWidth="3.5"
+            strokeLinecap="round"
+          />
+          <circle cx="34" cy="116" r="4.5" className="m-you" />
+        </g>
+
+        {/* Evacuation center */}
+        <g className={symClass("center")} transform="translate(218 42)">
+          <circle r="18" fill="rgba(16, 185, 129, 0.22)" />
+          <circle r="12" className="m-center" />
+          <path className="m-house" d="M-4.5 1L0 -3.5L4.5 1M-3 0V4H3V0" />
+        </g>
+      </svg>
+    </div>
+  );
+}
+
+function CountUpValue({ target, animate }) {
+  const [display, setDisplay] = useState(() => (animate ? 0 : target));
+
+  useEffect(() => {
+    if (!animate) return undefined;
+    let frameId = 0;
+    const duration = 650;
+    const start = performance.now();
+    const tick = (now) => {
+      const progress = Math.min(1, (now - start) / duration);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      setDisplay(Math.round(target * eased));
+      if (progress < 1) {
+        frameId = window.requestAnimationFrame(tick);
+      }
+    };
+    frameId = window.requestAnimationFrame(tick);
+    return () => {
+      if (frameId) window.cancelAnimationFrame(frameId);
+    };
+  }, [target, animate]);
+
+  return <>{animate ? display : target}</>;
+}
+
+function LiveStatusStrip({ prefersReducedMotion }) {
+  const stripRef = useRef(null);
+  const [visible, setVisible] = useState(
+    () => typeof window === "undefined" || !("IntersectionObserver" in window)
+  );
+
+  const centersQuery = useEvacuationCenters(false, { retry: false, staleTime: 60_000 });
+  const roadsQuery = useRoadSegments({ retry: false, staleTime: 60_000 });
+  const reportsQuery = usePublicHazardReports({ retry: false, staleTime: 60_000 });
+
+  useEffect(() => {
+    const el = stripRef.current;
+    if (!el || visible || !("IntersectionObserver" in window)) return undefined;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setVisible(true);
+          observer.disconnect();
+        }
+      },
+      { threshold: 0.2 }
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [visible]);
+
+  const counts = useMemo(() => {
+    if (
+      centersQuery.isLoading ||
+      roadsQuery.isLoading ||
+      reportsQuery.isLoading ||
+      centersQuery.isError ||
+      roadsQuery.isError ||
+      reportsQuery.isError ||
+      !centersQuery.data ||
+      !roadsQuery.data ||
+      !reportsQuery.data
+    ) {
+      return null;
+    }
+    const centersList = Array.isArray(centersQuery.data)
+      ? centersQuery.data
+      : centersQuery.data?.features || [];
+    const roadFeatures = Array.isArray(roadsQuery.data)
+      ? roadsQuery.data
+      : roadsQuery.data?.features || [];
+    const closedCount = roadFeatures.filter((f) => Boolean(f?.properties?.is_closed)).length;
+    const reportsList = Array.isArray(reportsQuery.data) ? reportsQuery.data : [];
+
+    return {
+      centers: centersList.length,
+      closedRoads: closedCount,
+      activeReports: reportsList.length,
+    };
+  }, [
+    centersQuery.isLoading,
+    roadsQuery.isLoading,
+    reportsQuery.isLoading,
+    centersQuery.isError,
+    roadsQuery.isError,
+    reportsQuery.isError,
+    centersQuery.data,
+    roadsQuery.data,
+    reportsQuery.data,
+  ]);
+
+  if (centersQuery.isError || roadsQuery.isError || reportsQuery.isError) {
+    return null;
+  }
+
+  const isLoading = centersQuery.isLoading || roadsQuery.isLoading || reportsQuery.isLoading;
+  if (!isLoading && !counts) {
+    return null;
+  }
+
+  const shouldAnimate = visible && !prefersReducedMotion;
+
+  return (
+    <section ref={stripRef} className="ew-status-strip" aria-label="Live road and shelter status">
+      <div className="ew-wrap">
+        {isLoading ? (
+          <div className="ew-status-grid is-loading" aria-busy="true">
+            <div className="ew-status-item"><span className="ew-status-skel-num" /><span className="ew-status-skel-lbl" /></div>
+            <div className="ew-status-item"><span className="ew-status-skel-num" /><span className="ew-status-skel-lbl" /></div>
+            <div className="ew-status-item"><span className="ew-status-skel-num" /><span className="ew-status-skel-lbl" /></div>
+          </div>
+        ) : (
+          <div className="ew-status-grid">
+            <div className="ew-status-item">
+              <strong className="ew-status-num">
+                {visible ? <CountUpValue target={counts.centers} animate={shouldAnimate} /> : counts.centers}
+              </strong>
+              <span className="ew-status-label">Evacuation centers</span>
+            </div>
+            <div className="ew-status-item">
+              <strong className="ew-status-num">
+                {visible ? <CountUpValue target={counts.closedRoads} animate={shouldAnimate} /> : counts.closedRoads}
+              </strong>
+              <span className="ew-status-label">Closed roads</span>
+            </div>
+            <div className="ew-status-item">
+              <strong className="ew-status-num">
+                {visible ? <CountUpValue target={counts.activeReports} animate={shouldAnimate} /> : counts.activeReports}
+              </strong>
+              <span className="ew-status-label">Active danger reports</span>
+            </div>
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
 const isStandalone = () => {
   if (typeof window === "undefined") return false;
   return Boolean(
     window.matchMedia?.("(display-mode: standalone)")?.matches ||
-      window.navigator?.standalone
+    window.navigator?.standalone
   );
 };
 
@@ -505,8 +747,27 @@ export default function LandingPage() {
   const dialogRef = useRef(null);
   const signUpDialogRef = useRef(null);
   const rootRef = useRef(null);
+  const heroStageRef = useRef(null);
   const [scrolled, setScrolled] = useState(false);
   const [signUpOpen, setSignUpOpen] = useState(false);
+  const [isHeroInView, setIsHeroInView] = useState(true);
+  const [isTabHidden, setIsTabHidden] = useState(() =>
+    typeof document !== "undefined" ? document.hidden : false
+  );
+  const [prefersReducedMotion, setPrefersReducedMotion] = useState(() =>
+    typeof window !== "undefined" && typeof window.matchMedia === "function"
+      ? window.matchMedia("(prefers-reduced-motion: reduce)").matches
+      : false
+  );
+  const [hoveredLegendKey, setHoveredLegendKey] = useState(null);
+  const [focusedLegendKey, setFocusedLegendKey] = useState(null);
+  const [tappedLegendKey, setTappedLegendKey] = useState(null);
+  const activeLegendKey = hoveredLegendKey || focusedLegendKey || tappedLegendKey;
+  const [isCompactHero, setIsCompactHero] = useState(() =>
+    typeof window !== "undefined" && typeof window.matchMedia === "function"
+      ? window.matchMedia("(max-width: 768px)").matches
+      : false
+  );
   const [deferredPrompt, setDeferredPrompt] = useState(() => {
     if (typeof window === "undefined" || isStandalone()) return null;
     return window.deferredPrompt || null;
@@ -592,6 +853,14 @@ export default function LandingPage() {
   }, []);
 
   useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return undefined;
+    const mq = window.matchMedia("(max-width: 768px)");
+    const onChange = (event) => setIsCompactHero(event.matches);
+    mq.addEventListener?.("change", onChange);
+    return () => mq.removeEventListener?.("change", onChange);
+  }, []);
+
+  useEffect(() => {
     let rafId = 0;
     const updateOnScroll = () => {
       rafId = 0;
@@ -609,6 +878,35 @@ export default function LandingPage() {
       window.removeEventListener("scroll", onScroll);
       if (rafId) window.cancelAnimationFrame(rafId);
     };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return undefined;
+    const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const onChange = (event) => setPrefersReducedMotion(event.matches);
+    mq.addEventListener?.("change", onChange);
+    return () => mq.removeEventListener?.("change", onChange);
+  }, []);
+
+  useEffect(() => {
+    const onVisibilityChange = () => setIsTabHidden(document.hidden);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", onVisibilityChange);
+  }, []);
+
+  useEffect(() => {
+    const stageEl = heroStageRef.current;
+    if (!stageEl || !("IntersectionObserver" in window)) return undefined;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]) {
+          setIsHeroInView(entries[0].isIntersecting);
+        }
+      },
+      { threshold: 0.05 }
+    );
+    observer.observe(stageEl);
+    return () => observer.disconnect();
   }, []);
 
   useEffect(() => {
@@ -646,7 +944,7 @@ export default function LandingPage() {
           <Logo />
           <div className="ew-nav-right">
             <nav className="ew-nav-links" aria-label="Page sections">
-              <Link to="/map">Our Map</Link>
+              <Link to="/map">Explore Map</Link>
               <a href="#ew-key-title">Features</a>
               <a href="#ew-steps-title">How It Works</a>
             </nav>
@@ -674,15 +972,17 @@ export default function LandingPage() {
       </header>
 
       {/* Full-Bleed Topographic Relief Hero Stage */}
-      <div className="ew-stage">
+      <div
+        ref={heroStageRef}
+        className={`ew-stage${!isHeroInView || isTabHidden ? " ew-hero-paused" : ""}`}
+      >
         <span className="ew-cloud ew-cloud-a" aria-hidden="true" />
         <span className="ew-cloud ew-cloud-b" aria-hidden="true" />
 
         <div className="ew-map-wrap" aria-hidden="true">
           <div className="ew-map">
-            <MapArt />
+            <MapArt preserveAspectRatio={isCompactHero ? "xMaxYMax slice" : "xMidYMid slice"} />
           </div>
-          <span className="ew-chip ew-chip-a" aria-hidden="true"><i />Flood risk: high</span>
           <span className="ew-chip ew-chip-b" aria-hidden="true"><i />Road closed ahead</span>
           <span className="ew-chip ew-chip-c" aria-hidden="true"><i />Route found</span>
         </div>
@@ -694,11 +994,8 @@ export default function LandingPage() {
               <span>Municipality of Sogod, Southern Leyte</span>
             </div>
             <h1 id="ew-hero-title">
-              Know where to go
-              <br />
-              before <span className="ew-water-rise">the water</span>
-              <br />
-              rises.
+              Know where to go before{" "}
+              <span className="ew-water-rise">disaster</span> strikes.
             </h1>
             <svg className="ew-hero-rule" width="76" height="10" viewBox="0 0 76 10" aria-hidden="true">
               <path
@@ -715,13 +1012,14 @@ export default function LandingPage() {
             </p>
             <div className="ew-actions">
               <Link to="/map" className="ew-btn ew-btn-primary ds-btn ds-btn--primary">
-                <span>Open the map</span>
+                <span>Explore Map</span>
                 <svg className="ew-btn-chevron" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
                   <path d="M6 3.5L10.5 8L6 12.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
                 </svg>
               </Link>
               <span className="ew-note" aria-hidden="true">No account needed.</span>
             </div>
+            <MobileRouteCard />
           </div>
         </section>
 
@@ -733,13 +1031,19 @@ export default function LandingPage() {
       </div>
 
       <main id="ew-main" className="ew-main">
+        <LiveStatusStrip prefersReducedMotion={prefersReducedMotion} />
+
         {/* Three steps to a safe route */}
         <section className="ew-steps ew-reveal" aria-labelledby="ew-steps-title">
           <div className="ew-wrap">
             <h2 id="ew-steps-title">Three steps to a safe route</h2>
             <ol className="ew-steps-list">
               {STEPS.map((s, i) => (
-                <li key={s.kind} className="ew-step">
+                <li
+                  key={s.kind}
+                  className="ew-step ew-stagger-item"
+                  style={{ "--ew-stagger": i }}
+                >
                   <div className="ew-step-icon">
                     <StepIcon kind={s.kind} />
                     <span className="ew-step-n">{i + 1}</span>
@@ -757,15 +1061,35 @@ export default function LandingPage() {
           <div className="ew-wrap">
             <div className="ew-key-sheet">
               <h2 id="ew-key-title">Reading the map</h2>
-              <dl className="ew-key-grid">
-                {MAP_KEY.map((item) => (
-                  <div key={item.id} className="ew-key-item">
-                    <span className={`ew-sw ew-sw-${item.id}`} aria-hidden="true" />
-                    <dt>{item.label}</dt>
-                    <dd>{item.text}</dd>
-                  </div>
-                ))}
-              </dl>
+              <div className="ew-key-layout">
+                <LegendSampleMap activeKey={activeLegendKey} />
+                <div className="ew-key-grid" role="list">
+                  {MAP_KEY.map((item, i) => {
+                    const isActive = activeLegendKey === item.id;
+                    return (
+                      <button
+                        key={item.id}
+                        type="button"
+                        role="listitem"
+                        className={`ew-key-item ew-stagger-item${isActive ? " is-active" : ""}`}
+                        style={{ "--ew-stagger": i }}
+                        aria-pressed={tappedLegendKey === item.id}
+                        onMouseEnter={() => setHoveredLegendKey(item.id)}
+                        onMouseLeave={() => setHoveredLegendKey(null)}
+                        onFocus={() => setFocusedLegendKey(item.id)}
+                        onBlur={() => setFocusedLegendKey(null)}
+                        onClick={() =>
+                          setTappedLegendKey((prev) => (prev === item.id ? null : item.id))
+                        }
+                      >
+                        <span className={`ew-sw ew-sw-${item.id}`} aria-hidden="true" />
+                        <span className="ew-key-dt">{item.label}</span>
+                        <span className="ew-key-dd">{item.text}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
             </div>
           </div>
         </section>
@@ -812,6 +1136,15 @@ export default function LandingPage() {
             </p>
           </div>
           <div className="ew-footer-info-col">
+            {deferredPrompt && (
+              <button
+                type="button"
+                className="ew-btn ew-btn-outline ew-install-footer ds-btn ds-btn--ghost"
+                onClick={handleInstallClick}
+              >
+                Install EvacWay
+              </button>
+            )}
             <p className="ew-footer-credit">
               Hazard data from HazardHunterPH. Roads from OpenStreetMap. MDRRMO Sogod, Southern Leyte.
             </p>

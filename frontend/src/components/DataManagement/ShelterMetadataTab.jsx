@@ -1,4 +1,5 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
   faBuilding,
@@ -12,28 +13,24 @@ import {
   faCircleNotch,
   faXmark,
   faTriangleExclamation,
-  faToggleOn,
-  faToggleOff,
-  faTag,
-  faInfoCircle,
-  faFileExcel,
-  faUpload,
-  faDownload,
-  faFileExport,
-  faCircleCheck,
+  faEllipsisVertical,
+  faDoorOpen,
+  faDrawPolygon,
+  faChevronLeft,
+  faChevronRight,
+  faCheck,
 } from "@fortawesome/free-solid-svg-icons";
 import { api } from "../../services/api";
+
+const PAGE_SIZE = 10;
 
 const TABLES = {
   center_types: {
     key: "center_types",
-    tableName: "center_types",
     title: "Center Types",
     singular: "Center Type",
+    addLabel: "Add Center Type",
     icon: faBuilding,
-    color: "#2563eb",
-    bg: "#eff6ff",
-    description: "Configurable facility & shelter types (stored in the 'center_types' table).",
     getter: api.getCenterTypes,
     creator: api.createCenterType,
     updater: api.updateCenterType,
@@ -41,13 +38,10 @@ const TABLES = {
   },
   building_materials: {
     key: "building_materials",
-    tableName: "building_materials",
     title: "Building Materials",
     singular: "Building Material",
+    addLabel: "Add Building Material",
     icon: faCube,
-    color: "#059669",
-    bg: "#f0fdf4",
-    description: "Structural building composition types (stored in the 'building_materials' table).",
     getter: api.getBuildingMaterials,
     creator: api.createBuildingMaterial,
     updater: api.updateBuildingMaterial,
@@ -55,13 +49,10 @@ const TABLES = {
   },
   amenities: {
     key: "amenities",
-    tableName: "amenities",
     title: "Amenities & Facilities",
     singular: "Amenity",
+    addLabel: "Add Amenity",
     icon: faWheelchair,
-    color: "#7c3aed",
-    bg: "#f5f3ff",
-    description: "Configurable shelter amenities and equipment (wheelchairs, backup generators, medical stations, potable water, etc. stored in the 'amenities' table).",
     getter: api.getAmenities,
     creator: api.createAmenity,
     updater: api.updateAmenity,
@@ -69,7 +60,35 @@ const TABLES = {
   },
 };
 
-function slugify(text) {
+const STRUCTURE_OPTIONS = [
+  {
+    value: "open_area",
+    label: "Open area (no rooms)",
+    shortLabel: "Open area",
+    description: "One open space without rooms or buildings (e.g., gym or covered court).",
+    icon: faDrawPolygon,
+  },
+  {
+    value: "rooms_only",
+    label: "Rooms only",
+    shortLabel: "Rooms only",
+    description: "Single building or house divided directly into rooms.",
+    icon: faDoorOpen,
+  },
+  {
+    value: "buildings_and_rooms",
+    label: "Buildings and rooms",
+    shortLabel: "Buildings & rooms",
+    description: "Multiple buildings with rooms grouped inside each building.",
+    icon: faBuilding,
+  },
+];
+
+const STRUCTURE_BY_VALUE = Object.fromEntries(
+  STRUCTURE_OPTIONS.map((opt) => [opt.value, opt])
+);
+
+function slugifyCode(text) {
   return String(text || "")
     .trim()
     .toLowerCase()
@@ -77,778 +96,1051 @@ function slugify(text) {
     .replace(/^_+|_+$/g, "");
 }
 
+function getStructureOption(value, fallbackCode = "") {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (STRUCTURE_BY_VALUE[normalized]) return STRUCTURE_BY_VALUE[normalized];
+  const code = String(fallbackCode || "").trim().toLowerCase();
+  if (code === "single_venue") return STRUCTURE_BY_VALUE.open_area;
+  if (code === "private_property") return STRUCTURE_BY_VALUE.rooms_only;
+  return STRUCTURE_BY_VALUE.buildings_and_rooms;
+}
+
 export default function ShelterMetadataTab({ onNotify }) {
-  const [activeTable, setActiveTable] = useState("center_types");
-  const [tableData, setTableData] = useState({
+  const [activeTab, setActiveTab] = useState("center_types");
+  const [data, setData] = useState({
     center_types: [],
     building_materials: [],
     amenities: [],
   });
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-  const [statusFilter, setStatusFilter] = useState("all"); // "all" | "active" | "inactive"
-  const [searchTerm, setSearchTerm] = useState("");
+  const [refreshing, setRefreshing] = useState(false);
 
-  // Add / Edit Modal state
-  const [modalState, setModalState] = useState(null); // { mode: 'add' | 'edit', tableKey, data }
-  const [savingModal, setSavingModal] = useState(false);
-  const [modalError, setModalError] = useState("");
-  const [customCodeUnlocked, setCustomCodeUnlocked] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [page, setPage] = useState(1);
 
-  // Delete Modal state
+  const [togglingId, setTogglingId] = useState(null);
+
+  // Three-dot action menu (portal)
+  const [openMenu, setOpenMenu] = useState(null);
+  const menuRef = useRef(null);
+  const tableScrollRef = useRef(null);
+
+  // Add / Edit modal state
+  const [modalOpen, setModalOpen] = useState(false);
+  const [modalMode, setModalMode] = useState("add");
+  const [editingItem, setEditingItem] = useState(null);
+  const [formData, setFormData] = useState({
+    name: "",
+    code: "",
+    description: "",
+    structure_mode: "",
+    is_active: true,
+  });
+  const [codeCustomized, setCodeCustomized] = useState(false);
+  const [showCodeEditor, setShowCodeEditor] = useState(false);
+  const [confirmStructureChange, setConfirmStructureChange] = useState(false);
+  const [fieldErrors, setFieldErrors] = useState({});
+  const [formError, setFormError] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  // Delete confirmation modal state
   const [deleteTarget, setDeleteTarget] = useState(null);
-  const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState("");
+  const [deleting, setDeleting] = useState(false);
 
-  // Excel Bulk Operations State
-  const [downloadingTemplate, setDownloadingTemplate] = useState(false);
-  const [exportingCenters, setExportingCenters] = useState(false);
-  const [importModalOpen, setImportModalOpen] = useState(false);
-  const [importFile, setImportFile] = useState(null);
-  const [importing, setImporting] = useState(false);
-  const [importError, setImportError] = useState("");
-  const [importResult, setImportResult] = useState(null);
+  const tableConfig = TABLES[activeTab];
 
-  // Download Center Template (.xlsx)
-  async function handleDownloadCenterTemplate() {
-    try {
-      setDownloadingTemplate(true);
-      const blob = await api.downloadCenterTemplate();
-      const url = window.URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.setAttribute("download", "evacway-centers-template.xlsx");
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      window.URL.revokeObjectURL(url);
-      if (onNotify) onNotify("Downloaded Evacuation Centers Excel template.", "success");
-    } catch (err) {
-      console.error("Failed to download template:", err);
-      if (onNotify) onNotify(err.message || "Failed to download template.", "error");
-    } finally {
-      setDownloadingTemplate(false);
-    }
-  }
+  const loadAll = useCallback(async () => {
+    setRefreshing(true);
 
-  // Export All Centers (.xlsx)
-  async function handleExportCenters() {
-    try {
-      setExportingCenters(true);
-      const blob = await api.exportCenters();
-      const url = window.URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.setAttribute("download", "EvacWay-Evacuation-Centers.xlsx");
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      window.URL.revokeObjectURL(url);
-      if (onNotify) onNotify("Exported all evacuation centers to Excel.", "success");
-    } catch (err) {
-      console.error("Failed to export centers:", err);
-      if (onNotify) onNotify(err.message || "Failed to export centers.", "error");
-    } finally {
-      setExportingCenters(false);
-    }
-  }
-
-  // Upload Centers (.xlsx)
-  async function handleUploadCenters() {
-    if (!importFile) return;
-    try {
-      setImporting(true);
-      setImportError("");
-      setImportResult(null);
-      const res = await api.uploadCenters(importFile);
-      setImportResult(res);
-      if (onNotify) {
-        onNotify(
-          `Imported successfully: ${res.created_count || 0} created, ${res.updated_count || 0} updated.`,
-          "success"
-        );
-      }
-      fetchAllTables();
-    } catch (err) {
-      console.error("Failed to import centers:", err);
-      setImportError(err.message || "Failed to import evacuation centers.");
-    } finally {
-      setImporting(false);
-    }
-  }
-
-  useEffect(() => {
-    fetchAllTables();
-  }, []);
-
-  async function fetchAllTables() {
-    setLoading(true);
-    setError("");
     try {
       const [cts, mats, ams] = await Promise.all([
         api.getCenterTypes(),
         api.getBuildingMaterials(),
         api.getAmenities(),
       ]);
-      setTableData({
+      setData({
         center_types: Array.isArray(cts) ? cts : [],
         building_materials: Array.isArray(mats) ? mats : [],
         amenities: Array.isArray(ams) ? ams : [],
       });
     } catch (err) {
-      console.error("Failed to fetch shelter tables:", err);
-      setError(err.message || "Failed to load database tables.");
+      if (onNotify) onNotify(err.message || "Failed to load shelter metadata", "error");
     } finally {
       setLoading(false);
+      setRefreshing(false);
+    }
+  }, [onNotify]);
+
+  useEffect(() => {
+    let active = true;
+    Promise.all([
+      api.getCenterTypes(),
+      api.getBuildingMaterials(),
+      api.getAmenities(),
+    ])
+      .then(([cts, mats, ams]) => {
+        if (!active) return;
+        setData({
+          center_types: Array.isArray(cts) ? cts : [],
+          building_materials: Array.isArray(mats) ? mats : [],
+          amenities: Array.isArray(ams) ? ams : [],
+        });
+      })
+      .catch((err) => {
+        if (active && onNotify) {
+          onNotify(err.message || "Failed to load shelter metadata", "error");
+        }
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [onNotify]);
+
+  function handleTabSelect(nextTab) {
+    setActiveTab(nextTab);
+    setPage(1);
+    setOpenMenu(null);
+  }
+
+  function handleSearchChange(val) {
+    setSearchQuery(val);
+    setPage(1);
+    setOpenMenu(null);
+  }
+
+  function handleStatusFilterChange(val) {
+    setStatusFilter(val);
+    setPage(1);
+    setOpenMenu(null);
+  }
+
+  const currentItems = useMemo(() => data[activeTab] || [], [data, activeTab]);
+
+  const filteredItems = useMemo(() => {
+    let list = [...currentItems];
+    if (statusFilter === "active") {
+      list = list.filter((item) => item.is_active);
+    } else if (statusFilter === "inactive") {
+      list = list.filter((item) => !item.is_active);
+    }
+
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase().trim();
+      list = list.filter(
+        (item) =>
+          (item.name || "").toLowerCase().includes(q) ||
+          (item.code || "").toLowerCase().includes(q) ||
+          (item.description || "").toLowerCase().includes(q)
+      );
+    }
+
+    return list;
+  }, [currentItems, statusFilter, searchQuery]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredItems.length / PAGE_SIZE));
+  const safePage = Math.min(page, totalPages);
+
+  const paginatedItems = useMemo(() => {
+    const start = (safePage - 1) * PAGE_SIZE;
+    return filteredItems.slice(start, start + PAGE_SIZE);
+  }, [filteredItems, safePage]);
+
+  const showingFrom = filteredItems.length === 0 ? 0 : (safePage - 1) * PAGE_SIZE + 1;
+  const showingTo = Math.min(safePage * PAGE_SIZE, filteredItems.length);
+
+  // Close three-dot menu on outside click, Escape, scroll, or resize
+  useEffect(() => {
+    if (!openMenu) return undefined;
+
+    function handleOutside(e) {
+      if (menuRef.current && menuRef.current.contains(e.target)) return;
+      if (openMenu.triggerEl && openMenu.triggerEl.contains(e.target)) return;
+      setOpenMenu(null);
+    }
+    function handleKey(e) {
+      if (e.key === "Escape") {
+        const trigger = openMenu.triggerEl;
+        setOpenMenu(null);
+        trigger?.focus();
+      }
+    }
+    function handleScrollOrResize() {
+      setOpenMenu(null);
+    }
+
+    document.addEventListener("mousedown", handleOutside);
+    document.addEventListener("keydown", handleKey);
+    window.addEventListener("resize", handleScrollOrResize);
+    window.addEventListener("scroll", handleScrollOrResize, true);
+    return () => {
+      document.removeEventListener("mousedown", handleOutside);
+      document.removeEventListener("keydown", handleKey);
+      window.removeEventListener("resize", handleScrollOrResize);
+      window.removeEventListener("scroll", handleScrollOrResize, true);
+    };
+  }, [openMenu]);
+
+  // Escape key closes Add/Edit or Delete modal
+  useEffect(() => {
+    if (!modalOpen && !deleteTarget) return undefined;
+    function onKeyDown(e) {
+      if (e.key !== "Escape") return;
+      if (deleteTarget && !deleting) {
+        setDeleteTarget(null);
+        setDeleteError("");
+      } else if (modalOpen && !saving) {
+        setModalOpen(false);
+      }
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [modalOpen, deleteTarget, saving, deleting]);
+
+  function openRowMenu(e, item) {
+    e.stopPropagation();
+    if (openMenu?.item?.id === item.id) {
+      setOpenMenu(null);
+      return;
+    }
+    const triggerEl = e.currentTarget;
+    const rect = triggerEl.getBoundingClientRect();
+    const menuWidth = 160;
+    const menuHeight = 92;
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const openUp = spaceBelow < menuHeight + 12 && rect.top >= menuHeight + 12;
+    const top = openUp ? rect.top - menuHeight - 6 : rect.bottom + 6;
+    const left = Math.max(
+      12,
+      Math.min(rect.right - menuWidth, window.innerWidth - menuWidth - 12)
+    );
+    setOpenMenu({ item, top, left, openUp, triggerEl });
+  }
+
+  function openAddModal() {
+    setModalMode("add");
+    setEditingItem(null);
+    setFormData({
+      name: "",
+      code: "",
+      description: "",
+      structure_mode: "",
+      is_active: true,
+    });
+    setCodeCustomized(false);
+    setShowCodeEditor(false);
+    setConfirmStructureChange(false);
+    setFieldErrors({});
+    setFormError("");
+    setModalOpen(true);
+  }
+
+  function openEditModal(item) {
+    setOpenMenu(null);
+    setModalMode("edit");
+    setEditingItem(item);
+    setFormData({
+      name: item.name || "",
+      code: item.code || "",
+      description: item.description || "",
+      structure_mode:
+        activeTab === "center_types"
+          ? getStructureOption(item.structure_mode, item.code).value
+          : "",
+      is_active: item.is_active !== false,
+    });
+    setCodeCustomized(true);
+    setShowCodeEditor(false);
+    setConfirmStructureChange(false);
+    setFieldErrors({});
+    setFormError("");
+    setModalOpen(true);
+  }
+
+  const initialStructure = useMemo(() => {
+    if (modalMode !== "edit" || !editingItem || activeTab !== "center_types") return "";
+    return getStructureOption(editingItem.structure_mode, editingItem.code).value;
+  }, [modalMode, editingItem, activeTab]);
+
+  const inUseCount = Number(editingItem?.in_use_count || 0);
+  const structureChangedOnInUseCenterType =
+    activeTab === "center_types" &&
+    modalMode === "edit" &&
+    inUseCount > 0 &&
+    Boolean(formData.structure_mode) &&
+    formData.structure_mode !== initialStructure;
+
+  const computedAutoCode = slugifyCode(formData.name);
+  const effectiveCode = codeCustomized ? slugifyCode(formData.code) : computedAutoCode;
+
+  function clearFieldError(field) {
+    setFieldErrors((prev) => {
+      if (!prev[field]) return prev;
+      const next = { ...prev };
+      delete next[field];
+      return next;
+    });
+    if (formError) setFormError("");
+  }
+
+  function handleNameChange(val) {
+    clearFieldError("name");
+    if (!codeCustomized) clearFieldError("code");
+    setFormData((prev) => ({
+      ...prev,
+      name: val,
+      code: codeCustomized ? prev.code : slugifyCode(val),
+    }));
+  }
+
+  function validateForm() {
+    const errors = {};
+    const trimmedName = formData.name.trim();
+    const excludeId = modalMode === "edit" ? editingItem?.id : null;
+
+    if (!trimmedName) {
+      errors.name = `${tableConfig.singular} name is required.`;
+    } else {
+      const duplicateName = currentItems.find(
+        (item) =>
+          item.id !== excludeId &&
+          (item.name || "").trim().toLowerCase() === trimmedName.toLowerCase()
+      );
+      if (duplicateName) {
+        errors.name = `${tableConfig.singular} named "${trimmedName}" already exists.`;
+      }
+    }
+
+    if (!effectiveCode) {
+      errors.code = "Enter a valid identifier code (letters or numbers).";
+    } else {
+      const duplicateCode = currentItems.find(
+        (item) =>
+          item.id !== excludeId &&
+          (item.code || "").trim().toLowerCase() === effectiveCode.toLowerCase()
+      );
+      if (duplicateCode) {
+        errors.code = `Code "${effectiveCode}" is already used by "${duplicateCode.name}".`;
+      }
+    }
+
+    if (activeTab === "center_types") {
+      if (!formData.structure_mode) {
+        errors.structure_mode = "Select how centers of this type are structured.";
+      } else if (structureChangedOnInUseCenterType && !confirmStructureChange) {
+        errors.structure_confirm = `Confirm updating Structure for ${inUseCount} existing center(s).`;
+      }
+    }
+
+    setFieldErrors(errors);
+    return Object.keys(errors).length === 0;
+  }
+
+  async function handleSave(e) {
+    e.preventDefault();
+    if (!validateForm()) return;
+
+    setSaving(true);
+    setFormError("");
+    try {
+      const payload = {
+        name: formData.name.trim(),
+        code: effectiveCode,
+        description: formData.description.trim(),
+        is_active: Boolean(formData.is_active),
+        ...(activeTab === "center_types"
+          ? { structure_mode: formData.structure_mode }
+          : {}),
+      };
+
+      if (modalMode === "add") {
+        await tableConfig.creator(payload);
+        if (onNotify) {
+          onNotify(`${tableConfig.singular} "${payload.name}" added.`, "success");
+        }
+      } else {
+        await tableConfig.updater(editingItem.id, payload);
+        if (onNotify) {
+          onNotify(`${tableConfig.singular} "${payload.name}" updated.`, "success");
+        }
+      }
+
+      setModalOpen(false);
+      await loadAll(true);
+    } catch (err) {
+      const field = err?.data?.field;
+      const msg = err.message || "Failed to save changes.";
+      if (field === "name" || field === "code" || field === "structure_mode") {
+        setFieldErrors((prev) => ({ ...prev, [field]: msg }));
+        if (field === "code") setShowCodeEditor(true);
+      } else {
+        setFormError(msg);
+      }
+    } finally {
+      setSaving(false);
     }
   }
 
-  const currentConfig = TABLES[activeTable];
-  const currentItems = tableData[activeTable] || [];
-
-  // Filtered rows for currently active table
-  const filteredRows = useMemo(() => {
-    return currentItems.filter((row) => {
-      if (statusFilter === "active" && !row.is_active) return false;
-      if (statusFilter === "inactive" && row.is_active) return false;
-
-      if (searchTerm.trim()) {
-        const q = searchTerm.toLowerCase();
-        const matchesName = (row.name || "").toLowerCase().includes(q);
-        const matchesCode = (row.code || "").toLowerCase().includes(q);
-        const matchesDesc = (row.description || "").toLowerCase().includes(q);
-        return matchesName || matchesCode || matchesDesc;
-      }
-      return true;
-    });
-  }, [currentItems, statusFilter, searchTerm]);
-
-  // Quick toggle active status directly in table
-  async function handleToggleActive(item) {
-    const updatedStatus = !item.is_active;
-    const tableKey = activeTable;
-
-    // Optimistic UI update
-    setTableData((prev) => ({
-      ...prev,
-      [tableKey]: prev[tableKey].map((r) =>
-        r.id === item.id ? { ...r, is_active: updatedStatus } : r
-      ),
-    }));
-
+  async function handleToggleStatus(item) {
+    if (togglingId === item.id) return;
+    const nextStatus = !item.is_active;
+    setTogglingId(item.id);
     try {
-      await TABLES[tableKey].updater(item.id, { is_active: updatedStatus });
-      if (onNotify) {
-        onNotify(`"${item.name}" is now ${updatedStatus ? "Active" : "Inactive"}.`, "success");
-      }
-    } catch (err) {
-      // Revert optimistic update
-      setTableData((prev) => ({
+      await tableConfig.updater(item.id, { is_active: nextStatus });
+      setData((prev) => ({
         ...prev,
-        [tableKey]: prev[tableKey].map((r) =>
-          r.id === item.id ? { ...r, is_active: item.is_active } : r
+        [activeTab]: prev[activeTab].map((r) =>
+          r.id === item.id ? { ...r, is_active: nextStatus } : r
         ),
       }));
       if (onNotify) {
-        onNotify(err.message || "Failed to update status", "error");
-      }
-    }
-  }
-
-  // Open Add Modal
-  function handleOpenAdd() {
-    setModalState({
-      mode: "add",
-      tableKey: activeTable,
-      data: {
-        name: "",
-        code: "",
-        description: "",
-        is_active: true,
-        display_order: 0,
-      },
-    });
-    setCustomCodeUnlocked(false);
-    setModalError("");
-  }
-
-  // Open Edit Modal
-  function handleOpenEdit(item) {
-    setModalState({
-      mode: "edit",
-      tableKey: activeTable,
-      data: {
-        id: item.id,
-        name: item.name,
-        code: item.code,
-        description: item.description || "",
-        is_active: item.is_active,
-        display_order: item.display_order || 0,
-      },
-    });
-    setCustomCodeUnlocked(false);
-    setModalError("");
-  }
-
-  // Handle modal submit
-  async function handleModalSubmit(e) {
-    e.preventDefault();
-    if (!modalState) return;
-
-    const { mode, tableKey, data } = modalState;
-    if (!data.name.trim()) {
-      setModalError("Name is required.");
-      return;
-    }
-
-    const finalCode = data.code.trim() ? slugify(data.code) : slugify(data.name);
-    if (!finalCode) {
-      setModalError("A valid machine code identifier is required.");
-      return;
-    }
-
-    setSavingModal(true);
-    setModalError("");
-
-    try {
-      const payload = {
-        name: data.name.trim(),
-        code: finalCode,
-        description: data.description.trim() || null,
-        is_active: Boolean(data.is_active),
-        display_order: Number(data.display_order) || 0,
-      };
-
-      if (mode === "add") {
-        const created = await TABLES[tableKey].creator(payload);
-        setTableData((prev) => ({
-          ...prev,
-          [tableKey]: [...prev[tableKey], created],
-        }));
-        setModalState(null);
-        if (onNotify) onNotify(`Added "${created.name}" to ${TABLES[tableKey].title}.`, "success");
-      } else {
-        const updated = await TABLES[tableKey].updater(data.id, payload);
-        setTableData((prev) => ({
-          ...prev,
-          [tableKey]: prev[tableKey].map((r) => (r.id === data.id ? updated : r)),
-        }));
-        setModalState(null);
-        if (onNotify) onNotify(`Updated "${updated.name}".`, "success");
+        onNotify(
+          `${tableConfig.singular} "${item.name}" ${nextStatus ? "activated" : "deactivated"}.`,
+          "success"
+        );
       }
     } catch (err) {
-      console.error("Modal save error:", err);
-      setModalError(err.message || "Failed to save.");
+      if (onNotify) onNotify(err.message || "Failed to update status", "error");
     } finally {
-      setSavingModal(false);
+      setTogglingId(null);
     }
   }
 
-  // Handle Delete / Deactivate
+  function requestDelete(item) {
+    setOpenMenu(null);
+    setDeleteError("");
+    setDeleteTarget(item);
+  }
+
   async function handleConfirmDelete() {
-    if (!deleteTarget) return;
+    if (!deleteTarget || deleting) return;
     setDeleting(true);
     setDeleteError("");
-    const tableKey = activeTable;
-
     try {
-      const res = await TABLES[tableKey].deleter(deleteTarget.id);
-      if (res.deactivated) {
-        setTableData((prev) => ({
-          ...prev,
-          [tableKey]: prev[tableKey].map((r) =>
-            r.id === deleteTarget.id ? { ...r, is_active: false } : r
-          ),
-        }));
-        if (onNotify) onNotify(res.message, "warning");
-      } else {
-        setTableData((prev) => ({
-          ...prev,
-          [tableKey]: prev[tableKey].filter((r) => r.id !== deleteTarget.id),
-        }));
-        if (onNotify) onNotify(`"${deleteTarget.name}" deleted successfully.`, "success");
+      const res = await tableConfig.deleter(deleteTarget.id);
+      if (onNotify) {
+        onNotify(
+          res?.message || `${tableConfig.singular} "${deleteTarget.name}" deleted.`,
+          "success"
+        );
       }
       setDeleteTarget(null);
+      await loadAll(true);
     } catch (err) {
-      console.error("Delete error:", err);
-      setDeleteError(err.message || "Failed to delete.");
+      setDeleteError(
+        err.message ||
+        `Unable to delete "${deleteTarget.name}".`
+      );
     } finally {
       setDeleting(false);
     }
   }
 
   return (
-    <div className="dm-card dm-shelter-metadata">
-      {/* Evacuation Centers Excel Hub */}
-      <div
-        className="dm-center-excel-banner"
-        style={{
-          background: "linear-gradient(135deg, #f0fdf4 0%, #ffffff 100%)",
-          border: "1px solid #bbf7d0",
-          borderRadius: "10px",
-          padding: "16px 18px",
-          marginBottom: "20px",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          flexWrap: "wrap",
-          gap: "14px",
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-          <div
-            style={{
-              width: "42px",
-              height: "42px",
-              borderRadius: "10px",
-              background: "#dcfce7",
-              color: "#166534",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              fontSize: "18px",
-              flexShrink: 0,
-            }}
-          >
-            <FontAwesomeIcon icon={faFileExcel} />
-          </div>
-          <div>
-            <strong style={{ fontSize: "14px", color: "#14532d", display: "block" }}>
-              Evacuation Centers Excel Hub
-            </strong>
-            <span style={{ fontSize: "12.5px", color: "#166534" }}>
-              Bulk import or export shelters pre-linked with Center Types, Building Materials, and Amenities.
-            </span>
-          </div>
-        </div>
+    <div className="dm-meta-section">
+      {/* Single unified table card */}
+      <section className="dm-meta-table-card" aria-label={tableConfig.title}>
+        {/* Toolbar: sub-tabs, search, status filter, refresh, Add button */}
+        <div className="dm-meta-toolbar">
+          <div className="dm-meta-toolbar-top">
+            <div className="dm-meta-subtabs" role="tablist" aria-label="Shelter option categories">
+              {Object.values(TABLES).map((tbl) => {
+                const isActive = activeTab === tbl.key;
+                const count = (data[tbl.key] || []).length;
+                return (
+                  <button
+                    key={tbl.key}
+                    type="button"
+                    role="tab"
+                    aria-selected={isActive}
+                    className={`dm-meta-subtab ${isActive ? "is-active" : ""}`}
+                    onClick={() => handleTabSelect(tbl.key)}
+                  >
+                    <FontAwesomeIcon icon={tbl.icon} className="dm-meta-subtab-icon" />
+                    <span>{tbl.title}</span>
+                    <span className="dm-meta-subtab-badge">{count}</span>
+                  </button>
+                );
+              })}
+            </div>
 
-        <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-          <button
-            type="button"
-            className="dm-btn dm-btn-secondary"
-            onClick={handleDownloadCenterTemplate}
-            disabled={downloadingTemplate}
-            style={{ fontSize: "12.5px", padding: "7px 13px" }}
-          >
-            <FontAwesomeIcon icon={downloadingTemplate ? faCircleNotch : faDownload} spin={downloadingTemplate} />
-            Download Center Template
-          </button>
-          <button
-            type="button"
-            className="dm-btn dm-btn-secondary"
-            onClick={handleExportCenters}
-            disabled={exportingCenters}
-            style={{ fontSize: "12.5px", padding: "7px 13px" }}
-          >
-            <FontAwesomeIcon icon={exportingCenters ? faCircleNotch : faFileExport} spin={exportingCenters} />
-            Export Centers (.xlsx)
-          </button>
-          <button
-            type="button"
-            className="dm-btn dm-btn-primary"
-            onClick={() => {
-              setImportModalOpen(true);
-              setImportFile(null);
-              setImportResult(null);
-              setImportError("");
-            }}
-            style={{ fontSize: "12.5px", padding: "7px 13px" }}
-          >
-            <FontAwesomeIcon icon={faUpload} />
-            Import Centers (.xlsx)
-          </button>
-        </div>
-      </div>
-
-      {/* Header Info */}
-      <div className="dm-card-header" style={{ alignItems: "flex-start" }}>
-        <div>
-          <h3 className="dm-card-title">
-            <FontAwesomeIcon icon={currentConfig.icon} style={{ color: currentConfig.color, marginRight: "8px" }} />
-            {currentConfig.title} Management
-          </h3>
-          <p style={{ margin: "4px 0 0", fontSize: "13px", color: "var(--muted, #64748b)" }}>
-            {currentConfig.description} Manage database entries directly.
-          </p>
-        </div>
-
-        <button
-          type="button"
-          className="dm-btn dm-btn-primary"
-          onClick={handleOpenAdd}
-        >
-          <FontAwesomeIcon icon={faPlus} /> Add {currentConfig.singular}
-        </button>
-      </div>
-
-      {/* Table Selector Pills */}
-      <div className="dm-meta-categories">
-        {Object.entries(TABLES).map(([key, cfg]) => {
-          const count = (tableData[key] || []).length;
-          const isActive = activeTable === key;
-          return (
-            <button
-              key={key}
-              type="button"
-              className={`dm-meta-cat-pill ${isActive ? "is-active" : ""}`}
-              onClick={() => {
-                setActiveTable(key);
-                setSearchTerm("");
-              }}
-            >
-              <FontAwesomeIcon icon={cfg.icon} style={{ color: isActive ? "#ffffff" : cfg.color }} />
-              {cfg.title}
-              <span className="dm-meta-cat-badge">{count}</span>
-            </button>
-          );
-        })}
-      </div>
-
-      {/* Filter bar */}
-      <div className="dm-filter-bar">
-        <div className="dm-search-wrap">
-          <FontAwesomeIcon icon={faMagnifyingGlass} className="dm-search-icon" />
-          <input
-            type="text"
-            className="dm-search-input"
-            placeholder={`Search ${currentConfig.title.toLowerCase()} by name, code...`}
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-          />
-          {searchTerm && (
             <button
               type="button"
-              className="dm-search-clear"
-              onClick={() => setSearchTerm("")}
-              title="Clear search"
+              className="dm-btn dm-btn-primary dm-meta-add-btn"
+              onClick={openAddModal}
             >
-              <FontAwesomeIcon icon={faXmark} />
+              <FontAwesomeIcon icon={faPlus} />
+              <span>{tableConfig.addLabel}</span>
             </button>
+          </div>
+
+          <div className="dm-meta-toolbar-filters">
+            <div className="dm-search-wrap dm-meta-search-wrap">
+              <FontAwesomeIcon icon={faMagnifyingGlass} className="dm-search-icon" />
+              <input
+                type="text"
+                className="dm-search-input"
+                placeholder={`Search ${tableConfig.title.toLowerCase()}...`}
+                value={searchQuery}
+                onChange={(e) => handleSearchChange(e.target.value)}
+                aria-label={`Search ${tableConfig.title}`}
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  className="dm-search-clear"
+                  onClick={() => handleSearchChange("")}
+                  title="Clear search"
+                  aria-label="Clear search"
+                >
+                  <FontAwesomeIcon icon={faXmark} />
+                </button>
+              )}
+            </div>
+
+            <div className="dm-meta-filter-right">
+              <select
+                className="dm-select-filter dm-meta-status-select"
+                value={statusFilter}
+                onChange={(e) => handleStatusFilterChange(e.target.value)}
+                aria-label="Filter by status"
+              >
+                <option value="all">All Statuses</option>
+                <option value="active">Active Only</option>
+                <option value="inactive">Inactive Only</option>
+              </select>
+
+              <button
+                type="button"
+                className="dm-btn dm-btn-ghost dm-btn-sm dm-meta-refresh-btn"
+                onClick={() => loadAll()}
+                disabled={refreshing}
+                title="Refresh list"
+                aria-label="Refresh list"
+              >
+                <FontAwesomeIcon icon={faRotate} spin={refreshing} />
+                <span className="dm-meta-refresh-text">Refresh</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Scrollable body (rows only scroll; header stays sticky) */}
+        <div className="dm-meta-card-body" ref={tableScrollRef}>
+          {loading ? (
+            <div className="dm-meta-empty-state">
+              <FontAwesomeIcon icon={faCircleNotch} spin style={{ fontSize: "24px", color: "#2563eb" }} />
+              <span>Loading {tableConfig.title.toLowerCase()}...</span>
+            </div>
+          ) : paginatedItems.length === 0 ? (
+            <div className="dm-meta-empty-state">
+              <FontAwesomeIcon icon={tableConfig.icon} style={{ fontSize: "28px", opacity: 0.35 }} />
+              <strong>No {tableConfig.title.toLowerCase()} found</strong>
+              <span>
+                {searchQuery || statusFilter !== "all"
+                  ? "No items match your current search or filter."
+                  : `Add your first ${tableConfig.singular.toLowerCase()} using the button above.`}
+              </span>
+            </div>
+          ) : (
+            <>
+              {/* Desktop Table */}
+              <table className="dm-table dm-meta-table dm-desktop-table">
+                <thead>
+                  <tr>
+                    <th style={{ width: activeTab === "center_types" ? "26%" : "30%" }}>Name</th>
+                    {activeTab === "center_types" && (
+                      <th style={{ width: "20%" }}>Structure</th>
+                    )}
+                    <th style={{ width: activeTab === "center_types" ? "32%" : "46%" }}>Description</th>
+                    <th style={{ width: "14%" }}>Status</th>
+                    <th style={{ width: "8%", textAlign: "right" }}>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {paginatedItems.map((item) => {
+                    const structureOpt =
+                      activeTab === "center_types"
+                        ? getStructureOption(item.structure_mode, item.code)
+                        : null;
+                    const menuOpen = openMenu?.item?.id === item.id;
+                    return (
+                      <tr key={item.id}>
+                        <td>
+                          <div className="dm-meta-name-cell">
+                            <span className="dm-meta-name">{item.name}</span>
+                            <span className="dm-meta-code-inline" title={item.code}>
+                              {item.code}
+                            </span>
+                          </div>
+                        </td>
+                        {activeTab === "center_types" && (
+                          <td>
+                            <span className={`dm-structure-badge is-${structureOpt.value}`}>
+                              <FontAwesomeIcon icon={structureOpt.icon} />
+                              <span>{structureOpt.shortLabel}</span>
+                            </span>
+                          </td>
+                        )}
+                        <td>
+                          <div className="dm-meta-desc">
+                            {item.description || (
+                              <span style={{ color: "#94a3b8" }}>No description</span>
+                            )}
+                          </div>
+                        </td>
+                        <td>
+                          <button
+                            type="button"
+                            role="switch"
+                            aria-checked={Boolean(item.is_active)}
+                            className={`dm-meta-row-toggle ${item.is_active ? "is-active" : "is-inactive"}`}
+                            onClick={() => handleToggleStatus(item)}
+                            disabled={togglingId === item.id}
+                            title={item.is_active ? "Click to deactivate" : "Click to activate"}
+                          >
+                            <span className="dm-meta-row-toggle-track" aria-hidden="true">
+                              <span className="dm-meta-row-toggle-thumb" />
+                            </span>
+                            <span>{item.is_active ? "Active" : "Inactive"}</span>
+                          </button>
+                        </td>
+                        <td style={{ textAlign: "right" }}>
+                          <button
+                            type="button"
+                            className={`dm-meta-kebab-btn ${menuOpen ? "is-open" : ""}`}
+                            onClick={(e) => openRowMenu(e, item)}
+                            aria-haspopup="menu"
+                            aria-expanded={menuOpen}
+                            aria-label={`Actions for ${item.name}`}
+                          >
+                            <FontAwesomeIcon icon={faEllipsisVertical} />
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+
+              {/* Mobile Compact Cards (<= 768px) */}
+              <div className="dm-meta-mobile-list">
+                {paginatedItems.map((item) => {
+                  const structureOpt =
+                    activeTab === "center_types"
+                      ? getStructureOption(item.structure_mode, item.code)
+                      : null;
+                  const menuOpen = openMenu?.item?.id === item.id;
+                  return (
+                    <article key={item.id} className="dm-meta-mobile-card">
+                      <div className="dm-meta-mobile-card-top">
+                        <div className="dm-meta-mobile-card-title-wrap">
+                          <span className="dm-meta-name">{item.name}</span>
+                          <span className="dm-meta-code-inline">{item.code}</span>
+                        </div>
+                        <button
+                          type="button"
+                          className={`dm-meta-kebab-btn ${menuOpen ? "is-open" : ""}`}
+                          onClick={(e) => openRowMenu(e, item)}
+                          aria-haspopup="menu"
+                          aria-expanded={menuOpen}
+                          aria-label={`Actions for ${item.name}`}
+                        >
+                          <FontAwesomeIcon icon={faEllipsisVertical} />
+                        </button>
+                      </div>
+
+                      {item.description && (
+                        <p className="dm-meta-mobile-desc">{item.description}</p>
+                      )}
+
+                      <div className="dm-meta-mobile-card-footer">
+                        {structureOpt ? (
+                          <span className={`dm-structure-badge is-${structureOpt.value}`}>
+                            <FontAwesomeIcon icon={structureOpt.icon} />
+                            <span>{structureOpt.shortLabel}</span>
+                          </span>
+                        ) : (
+                          <span />
+                        )}
+
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={Boolean(item.is_active)}
+                          className={`dm-meta-row-toggle ${item.is_active ? "is-active" : "is-inactive"}`}
+                          onClick={() => handleToggleStatus(item)}
+                          disabled={togglingId === item.id}
+                        >
+                          <span className="dm-meta-row-toggle-track" aria-hidden="true">
+                            <span className="dm-meta-row-toggle-thumb" />
+                          </span>
+                          <span>{item.is_active ? "Active" : "Inactive"}</span>
+                        </button>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            </>
           )}
         </div>
 
-        <div className="dm-filter-controls">
-          <select
-            className="dm-select"
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            aria-label="Filter by status"
-          >
-            <option value="all">All Statuses</option>
-            <option value="active">Active Only</option>
-            <option value="inactive">Inactive Only</option>
-          </select>
-
-          <button
-            type="button"
-            className="dm-btn dm-btn-secondary"
-            onClick={fetchAllTables}
-            disabled={loading}
-            title="Refresh database records"
-          >
-            <FontAwesomeIcon icon={faRotate} spin={loading} />
-          </button>
-        </div>
-      </div>
-
-      {/* Error Notice */}
-      {error && (
-        <div className="dm-alert dm-alert-error" style={{ margin: "16px 20px 0" }}>
-          <div className="dm-alert-content">
-            <FontAwesomeIcon icon={faTriangleExclamation} />
-            <span>{error}</span>
+        {/* Bottom Pagination Bar */}
+        <div className="dm-meta-pagination-bar">
+          <div className="dm-pagination-info">
+            Showing <strong>{showingFrom}–{showingTo}</strong> of{" "}
+            <strong>{filteredItems.length}</strong>{" "}
+            {tableConfig.title.toLowerCase()}
+          </div>
+          <div className="dm-pagination-controls">
+            <button
+              type="button"
+              className="dm-pagination-btn"
+              onClick={() => setPage(Math.max(1, safePage - 1))}
+              disabled={safePage <= 1}
+            >
+              <FontAwesomeIcon icon={faChevronLeft} size="xs" /> Previous
+            </button>
+            <span className="dm-meta-page-indicator">
+              Page {safePage} of {totalPages}
+            </span>
+            <button
+              type="button"
+              className="dm-pagination-btn"
+              onClick={() => setPage(Math.min(totalPages, safePage + 1))}
+              disabled={safePage >= totalPages}
+            >
+              Next <FontAwesomeIcon icon={faChevronRight} size="xs" />
+            </button>
           </div>
         </div>
-      )}
+      </section>
 
-      {/* Table content */}
-      {loading ? (
-        <div style={{ padding: "48px 20px", textAlign: "center", color: "var(--muted, #64748b)" }}>
-          <FontAwesomeIcon icon={faCircleNotch} spin style={{ fontSize: "24px", marginBottom: "8px" }} />
-          <div>Loading from database table '{currentConfig.tableName}'...</div>
-        </div>
-      ) : filteredRows.length === 0 ? (
-        <div className="dm-empty-state">
-          <FontAwesomeIcon icon={currentConfig.icon} className="dm-empty-icon" />
-          <p>
-            {searchTerm || statusFilter !== "all"
-              ? `No records match your filters in '${currentConfig.tableName}'.`
-              : `No entries found in table '${currentConfig.tableName}'.`}
-          </p>
-          <button
-            type="button"
-            className="dm-btn dm-btn-primary dm-btn-sm"
-            onClick={handleOpenAdd}
-            style={{ marginTop: "12px" }}
+      {/* Portal Three-dot Action Menu */}
+      {openMenu &&
+        createPortal(
+          <div
+            ref={menuRef}
+            className={`dm-meta-menu-portal ${openMenu.openUp ? "is-up" : ""}`}
+            role="menu"
+            style={{ top: `${openMenu.top}px`, left: `${openMenu.left}px` }}
           >
-            <FontAwesomeIcon icon={faPlus} /> Add {currentConfig.singular}
-          </button>
-        </div>
-      ) : (
-        <div className="dm-table-wrapper">
-          <table className="dm-table">
-            <thead>
-              <tr>
-                <th style={{ width: "280px" }}>{currentConfig.singular} Name & Code</th>
-                <th>Description / Operational Notes</th>
-                <th style={{ width: "130px", textAlign: "center" }}>Status</th>
-                <th style={{ width: "140px", textAlign: "right" }}>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredRows.map((row) => (
-                <tr key={row.id}>
-                  <td>
-                    <div className="dm-meta-name-cell">
-                      <strong className="dm-meta-name">{row.name}</strong>
-                      <span className="dm-meta-code-pill" title="Machine slug code">
-                        {row.code}
-                      </span>
-                    </div>
-                  </td>
-                  <td>
-                    <div className="dm-meta-desc">
-                      {row.description || (
-                        <span style={{ color: "var(--muted, #94a3b8)", fontStyle: "italic" }}>
-                          No description provided
-                        </span>
-                      )}
-                    </div>
-                  </td>
-                  <td style={{ textAlign: "center" }}>
-                    <button
-                      type="button"
-                      className={`dm-status-toggle-btn ${row.is_active ? "is-active" : "is-inactive"}`}
-                      onClick={() => handleToggleActive(row)}
-                      title={`Click to ${row.is_active ? "deactivate" : "activate"}`}
-                    >
-                      <FontAwesomeIcon icon={row.is_active ? faToggleOn : faToggleOff} />
-                      <span>{row.is_active ? "Active" : "Inactive"}</span>
-                    </button>
-                  </td>
-                  <td>
-                    <div className="dm-actions-cell" style={{ justifyContent: "flex-end" }}>
-                      <button
-                        type="button"
-                        className="dm-btn dm-btn-secondary dm-btn-sm"
-                        onClick={() => handleOpenEdit(row)}
-                        title="Edit record"
-                      >
-                        <FontAwesomeIcon icon={faPenToSquare} />
-                      </button>
-                      <button
-                        type="button"
-                        className="dm-btn dm-btn-danger dm-btn-sm"
-                        onClick={() => {
-                          setDeleteError("");
-                          setDeleteTarget(row);
-                        }}
-                        title="Delete record"
-                      >
-                        <FontAwesomeIcon icon={faTrash} />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+            <button
+              type="button"
+              role="menuitem"
+              className="dm-meta-menu-item"
+              onClick={() => openEditModal(openMenu.item)}
+            >
+              <FontAwesomeIcon icon={faPenToSquare} />
+              <span>Edit</span>
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              className="dm-meta-menu-item is-danger"
+              onClick={() => requestDelete(openMenu.item)}
+            >
+              <FontAwesomeIcon icon={faTrash} />
+              <span>Delete</span>
+            </button>
+          </div>,
+          document.body
+        )}
 
-      {/* =========================================================================
-          MODAL: ADD / EDIT
-          ========================================================================= */}
-      {modalState && (
-        <div className="dm-modal-overlay" onClick={() => !savingModal && setModalState(null)}>
-          <div className="dm-modal-card" style={{ maxWidth: "540px" }} onClick={(e) => e.stopPropagation()}>
+      {/* Add / Edit Modal */}
+      {modalOpen && (
+        <div
+          className="dm-modal-overlay dm-meta-modal-overlay"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget && !saving) setModalOpen(false);
+          }}
+        >
+          <div
+            className="dm-modal-card dm-meta-modal-card"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="dm-meta-modal-title"
+          >
             <div className="dm-modal-header">
-              <h4 className="dm-modal-title">
-                {modalState.mode === "add"
-                  ? `Add ${TABLES[modalState.tableKey].singular} (Table: ${TABLES[modalState.tableKey].tableName})`
-                  : `Edit ${TABLES[modalState.tableKey].singular}: ${modalState.data.name}`}
-              </h4>
+              <h3 id="dm-meta-modal-title" className="dm-modal-title">
+                {modalMode === "add"
+                  ? `Add ${tableConfig.singular}`
+                  : `Edit ${tableConfig.singular}`}
+              </h3>
               <button
                 type="button"
                 className="dm-modal-close"
-                onClick={() => setModalState(null)}
-                disabled={savingModal}
+                onClick={() => !saving && setModalOpen(false)}
+                aria-label="Close modal"
               >
                 <FontAwesomeIcon icon={faXmark} />
               </button>
             </div>
 
-            <form onSubmit={handleModalSubmit}>
-              <div className="dm-modal-body">
-                {modalError && (
-                  <div className="dm-alert dm-alert-error" style={{ marginBottom: "16px" }}>
-                    <div className="dm-alert-content">
-                      <FontAwesomeIcon icon={faTriangleExclamation} />
-                      <span>{modalError}</span>
-                    </div>
+            <form className="dm-meta-modal-form" onSubmit={handleSave} noValidate>
+              <div className="dm-modal-body dm-meta-modal-body">
+                {formError && (
+                  <div className="dm-meta-inline-alert is-error" role="alert">
+                    <FontAwesomeIcon icon={faTriangleExclamation} />
+                    <span>{formError}</span>
                   </div>
                 )}
 
-                {/* Display Name */}
+                {/* Name + Auto-generated Code */}
                 <div className="dm-form-group">
-                  <label className="dm-label">
-                    Name <span className="dm-required">*</span>
+                  <label htmlFor="dm-meta-name-input">
+                    Name <span className="dm-req">*</span>
                   </label>
                   <input
+                    id="dm-meta-name-input"
                     type="text"
-                    className="dm-input"
-                    placeholder={`e.g. ${
-                      modalState.tableKey === "center_types"
-                        ? "Covered Gymnasium, School Annex"
-                        : modalState.tableKey === "building_materials"
-                        ? "Reinforced Concrete, Steel"
-                        : "Wheelchair Ramps, PWD Restrooms"
-                    }`}
-                    value={modalState.data.name}
-                    onChange={(e) => {
-                      const newName = e.target.value;
-                      setModalState((prev) => {
-                        const updatedData = { ...prev.data, name: newName };
-                        if (modalState.mode === "add" && !customCodeUnlocked) {
-                          updatedData.code = slugify(newName);
-                        }
-                        return { ...prev, data: updatedData };
-                      });
-                    }}
-                    required
-                    disabled={savingModal}
+                    autoFocus
+                    className={fieldErrors.name ? "is-invalid" : ""}
+                    value={formData.name}
+                    onChange={(e) => handleNameChange(e.target.value)}
+                    placeholder={
+                      activeTab === "center_types"
+                        ? "e.g., Covered Court"
+                        : activeTab === "building_materials"
+                          ? "e.g., Reinforced Concrete"
+                          : "e.g., Wheelchair Ramps"
+                    }
+                    aria-invalid={Boolean(fieldErrors.name)}
                   />
-                </div>
+                  {fieldErrors.name && (
+                    <p className="dm-field-error" role="alert">
+                      {fieldErrors.name}
+                    </p>
+                  )}
 
-                {/* Slug Code */}
-                <div className="dm-form-group">
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
-                    <label className="dm-label" style={{ margin: 0 }}>
-                      Code Identifier <span className="dm-required">*</span>
-                    </label>
-                    {!customCodeUnlocked && modalState.mode === "add" && (
-                      <button
-                        type="button"
-                        style={{
-                          background: "none",
-                          border: "none",
-                          fontSize: "12px",
-                          color: "var(--brand, #2563eb)",
-                          cursor: "pointer",
-                          padding: 0,
-                        }}
-                        onClick={() => setCustomCodeUnlocked(true)}
-                      >
-                        Customize Code
-                      </button>
+                  {/* Small generated code line with "Customize code" */}
+                  <div className="dm-meta-code-meta">
+                    {!showCodeEditor ? (
+                      <>
+                        <span className="dm-meta-code-preview">
+                          Code: <code>{effectiveCode || "auto_generated"}</code>
+                        </span>
+                        <button
+                          type="button"
+                          className="dm-meta-customize-code-btn"
+                          onClick={() => {
+                            setShowCodeEditor(true);
+                            if (!codeCustomized) {
+                              setFormData((prev) => ({
+                                ...prev,
+                                code: slugifyCode(prev.name),
+                              }));
+                            }
+                          }}
+                        >
+                          Customize code
+                        </button>
+                      </>
+                    ) : (
+                      <div className="dm-meta-code-editor-box">
+                        <div className="dm-meta-code-editor-row">
+                          <input
+                            type="text"
+                            className={`dm-code-input ${fieldErrors.code ? "is-invalid" : ""}`}
+                            value={formData.code}
+                            onChange={(e) => {
+                              clearFieldError("code");
+                              setCodeCustomized(true);
+                              setFormData((prev) => ({ ...prev, code: e.target.value }));
+                            }}
+                            placeholder="e.g., covered_court"
+                            aria-label="Identifier code"
+                            aria-invalid={Boolean(fieldErrors.code)}
+                          />
+                          {modalMode === "add" && (
+                            <button
+                              type="button"
+                              className="dm-meta-code-link-btn"
+                              onClick={() => {
+                                clearFieldError("code");
+                                setCodeCustomized(false);
+                                setShowCodeEditor(false);
+                                setFormData((prev) => ({
+                                  ...prev,
+                                  code: slugifyCode(prev.name),
+                                }));
+                              }}
+                            >
+                              Auto
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            className="dm-meta-code-link-btn"
+                            onClick={() => setShowCodeEditor(false)}
+                          >
+                            Done
+                          </button>
+                        </div>
+                      </div>
                     )}
                   </div>
-                  <input
-                    type="text"
-                    className="dm-input dm-code-input"
-                    placeholder="e.g. covered_gym, reinforced_concrete"
-                    value={modalState.data.code}
-                    onChange={(e) =>
-                      setModalState((prev) => ({
-                        ...prev,
-                        data: { ...prev.data, code: slugify(e.target.value) },
-                      }))
-                    }
-                    disabled={savingModal || (!customCodeUnlocked && modalState.mode === "add" && !modalState.data.name)}
-                    required
-                  />
-                  <span className="dm-hint">Unique snake_case identifier in the table.</span>
+                  {fieldErrors.code && (
+                    <p className="dm-field-error" role="alert">
+                      {fieldErrors.code}
+                    </p>
+                  )}
                 </div>
+
+                {/* Structure option cards (Center Types only) */}
+                {activeTab === "center_types" && (
+                  <div className="dm-form-group">
+                    <span className="dm-form-label" id="dm-structure-label">
+                      Structure <span className="dm-req">*</span>
+                    </span>
+                    <div
+                      className="dm-structure-options"
+                      role="radiogroup"
+                      aria-labelledby="dm-structure-label"
+                    >
+                      {STRUCTURE_OPTIONS.map((opt) => {
+                        const selected = formData.structure_mode === opt.value;
+                        return (
+                          <button
+                            key={opt.value}
+                            type="button"
+                            role="radio"
+                            aria-checked={selected}
+                            className={`dm-structure-card ${selected ? "is-selected" : ""} ${fieldErrors.structure_mode ? "is-invalid" : ""
+                              }`}
+                            onClick={() => {
+                              clearFieldError("structure_mode");
+                              clearFieldError("structure_confirm");
+                              setConfirmStructureChange(false);
+                              setFormData((prev) => ({
+                                ...prev,
+                                structure_mode: opt.value,
+                              }));
+                            }}
+                          >
+                            <div className="dm-structure-card-icon">
+                              <FontAwesomeIcon icon={opt.icon} />
+                            </div>
+                            <div className="dm-structure-card-text">
+                              <span className="dm-structure-card-title">{opt.label}</span>
+                              <span className="dm-structure-card-desc">{opt.description}</span>
+                            </div>
+                            <span
+                              className={`dm-structure-card-radio ${selected ? "is-selected" : ""}`}
+                              aria-hidden="true"
+                            >
+                              {selected && <FontAwesomeIcon icon={faCheck} size="xs" />}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {fieldErrors.structure_mode && (
+                      <p className="dm-field-error" role="alert">
+                        {fieldErrors.structure_mode}
+                      </p>
+                    )}
+
+                    {/* Warning when changing Structure for existing centers */}
+                    {structureChangedOnInUseCenterType && (
+                      <div className="dm-structure-warning" role="alert">
+                        <div className="dm-structure-warning-head">
+                          <FontAwesomeIcon icon={faTriangleExclamation} />
+                          <span>
+                            <strong>{inUseCount} evacuation center(s)</strong> currently use{" "}
+                            <strong>{editingItem?.name}</strong>. Changing Structure updates
+                            whether the Structure tab and Building field appear on those centers.
+                          </span>
+                        </div>
+                        <label className="dm-structure-warning-confirm">
+                          <input
+                            type="checkbox"
+                            checked={confirmStructureChange}
+                            onChange={(e) => {
+                              clearFieldError("structure_confirm");
+                              setConfirmStructureChange(e.target.checked);
+                            }}
+                          />
+                          <span>
+                            Yes, change Structure for these {inUseCount} existing center(s)
+                          </span>
+                        </label>
+                        {fieldErrors.structure_confirm && (
+                          <p className="dm-field-error" role="alert">
+                            {fieldErrors.structure_confirm}
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* Description */}
                 <div className="dm-form-group">
-                  <label className="dm-label">Description (Optional)</label>
+                  <label htmlFor="dm-meta-desc-input">Description</label>
                   <textarea
-                    className="dm-textarea"
-                    rows="3"
-                    placeholder="Enter guidelines, capacity rules, or specifications..."
-                    value={modalState.data.description}
+                    id="dm-meta-desc-input"
+                    rows={2}
+                    value={formData.description}
                     onChange={(e) =>
-                      setModalState((prev) => ({
-                        ...prev,
-                        data: { ...prev.data, description: e.target.value },
-                      }))
+                      setFormData((prev) => ({ ...prev, description: e.target.value }))
                     }
-                    disabled={savingModal}
+                    placeholder="Optional guidance or notes shown to admins..."
                   />
                 </div>
 
-                {/* Display Order & Active status */}
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px", marginTop: "12px" }}>
-                  <div className="dm-form-group" style={{ margin: 0 }}>
-                    <label className="dm-label">Display Order</label>
-                    <input
-                      type="number"
-                      className="dm-input"
-                      value={modalState.data.display_order}
-                      onChange={(e) =>
-                        setModalState((prev) => ({
-                          ...prev,
-                          data: { ...prev.data, display_order: e.target.value },
-                        }))
-                      }
-                      min="0"
-                      disabled={savingModal}
-                    />
+                {/* Status toggle inside modal */}
+                <div className="dm-meta-modal-status-row">
+                  <div className="dm-meta-modal-status-text">
+                    <span className="dm-meta-modal-status-title">Status</span>
+                    <span className="dm-meta-modal-status-hint">
+                      {formData.is_active
+                        ? "Available in evacuation center dropdowns"
+                        : "Hidden from new center dropdowns"}
+                    </span>
                   </div>
-
-                  <div className="dm-form-group" style={{ margin: 0 }}>
-                    <label className="dm-label">Status</label>
-                    <label
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: "8px",
-                        cursor: "pointer",
-                        marginTop: "8px",
-                        fontSize: "13.5px",
-                        fontWeight: "600",
-                        color: modalState.data.is_active ? "#166534" : "#64748b",
-                      }}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={modalState.data.is_active}
-                        onChange={(e) =>
-                          setModalState((prev) => ({
-                            ...prev,
-                            data: { ...prev.data, is_active: e.target.checked },
-                          }))
-                        }
-                        disabled={savingModal}
-                        style={{ width: "16px", height: "16px" }}
-                      />
-                      {modalState.data.is_active ? "Active" : "Inactive"}
-                    </label>
-                  </div>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={Boolean(formData.is_active)}
+                    className={`dm-meta-row-toggle ${formData.is_active ? "is-active" : "is-inactive"}`}
+                    onClick={() =>
+                      setFormData((prev) => ({ ...prev, is_active: !prev.is_active }))
+                    }
+                  >
+                    <span className="dm-meta-row-toggle-track" aria-hidden="true">
+                      <span className="dm-meta-row-toggle-thumb" />
+                    </span>
+                    <span>{formData.is_active ? "Active" : "Inactive"}</span>
+                  </button>
                 </div>
               </div>
 
-              <div className="dm-modal-footer">
+              <div className="dm-modal-footer dm-meta-modal-footer">
                 <button
                   type="button"
-                  className="dm-btn dm-btn-secondary"
-                  onClick={() => setModalState(null)}
-                  disabled={savingModal}
+                  className="dm-btn dm-btn-ghost"
+                  onClick={() => setModalOpen(false)}
+                  disabled={saving}
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   className="dm-btn dm-btn-primary"
-                  disabled={savingModal}
+                  disabled={saving}
                 >
-                  {savingModal ? (
+                  {saving ? (
                     <>
                       <FontAwesomeIcon icon={faCircleNotch} spin /> Saving...
                     </>
-                  ) : modalState.mode === "add" ? (
-                    "Save to Table"
+                  ) : modalMode === "add" ? (
+                    `Add ${tableConfig.singular}`
                   ) : (
                     "Save Changes"
                   )}
@@ -859,59 +1151,72 @@ export default function ShelterMetadataTab({ onNotify }) {
         </div>
       )}
 
-      {/* =========================================================================
-          MODAL: CONFIRM DELETE / DEACTIVATE
-          ========================================================================= */}
+      {/* Delete Confirmation Modal */}
       {deleteTarget && (
-        <div className="dm-modal-overlay" onClick={() => !deleting && setDeleteTarget(null)}>
-          <div className="dm-modal-card" style={{ maxWidth: "480px" }} onClick={(e) => e.stopPropagation()}>
+        <div
+          className="dm-modal-overlay"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget && !deleting) {
+              setDeleteTarget(null);
+              setDeleteError("");
+            }
+          }}
+        >
+          <div
+            className="dm-modal-card dm-meta-confirm-card"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="dm-meta-delete-title"
+          >
             <div className="dm-modal-header">
-              <h4 className="dm-modal-title">Delete from Table '{currentConfig.tableName}'</h4>
+              <h3 id="dm-meta-delete-title" className="dm-modal-title">
+                Delete {tableConfig.singular}
+              </h3>
               <button
                 type="button"
                 className="dm-modal-close"
-                onClick={() => setDeleteTarget(null)}
-                disabled={deleting}
+                onClick={() => {
+                  if (deleting) return;
+                  setDeleteTarget(null);
+                  setDeleteError("");
+                }}
+                aria-label="Close"
               >
                 <FontAwesomeIcon icon={faXmark} />
               </button>
             </div>
             <div className="dm-modal-body">
-              {deleteError && (
-                <div className="dm-alert dm-alert-error" style={{ marginBottom: "14px" }}>
-                  <div className="dm-alert-content">
-                    <FontAwesomeIcon icon={faTriangleExclamation} />
-                    <span>{deleteError}</span>
-                  </div>
+              <p className="dm-meta-delete-copy">
+                Are you sure you want to delete <strong>&ldquo;{deleteTarget.name}&rdquo;</strong>?
+                This action cannot be undone.
+              </p>
+
+              {Number(deleteTarget.in_use_count || 0) > 0 && !deleteError && (
+                <div className="dm-meta-inline-alert is-warning" role="status">
+                  <FontAwesomeIcon icon={faTriangleExclamation} />
+                  <span>
+                    This {tableConfig.singular.toLowerCase()} is currently used by{" "}
+                    <strong>{deleteTarget.in_use_count}</strong> evacuation center(s) and
+                    cannot be deleted until those centers no longer use it.
+                  </span>
                 </div>
               )}
-              <p style={{ margin: "0 0 10px", fontSize: "14px", color: "var(--text-0, #0f172a)" }}>
-                Are you sure you want to remove <strong>"{deleteTarget.name}"</strong>?
-              </p>
-              <div
-                style={{
-                  display: "flex",
-                  gap: "10px",
-                  padding: "12px",
-                  background: "#eff6ff",
-                  border: "1px solid #bfdbfe",
-                  borderRadius: "8px",
-                  fontSize: "13px",
-                  color: "#1e40af",
-                  lineHeight: "1.5",
-                }}
-              >
-                <FontAwesomeIcon icon={faInfoCircle} style={{ marginTop: "2px", flexShrink: 0 }} />
-                <span>
-                  <strong>Safety Protection:</strong> If any evacuation center currently uses this {currentConfig.singular.toLowerCase()}, it will be safely <strong>deactivated</strong> instead of deleted so historical data is never broken.
-                </span>
-              </div>
+
+              {deleteError && (
+                <div className="dm-meta-inline-alert is-error" role="alert">
+                  <FontAwesomeIcon icon={faTriangleExclamation} />
+                  <span>{deleteError}</span>
+                </div>
+              )}
             </div>
             <div className="dm-modal-footer">
               <button
                 type="button"
-                className="dm-btn dm-btn-secondary"
-                onClick={() => setDeleteTarget(null)}
+                className="dm-btn dm-btn-ghost"
+                onClick={() => {
+                  setDeleteTarget(null);
+                  setDeleteError("");
+                }}
                 disabled={deleting}
               >
                 Cancel
@@ -924,151 +1229,13 @@ export default function ShelterMetadataTab({ onNotify }) {
               >
                 {deleting ? (
                   <>
-                    <FontAwesomeIcon icon={faCircleNotch} spin /> Removing...
+                    <FontAwesomeIcon icon={faCircleNotch} spin /> Deleting...
                   </>
                 ) : (
-                  "Confirm Remove"
+                  <>
+                    <FontAwesomeIcon icon={faTrash} /> Delete
+                  </>
                 )}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Import Evacuation Centers Modal */}
-      {importModalOpen && (
-        <div className="dm-modal-overlay" onClick={() => !importing && setImportModalOpen(false)}>
-          <div className="dm-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: "560px" }}>
-            <div className="dm-modal-header">
-              <h3 className="dm-modal-title">
-                <FontAwesomeIcon icon={faUpload} style={{ marginRight: "8px", color: "var(--brand, #2563eb)" }} />
-                Import Evacuation Centers from Excel
-              </h3>
-              <button
-                type="button"
-                className="dm-modal-close"
-                onClick={() => !importing && setImportModalOpen(false)}
-                disabled={importing}
-              >
-                <FontAwesomeIcon icon={faXmark} />
-              </button>
-            </div>
-
-            <div className="dm-modal-body">
-              <p style={{ fontSize: "13px", color: "#475569", marginBottom: "14px", lineHeight: 1.5 }}>
-                Upload an Excel spreadsheet (<strong>.xlsx</strong>) with your municipality's evacuation centers.
-                Center Types, Building Materials, Amenities, and Barangays will be matched automatically against your database.
-              </p>
-
-              {importError && (
-                <div className="dm-alert dm-alert-danger" style={{ marginBottom: "14px" }}>
-                  <FontAwesomeIcon icon={faTriangleExclamation} />
-                  <span>{importError}</span>
-                </div>
-              )}
-
-              {importResult && (
-                <div
-                  className="dm-alert dm-alert-success"
-                  style={{
-                    marginBottom: "14px",
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: "6px",
-                    background: "#f0fdf4",
-                    borderColor: "#bbf7d0",
-                    color: "#166534",
-                  }}
-                >
-                  <div style={{ display: "flex", alignItems: "center", gap: "8px", fontWeight: 700 }}>
-                    <FontAwesomeIcon icon={faCircleCheck} />
-                    <span>Import Completed Successfully!</span>
-                  </div>
-                  <div style={{ fontSize: "12.5px" }}>
-                    • <strong>{importResult.created_count}</strong> new center(s) created<br />
-                    • <strong>{importResult.updated_count}</strong> existing center(s) updated
-                  </div>
-                  {importResult.warnings && importResult.warnings.length > 0 && (
-                    <div style={{ marginTop: "6px", fontSize: "11.5px", color: "#854d0e", background: "#fef9c3", padding: "6px 8px", borderRadius: "6px" }}>
-                      <strong>Notices:</strong>
-                      <ul style={{ margin: "4px 0 0", paddingLeft: "16px" }}>
-                        {importResult.warnings.map((w, i) => (
-                          <li key={i}>{w}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* File upload drag/select area */}
-              <div
-                style={{
-                  border: "2px dashed #cbd5e1",
-                  borderRadius: "10px",
-                  padding: "24px 16px",
-                  textAlign: "center",
-                  background: "#f8fafc",
-                  cursor: "pointer",
-                  transition: "all 0.15s ease",
-                }}
-                onClick={() => document.getElementById("ec-excel-file-input")?.click()}
-              >
-                <input
-                  id="ec-excel-file-input"
-                  type="file"
-                  accept=".xlsx, .xls"
-                  style={{ display: "none" }}
-                  onChange={(e) => {
-                    const f = e.target.files?.[0];
-                    if (f) {
-                      setImportFile(f);
-                      setImportError("");
-                      setImportResult(null);
-                    }
-                  }}
-                />
-                <FontAwesomeIcon icon={faFileExcel} style={{ fontSize: "32px", color: "#16a34a", marginBottom: "8px" }} />
-                <div style={{ fontWeight: 600, fontSize: "14px", color: "#0f172a" }}>
-                  {importFile ? importFile.name : "Click to select Excel file (.xlsx)"}
-                </div>
-                <div style={{ fontSize: "12px", color: "#64748b", marginTop: "4px" }}>
-                  {importFile
-                    ? `${(importFile.size / 1024).toFixed(1)} KB`
-                    : "Supports .xlsx with Center Name, Capacity, Center Type, Building Material, Amenities"}
-                </div>
-              </div>
-
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "12px" }}>
-                <button
-                  type="button"
-                  className="dm-btn dm-btn-secondary"
-                  onClick={handleDownloadCenterTemplate}
-                  disabled={downloadingTemplate || importing}
-                  style={{ fontSize: "12px", padding: "5px 10px" }}
-                >
-                  <FontAwesomeIcon icon={faDownload} /> Need the template?
-                </button>
-              </div>
-            </div>
-
-            <div className="dm-modal-footer">
-              <button
-                type="button"
-                className="dm-btn dm-btn-secondary"
-                onClick={() => setImportModalOpen(false)}
-                disabled={importing}
-              >
-                {importResult ? "Close" : "Cancel"}
-              </button>
-              <button
-                type="button"
-                className="dm-btn dm-btn-primary"
-                onClick={handleUploadCenters}
-                disabled={!importFile || importing}
-              >
-                {importing && <FontAwesomeIcon icon={faCircleNotch} spin />}
-                {importing ? "Importing..." : "Upload & Process"}
               </button>
             </div>
           </div>

@@ -174,8 +174,11 @@ def _center_metrics(center):
             rooms_by_barangay.setdefault(bid, set()).add(rid)
 
     linked_barangays = _center_barangays(center)
+    structure_mode = getattr(center, 'structure_mode', None) or 'buildings_and_rooms'
     total_room_capacity = sum(room.capacity or 0 for room in rooms)
-    if len(rooms) > 0 and (center.center_type != 'single_venue' or total_room_capacity > (center.capacity or 0)):
+    if structure_mode == 'open_area':
+        total_capacity = center.capacity if center.capacity is not None else 0
+    elif len(rooms) > 0:
         total_capacity = total_room_capacity
         if center.capacity != total_capacity:
             center.capacity = total_capacity
@@ -184,7 +187,7 @@ def _center_metrics(center):
             except Exception:
                 db.session.rollback()
     else:
-        total_capacity = center.capacity if center.capacity is not None else total_room_capacity
+        total_capacity = center.capacity if center.capacity is not None else 0
 
     effective_capacity = total_capacity
     center_available = max(effective_capacity - total_occupied, 0)
@@ -224,13 +227,15 @@ def _center_metrics(center):
         .order_by(EvacuationCenterBuilding.name.asc())
         .all()
     )
-    is_venue_or_private = (center.center_type or "campus") in ("single_venue", "private_property")
+    structure_mode = getattr(center, "structure_mode", None) or "buildings_and_rooms"
+    is_venue_or_private = structure_mode in ("open_area", "rooms_only")
     building_count = len(center_buildings)
     unmapped_room_count = 0 if is_venue_or_private else sum(1 for room in rooms if room.building_id is None)
     mapped_room_count = 0 if is_venue_or_private else sum(1 for room in rooms if room.building_id is not None)
 
     return {
         "center_type": center.center_type or "campus",
+        "structure_mode": structure_mode,
         "owner_name": center.owner_name,
         "barangays": linked_barangays,
         "barangay": ", ".join(item["name"] for item in linked_barangays) or None,
@@ -308,7 +313,7 @@ def validate_center_type_change(center, new_type, current_type=None):
         .filter(EvacuationCenterRoom.evacuation_center_id == center.id) \
         .scalar() or 0
 
-    # Count households assigned directly to venue (single_venue)
+    # Count households assigned directly to center (open_area)
     venue_assigned_families = db.session.query(func.count(func.distinct(Family.id))) \
         .join(Resident, Resident.family_id == Family.id) \
         .join(EvacuationAssignment, EvacuationAssignment.resident_id == Resident.id) \
@@ -316,32 +321,95 @@ def validate_center_type_change(center, new_type, current_type=None):
         .filter(EvacuationAssignment.room_id.is_(None)) \
         .scalar() or 0
 
-    # Rules for each target type
-    for t in VALID_CENTER_TYPES:
+    # Build code -> structure_mode map from database CenterTypes + fallback defaults
+    type_structures = {
+        'campus': 'buildings_and_rooms',
+        'private_property': 'rooms_only',
+        'single_venue': 'open_area',
+    }
+    try:
+        for ct in CenterType.query.all():
+            if ct.is_active or ct.code == current_type or ct.code == new_type:
+                type_structures[ct.code] = ct.resolve_structure_mode()
+    except Exception:
+        pass
+
+    usage_summary = {
+        "buildings": building_count,
+        "rooms": room_count,
+        "active_rooms": active_room_count,
+        "room_assigned_families": room_assigned_families,
+        "venue_assigned_families": venue_assigned_families,
+    }
+
+    # Rules for each target type based on its structure_mode
+    for t, target_structure in type_structures.items():
         reason = None
-        if t == 'campus':
-            # Always allowed
-            pass
-        elif t == 'private_property':
-            if building_count > 0:
-                reason = f"This center still has {building_count} building(s). Remove them first."
-        elif t == 'single_venue':
-            if room_count > 0:
-                reason = f"This center still has {room_count} room(s) ({active_room_count} active). Remove them first."
+        warning = None
+        if target_structure == 'buildings_and_rooms':
+            if venue_assigned_families > 0:
+                reason = (
+                    f"Cannot change to Buildings and rooms: {venue_assigned_families} household(s) "
+                    "are assigned directly to the center without a room and would lose a valid room assignment. "
+                    "Move or unassign them first."
+                )
+            elif building_count == 0 and (room_count > 0 or room_assigned_families > 0):
+                warning = (
+                    f"This center has {room_count} room(s) and {room_assigned_families} assigned household(s). "
+                    "Existing rooms and assignments will remain intact, and you can add buildings and link rooms to them."
+                )
+            elif building_count > 0 or room_count > 0 or room_assigned_families > 0:
+                warning = (
+                    f"This center has {building_count} building(s), {room_count} room(s), and "
+                    f"{room_assigned_families} assigned household(s). Existing structure and assignments will stay intact."
+                )
+        elif target_structure == 'rooms_only':
+            if venue_assigned_families > 0:
+                reason = (
+                    f"Cannot change to Rooms only: {venue_assigned_families} household(s) "
+                    "are assigned directly to the center without a room and would lose a valid room assignment. "
+                    "Move or unassign them first."
+                )
             elif building_count > 0:
-                reason = f"This center still has {building_count} building(s). Remove them first."
-            elif room_assigned_families > 0:
-                reason = f"This center has {room_assigned_families} household(s) assigned through rooms. Move or unassign them first."
-            elif (center.capacity or 0) < 1:
-                reason = "Single venue centers require a capacity of at least 1."
+                reason = (
+                    f"Cannot change to Rooms only while {building_count} building(s) exist. "
+                    "Remove the buildings first so rooms are not left attached to removed buildings."
+                )
+            elif room_count > 0 or room_assigned_families > 0:
+                warning = (
+                    f"This center has {room_count} room(s) and {room_assigned_families} assigned household(s). "
+                    "Existing rooms and assignments will remain intact, and capacity will follow room totals."
+                )
+        elif target_structure == 'open_area':
+            if room_assigned_families > 0:
+                reason = (
+                    f"Cannot change to Open area: {room_assigned_families} household(s) "
+                    "are assigned to rooms and would be left without a valid assignment. Move or unassign them first."
+                )
+            elif room_count > 0:
+                reason = f"This center still has {room_count} room(s) ({active_room_count} active). Remove all rooms before changing to Open area."
+            elif building_count > 0:
+                reason = f"This center still has {building_count} building(s). Remove all buildings before changing to Open area."
+            elif venue_assigned_families > 0:
+                warning = (
+                    f"This center has {venue_assigned_families} directly assigned household(s). "
+                    "Direct center assignments will remain intact, and total capacity stays editable."
+                )
 
         if reason:
-            blocked_types[t] = {"allowed": False, "reason": reason}
+            blocked_types[t] = {"allowed": False, "reason": reason, "warning": None, "structure_mode": target_structure, "usage": usage_summary}
         else:
-            blocked_types[t] = {"allowed": True, "reason": None}
+            blocked_types[t] = {"allowed": True, "reason": None, "warning": warning, "structure_mode": target_structure, "usage": usage_summary}
 
     # Current type is always allowed
-    blocked_types[current_type] = {"allowed": True, "reason": None}
+    existing_curr = blocked_types.get(current_type, {})
+    blocked_types[current_type] = {
+        "allowed": True,
+        "reason": None,
+        "warning": existing_curr.get("warning"),
+        "structure_mode": existing_curr.get("structure_mode") or type_structures.get(current_type, "buildings_and_rooms"),
+        "usage": usage_summary,
+    }
 
     # Check if new_type is allowed
     if new_type in blocked_types:
@@ -419,6 +487,7 @@ def center_to_feature(center):
             "center_type": center.center_type or "campus",
             "center_type_id": center.center_type_id,
             "center_type_name": center.center_type_name,
+            "structure_mode": getattr(center, "structure_mode", None) or "buildings_and_rooms",
             "owner_name": center.owner_name,
             "owner_operator": center.owner_name,
             **metrics,
@@ -1184,19 +1253,38 @@ def create_evacuation_center():
 
     user_id = get_jwt_identity()
 
-    raw_center_type = str(data.get('center_type') or 'campus').strip().lower()
-    valid_types = {'campus', 'single_venue', 'private_property'}
-    if not raw_center_type or raw_center_type not in valid_types:
-        return jsonify({"error": "center_type must be one of: campus, single_venue, private_property"}), 400
+    raw_center_type = str(data.get('center_type') or '').strip().lower()
+    center_type_id = data.get('center_type_id')
+    resolved_ct = None
+    if center_type_id:
+        resolved_ct = CenterType.query.get(center_type_id)
+        if resolved_ct and not raw_center_type:
+            raw_center_type = resolved_ct.code
+    if not raw_center_type:
+        raw_center_type = 'campus'
+
+    valid_types = get_valid_center_types() | VALID_CENTER_TYPES
+    if raw_center_type not in valid_types and not resolved_ct:
+        return jsonify({"error": f"Invalid center type '{raw_center_type}'"}), 400
     center_type = raw_center_type
     owner_val = data.get('owner_name') if 'owner_name' in data else data.get('owner_operator')
     owner_name = str(owner_val).strip() if owner_val else None
 
-    center_type_id = data.get('center_type_id')
     if not center_type_id and center_type:
         ct = CenterType.query.filter_by(code=center_type).first()
         if ct:
             center_type_id = ct.id
+            resolved_ct = ct
+
+    target_structure = (
+        resolved_ct.resolve_structure_mode()
+        if resolved_ct is not None
+        else ('open_area' if center_type == 'single_venue' else ('rooms_only' if center_type == 'private_property' else 'buildings_and_rooms'))
+    )
+    if target_structure == 'open_area' and (capacity is None or capacity < 1):
+        return jsonify({"error": "Capacity must be at least 1 for Open area centers"}), 400
+    if target_structure != 'open_area' and capacity is None:
+        capacity = 0
 
     building_material_id = data.get('building_material_id')
     if not building_material_id and data.get('building_material'):
@@ -1357,13 +1445,17 @@ def update_evacuation_center(center_id):
 
     if 'center_type' in data or 'center_type_id' in data:
         raw_type = str(data.get('center_type') or '').strip().lower()
-        if not raw_type and data.get('center_type_id'):
-            ct = CenterType.query.get(data.get('center_type_id'))
-            if ct:
-                raw_type = ct.code
+        ct_obj = None
+        if data.get('center_type_id'):
+            ct_obj = CenterType.query.get(data.get('center_type_id'))
+            if ct_obj and not raw_type:
+                raw_type = ct_obj.code
+        if raw_type and not ct_obj:
+            ct_obj = CenterType.query.filter_by(code=raw_type).first()
 
         if raw_type:
-            if raw_type not in VALID_CENTER_TYPES:
+            valid_types = get_valid_center_types() | VALID_CENTER_TYPES
+            if raw_type not in valid_types and not ct_obj:
                 return jsonify({"error": "Invalid center type"}), 400
 
             # Validate the type change
@@ -1376,7 +1468,14 @@ def update_evacuation_center(center_id):
                         "blocked_types": blocked
                     }), 400
 
-            center.center_type = raw_type
+            if ct_obj:
+                center.center_type_id = ct_obj.id
+            else:
+                center.center_type = raw_type
+
+    target_structure_after = getattr(center, 'structure_mode', None) or 'buildings_and_rooms'
+    if target_structure_after == 'open_area' and (center.capacity is None or center.capacity < 1):
+        return jsonify({"error": "Capacity must be at least 1 for Open area centers"}), 400
 
     polygon_data = data.get('polygon')
     if polygon_data is None and isinstance(data.get('geometry'), dict):
@@ -1608,8 +1707,8 @@ def _sync_operation_check_in_records(center, assignments, resident_ids_present=N
     try:
         active_op = EvacuationOperation.query.filter(
             or_(EvacuationOperation.center_id == center.id, EvacuationOperation.center_id.is_(None)),
-            EvacuationOperation.status == 'active'
-        ).first()
+            EvacuationOperation.status != 'concluded'
+        ).order_by(EvacuationOperation.id.desc()).first()
 
         if not active_op and center.evacuation_open_date:
             active_op = EvacuationOperation(
@@ -1965,7 +2064,7 @@ def _get_checkin_dataset(center_id_param=None, search_query='', status_filter='a
             pass
 
     if not target_op:
-        target_op = next((o for o in operations if o.status == 'active'), None)
+        target_op = next((o for o in operations if o.status != 'concluded'), None)
 
     if target_op and target_op.status == 'concluded':
         is_historical = True
@@ -2151,6 +2250,8 @@ def _get_checkin_dataset(center_id_param=None, search_query='', status_filter='a
             Barangay.name.label('barangay_name'),
             EvacuationCenter.id.label('center_id'),
             EvacuationCenter.name.label('center_name'),
+            CenterType.code.label('center_type_code'),
+            CenterType.structure_mode.label('center_structure_mode'),
             EvacuationCenterRoom.id.label('room_id'),
             EvacuationCenterRoom.room_number,
             EvacuationCenterBuilding.name.label('building_name'),
@@ -2170,6 +2271,7 @@ def _get_checkin_dataset(center_id_param=None, search_query='', status_filter='a
                 EvacuationCenterRoom.evacuation_center_id == EvacuationCenter.id
             )
         )
+        .outerjoin(CenterType, EvacuationCenter.center_type_id == CenterType.id)
     )
 
     if base_filter:
@@ -2188,6 +2290,8 @@ def _get_checkin_dataset(center_id_param=None, search_query='', status_filter='a
             Barangay.name,
             EvacuationCenter.id,
             EvacuationCenter.name,
+            CenterType.code,
+            CenterType.structure_mode,
             EvacuationCenterRoom.id,
             EvacuationCenterRoom.room_number,
             EvacuationCenterBuilding.name,
@@ -2319,10 +2423,19 @@ def _get_checkin_dataset(center_id_param=None, search_query='', status_filter='a
                     continue
 
         if search_query:
-            member_names = " ".join(m["name"] for m in m_list).lower()
-            target_str = f"{r.head_name or ''} {r.family_code or ''} {r.contact_number or ''} {r.room_number or ''} {r.barangay_name or ''} {r.center_name or ''} {member_names}".lower()
-            if search_query not in target_str:
-                continue
+            normalized_query = " ".join(str(search_query).split()).lower()
+            if normalized_query:
+                candidates = [
+                    " ".join(str(val).split()).lower()
+                    for val in (
+                        r.head_name,
+                        r.family_code,
+                        *(m.get("name") for m in m_list),
+                    )
+                    if val
+                ]
+                if not any(normalized_query in candidate for candidate in candidates):
+                    continue
 
         for m in m_list:
             m_dt = m.get("checked_in_dt")
@@ -2332,9 +2445,21 @@ def _get_checkin_dataset(center_id_param=None, search_query='', status_filter='a
 
         m_checked_times = [m["checked_in_dt"] for m in m_list if m.get("checked_in_dt")]
         latest_dt = max(m_checked_times) if m_checked_times else (r.latest_checked_in_at if not is_historical else None)
+        latest_at = latest_dt.isoformat() if latest_dt else None
         latest_formatted = latest_dt.strftime("%b %d, %Y %I:%M %p") if latest_dt else None
         latest_time_only = latest_dt.strftime("%I:%M %p") if latest_dt else None
         latest_date_only = latest_dt.strftime("%b %d, %Y") if latest_dt else None
+
+        c_type_code = (getattr(r, 'center_type_code', None) or 'campus').strip().lower()
+        s_mode_raw = (getattr(r, 'center_structure_mode', None) or '').strip().lower()
+        if s_mode_raw in ('open_area', 'rooms_only', 'buildings_and_rooms'):
+            resolved_mode = s_mode_raw
+        elif c_type_code == 'single_venue':
+            resolved_mode = 'open_area'
+        elif c_type_code == 'private_property':
+            resolved_mode = 'rooms_only'
+        else:
+            resolved_mode = 'buildings_and_rooms'
 
         evacuees.append({
             "family_id": r.family_id,
@@ -2347,9 +2472,11 @@ def _get_checkin_dataset(center_id_param=None, search_query='', status_filter='a
             "barangay_name": r.barangay_name or "Unknown",
             "center_id": r.center_id,
             "center_name": r.center_name or "Evacuation Center",
+            "center_type": c_type_code,
+            "structure_mode": resolved_mode,
             "room_id": r.room_id,
             "room_number": r.room_number,
-            "building_name": r.building_name,
+            "building_name": r.building_name if resolved_mode == 'buildings_and_rooms' else None,
             "assigned_members": m_count,
             "checked_in_members": chk_count,
             "is_checked_in": chk_count > 0,
@@ -2534,6 +2661,19 @@ def manage_evacuation_schedule():
         except (ValueError, TypeError):
             return jsonify({"error": "Invalid center_id."}), 400
 
+    # Capture prior center schedule metadata before overwriting so we can archive it if needed
+    prior_center = next((c for c in active_centers if c.evacuation_open_date), None)
+    prior_snapshot = None
+    if prior_center:
+        prior_snapshot = {
+            "center_id": None if len(targets) != 1 else targets[0].id,
+            "event_name": prior_center.evacuation_event_name or "Evacuation Operation",
+            "open_date": prior_center.evacuation_open_date,
+            "open_time": prior_center.evacuation_open_time or "08:00",
+            "cutoff_date": prior_center.evacuation_cutoff_date or prior_center.evacuation_open_date,
+            "cutoff_time": prior_center.evacuation_cutoff_time or "18:00",
+        }
+
     for c in targets:
         c.evacuation_open_date = parsed_date
         c.evacuation_open_time = raw_open_time
@@ -2555,13 +2695,78 @@ def manage_evacuation_schedule():
             timestamp=philippines_now()
         ))
 
-    # Synchronize active evacuation operation
+    def _snapshot_active_checkins_to_operation(operation):
+        if not operation or not operation.id:
+            return
+        checked_assignments = (
+            EvacuationAssignment.query
+            .filter(EvacuationAssignment.checked_in_at.isnot(None))
+            .all()
+        )
+        if not checked_assignments:
+            return
+        existing_recs = {
+            rec.resident_id: rec
+            for rec in EvacuationCheckInRecord.query.filter_by(operation_id=operation.id).all()
+        }
+        now_ts = philippines_now()
+        for a in checked_assignments:
+            res = Resident.query.get(a.resident_id)
+            cid_val = a.evacuation_center_id
+            if not cid_val and a.room_id:
+                room = EvacuationCenterRoom.query.get(a.room_id)
+                cid_val = room.evacuation_center_id if room else None
+            if not cid_val:
+                continue
+            rec = existing_recs.get(a.resident_id)
+            if not rec:
+                db.session.add(EvacuationCheckInRecord(
+                    operation_id=operation.id,
+                    resident_id=a.resident_id,
+                    family_id=res.family_id if res else None,
+                    center_id=cid_val,
+                    room_id=a.room_id,
+                    checked_in_at=a.checked_in_at or now_ts,
+                    checked_in_by_user_id=current_uid,
+                    method='manual',
+                    status='checked_in',
+                ))
+            else:
+                rec.status = 'checked_in'
+                rec.checked_in_at = a.checked_in_at or rec.checked_in_at or now_ts
+                rec.checked_out_at = None
+
+    # Synchronize active/concluded evacuation operations
     start_new_op = bool(data.get('start_new_operation', False))
+    non_concluded_ops = (
+        EvacuationOperation.query
+        .filter(EvacuationOperation.status != 'concluded')
+        .order_by(EvacuationOperation.id.desc())
+        .all()
+    )
+
     if start_new_op:
-        existing_actives = EvacuationOperation.query.filter_by(status='active').all()
-        for old_op in existing_actives:
-            old_op.status = 'concluded'
-            old_op.concluded_at = philippines_now()
+        if non_concluded_ops:
+            for old_op in non_concluded_ops:
+                _snapshot_active_checkins_to_operation(old_op)
+                old_op.status = 'concluded'
+                old_op.concluded_at = philippines_now()
+        elif prior_snapshot:
+            archived_op = EvacuationOperation(
+                center_id=prior_snapshot["center_id"],
+                event_name=prior_snapshot["event_name"],
+                open_date=prior_snapshot["open_date"],
+                open_time=prior_snapshot["open_time"],
+                cutoff_date=prior_snapshot["cutoff_date"],
+                cutoff_time=prior_snapshot["cutoff_time"],
+                status='concluded',
+                created_by_user_id=current_uid,
+                concluded_at=philippines_now(),
+            )
+            db.session.add(archived_op)
+            db.session.flush()
+            _snapshot_active_checkins_to_operation(archived_op)
+
         # Reset live assignment check-ins so new disaster starts with a clean roster
         EvacuationAssignment.query.update({EvacuationAssignment.checked_in_at: None})
         target_op = EvacuationOperation(
@@ -2571,41 +2776,64 @@ def manage_evacuation_schedule():
             open_time=raw_open_time,
             cutoff_date=parsed_cutoff_date or parsed_date or date.today(),
             cutoff_time=raw_cutoff_time,
-            status=evac_status if evac_status != 'closed' else 'standby',
+            status='active',
             created_by_user_id=current_uid
         )
         db.session.add(target_op)
-    elif parsed_date:
-        existing_actives = EvacuationOperation.query.filter_by(status='active').all()
-        for old_op in existing_actives:
-            if old_op.open_date != parsed_date:
+    elif evac_status == 'closed':
+        if non_concluded_ops:
+            primary_op = non_concluded_ops[0]
+            if event_name:
+                primary_op.event_name = event_name
+            if parsed_date:
+                primary_op.open_date = parsed_date
+            primary_op.open_time = raw_open_time
+            if parsed_cutoff_date:
+                primary_op.cutoff_date = parsed_cutoff_date
+            primary_op.cutoff_time = raw_cutoff_time
+            for old_op in non_concluded_ops:
+                _snapshot_active_checkins_to_operation(old_op)
                 old_op.status = 'concluded'
                 old_op.concluded_at = philippines_now()
-
-        target_op = EvacuationOperation.query.filter_by(open_date=parsed_date, status='active').first()
-        if not target_op:
+        else:
+            fallback_open = parsed_date or (prior_snapshot["open_date"] if prior_snapshot else date.today())
+            fallback_cutoff = parsed_cutoff_date or fallback_open
+            archived_op = EvacuationOperation(
+                center_id=int(center_id_target) if str(center_id_target).strip() != 'all' else None,
+                event_name=event_name or (prior_snapshot["event_name"] if prior_snapshot else 'Evacuation Operation'),
+                open_date=fallback_open,
+                open_time=raw_open_time,
+                cutoff_date=fallback_cutoff,
+                cutoff_time=raw_cutoff_time,
+                status='concluded',
+                created_by_user_id=current_uid,
+                concluded_at=philippines_now(),
+            )
+            db.session.add(archived_op)
+            db.session.flush()
+            _snapshot_active_checkins_to_operation(archived_op)
+    elif parsed_date:
+        if non_concluded_ops:
+            target_op = non_concluded_ops[0]
+            if event_name:
+                target_op.event_name = event_name
+            target_op.open_date = parsed_date
+            target_op.open_time = raw_open_time
+            target_op.cutoff_date = parsed_cutoff_date or parsed_date
+            target_op.cutoff_time = raw_cutoff_time
+            target_op.status = 'active'
+        else:
             target_op = EvacuationOperation(
                 center_id=int(center_id_target) if str(center_id_target).strip() != 'all' else None,
                 event_name=event_name or 'Evacuation Operation',
                 open_date=parsed_date,
                 open_time=raw_open_time,
-                cutoff_date=parsed_cutoff_date,
+                cutoff_date=parsed_cutoff_date or parsed_date,
                 cutoff_time=raw_cutoff_time,
-                status=evac_status if evac_status != 'closed' else 'standby',
+                status='active',
                 created_by_user_id=current_uid
             )
             db.session.add(target_op)
-        else:
-            if event_name:
-                target_op.event_name = event_name
-            target_op.open_time = raw_open_time
-            target_op.cutoff_date = parsed_cutoff_date
-            target_op.cutoff_time = raw_cutoff_time
-            if evac_status == 'closed':
-                target_op.status = 'concluded'
-                target_op.concluded_at = philippines_now()
-            else:
-                target_op.status = evac_status
 
     db.session.commit()
 

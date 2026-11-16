@@ -722,20 +722,6 @@
     line-height: 1;
   }
 
-  .sidebar-mobile-tab-tag {
-    display: inline-block;
-    padding: 3px 8px;
-    border-radius: var(--radius-full);
-    background: var(--brand-soft);
-    color: var(--brand-text);
-    font-size: var(--text-xs);
-    font-weight: var(--weight-semibold);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    max-width: 140px;
-  }
-
   .sidebar-mobile-right {
     display: flex;
     align-items: center;

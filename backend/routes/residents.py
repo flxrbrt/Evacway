@@ -2147,13 +2147,15 @@ def list_residents():
 def find_my_evacuation_center():
 
     jwt_claims = get_jwt() or {}
-    resident_id = request.args.get('resident_id', type=int) or jwt_claims.get('resident_id')
-    name = request.args.get(
-        'name',
-        ''
-    )
+    explicit_resident_id = request.args.get('resident_id', type=int)
+    name = (request.args.get('name', '') or '').strip()
 
-    name = name.strip() if name else ''
+    if explicit_resident_id is not None:
+        resident_id = explicit_resident_id
+    elif not name:
+        resident_id = jwt_claims.get('resident_id')
+    else:
+        resident_id = None
 
     if not resident_id and len(name) < 3:
 

@@ -189,6 +189,14 @@
   box-sizing: border-box;
 }
 
+.map-report-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
 /* Mobile Handle Pill (hidden on desktop) */
 .map-report-sheet-handle {
   display: none;
@@ -514,6 +522,14 @@
   margin-top: 4px;
   outline: none;
   user-select: none;
+}
+
+.map-report-carousel-stage {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  border-radius: 14px;
 }
 
 .map-report-carousel-wrap:focus-visible {
@@ -848,55 +864,328 @@
 }
 
 /* --------------------------------------------------
-   MOBILE RESPONSIVENESS (Bottom Sheet)
+   MOBILE RESPONSIVENESS (Narrow, Tall Card)
    -------------------------------------------------- */
 @media (max-width: 768px) {
   .mapboxgl-popup.ew-popup {
+    position: fixed !important;
     top: auto !important;
-    bottom: 0 !important;
-    left: 0 !important;
-    right: 0 !important;
-    transform: none !important;
-    width: 100vw !important;
-    max-width: 100vw !important;
+    bottom: calc(72px + env(safe-area-inset-bottom, 0px)) !important;
+    left: 50% !important;
+    right: auto !important;
+    transform: translateX(-50%) !important;
+    width: min(340px, calc(100vw - 24px)) !important;
+    max-width: min(340px, calc(100vw - 24px)) !important;
+    margin: 0 !important;
+    z-index: 750 !important;
+    pointer-events: none !important;
   }
 
   .mapboxgl-popup.ew-popup .mapboxgl-popup-content {
+    pointer-events: auto !important;
     width: 100% !important;
     max-width: 100% !important;
-    border-radius: 20px 20px 0 0 !important;
-    border-bottom: none !important;
-    border-left: none !important;
-    border-right: none !important;
-    padding: 12px 18px !important;
-    padding-bottom: calc(18px + env(safe-area-inset-bottom, 0px)) !important;
-    max-height: 82vh !important;
-    animation: mapReportSheetSlideUp 220ms cubic-bezier(0.16, 1, 0.3, 1);
+    max-height: calc(100vh - (190px + env(safe-area-inset-top, 0px) + env(safe-area-inset-bottom, 0px))) !important;
+    max-height: calc(100dvh - (190px + env(safe-area-inset-top, 0px) + env(safe-area-inset-bottom, 0px))) !important;
+    box-sizing: border-box !important;
+    border-radius: 16px !important;
+    padding: 14px !important;
+    overflow: hidden !important;
+    display: flex !important;
+    flex-direction: column !important;
+    box-shadow: 0 12px 32px rgba(15, 23, 42, 0.18), 0 2px 6px rgba(15, 23, 42, 0.08) !important;
+    border: 1px solid rgba(226, 232, 240, 0.9) !important;
+    animation: mapReportCardFadeIn 200ms cubic-bezier(0.16, 1, 0.3, 1) !important;
   }
 
-  @keyframes mapReportSheetSlideUp {
+  @keyframes mapReportCardFadeIn {
     from {
-      transform: translateY(100%);
+      opacity: 0;
+      transform: translateY(8px) scale(0.98);
     }
     to {
-      transform: translateY(0);
+      opacity: 1;
+      transform: translateY(0) scale(1);
     }
+  }
+
+  .mapboxgl-popup.ew-popup .mapboxgl-popup-tip {
+    display: none !important;
+  }
+
+  .map-report-popup {
+    max-height: 100% !important;
+    height: auto !important;
+    display: flex !important;
+    flex-direction: column !important;
+    overflow: hidden !important;
+    gap: 8px !important;
   }
 
   .map-report-sheet-handle {
-    display: block;
+    display: none !important;
+  }
+
+  .map-report-header {
+    flex-shrink: 0 !important;
+    display: flex !important;
+    align-items: flex-start !important;
+    justify-content: space-between !important;
+    gap: 10px !important;
+    width: 100% !important;
+    padding-bottom: 2px !important;
+  }
+
+  .map-report-header-text {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 4px !important;
+    min-width: 0 !important;
+    flex: 1 !important;
   }
 
   .map-report-title {
-    font-size: 18px;
+    font-size: 17px !important;
+    line-height: 1.25 !important;
+    margin: 0 !important;
+  }
+
+  .map-report-status-row {
+    gap: 6px !important;
+  }
+
+  .map-report-status-pill {
+    padding: 2px 8px !important;
+    font-size: 11px !important;
+    line-height: 1.3 !important;
+  }
+
+  .map-report-close-btn {
+    width: 36px !important;
+    height: 36px !important;
+    min-width: 36px !important;
+    min-height: 36px !important;
+    border-radius: 10px !important;
+    flex-shrink: 0 !important;
+  }
+
+  .map-report-body {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 8px !important;
+    overflow-y: auto !important;
+    -webkit-overflow-scrolling: touch !important;
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    padding-right: 2px !important;
+  }
+
+  /* Single 40px row for Avoid this road banner */
+  .map-report-alert-banner {
+    height: 40px !important;
+    min-height: 40px !important;
+    max-height: 40px !important;
+    padding: 0 12px !important;
+    display: flex !important;
+    align-items: center !important;
+    gap: 8px !important;
+    border-radius: 8px !important;
+    box-sizing: border-box !important;
+  }
+
+  .map-report-alert-icon {
+    font-size: 14px !important;
+  }
+
+  .map-report-alert-text {
+    font-size: 12.5px !important;
+    line-height: 1 !important;
+    white-space: nowrap !important;
+  }
+
+  /* Affected roads in one wrapping row of small pills */
+  .map-report-roads-section {
+    gap: 3px !important;
+  }
+
+  .map-report-section-label {
+    font-size: 10px !important;
+    letter-spacing: 0.04em !important;
+  }
+
+  .map-report-roads-pills {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    gap: 4px !important;
+    margin-top: 1px !important;
+  }
+
+  .map-report-road-pill,
+  .map-report-single-road {
+    padding: 2px 8px !important;
+    font-size: 11px !important;
+    border-radius: 9999px !important;
+    line-height: 1.3 !important;
+  }
+
+  /* Description clamped to 2 lines */
+  .map-report-desc-wrap {
+    gap: 2px !important;
+  }
+
+  .map-report-desc {
+    font-size: 13px !important;
+    line-height: 1.45 !important;
+  }
+
+  .map-report-desc.is-clamped {
+    display: -webkit-box !important;
+    -webkit-box-orient: vertical !important;
+    -webkit-line-clamp: 2 !important;
+    overflow: hidden !important;
+  }
+
+  .map-report-read-more-btn {
+    font-size: 12px !important;
+    margin-top: 1px !important;
+  }
+
+  /* Photo carousel container: flex column holding photo stage and outline button below */
+  .map-report-carousel-wrap {
+    aspect-ratio: unset !important;
+    width: 100% !important;
+    height: auto !important;
+    max-height: none !important;
+    background: transparent !important;
+    border-radius: 0 !important;
+    overflow: visible !important;
+    margin-top: 2px !important;
+    margin-bottom: 2px !important;
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 8px !important;
+    flex-shrink: 0 !important;
+  }
+
+  /* Photo stage: full card width, flexible height up to 55% of card's available height, light gray background, 12px rounded corners */
+  .map-report-carousel-stage {
+    position: relative !important;
+    width: 100% !important;
+    height: clamp(180px, 36vh, 260px) !important;
+    max-height: calc(0.55 * (100dvh - (190px + env(safe-area-inset-top, 0px) + env(safe-area-inset-bottom, 0px)))) !important;
+    min-height: 150px !important;
+    border-radius: 12px !important;
+    background: #f1f5f9 !important;
+    overflow: hidden !important;
+    flex-shrink: 0 !important;
+    box-sizing: border-box !important;
+  }
+
+  /* Whole image visible, no cropping, portrait or square stay fully shown */
+  .map-report-carousel-img {
+    width: 100% !important;
+    height: 100% !important;
+    object-fit: contain !important;
+    display: block !important;
+    background: #f1f5f9 !important;
+  }
+
+  /* Carousel controls */
+  .map-report-carousel-counter {
+    top: 8px !important;
+    right: 8px !important;
+    font-size: 11px !important;
+    padding: 3px 8px !important;
+    border-radius: 9999px !important;
+  }
+
+  .map-report-carousel-arrow {
+    width: 36px !important;
+    height: 36px !important;
+    min-width: 36px !important;
+    min-height: 36px !important;
+    font-size: 13px !important;
+    border-radius: 50% !important;
+    top: 50% !important;
+    transform: translateY(-50%) !important;
+  }
+
+  .map-report-carousel-arrow.is-prev {
+    left: 8px !important;
+  }
+
+  .map-report-carousel-arrow.is-next {
+    right: 8px !important;
+  }
+
+  .map-report-carousel-dots {
+    bottom: 8px !important;
+    left: 50% !important;
+    transform: translateX(-50%) !important;
+    gap: 5px !important;
+  }
+
+  .map-report-carousel-dot {
+    width: 6px !important;
+    height: 6px !important;
+  }
+
+  .map-report-carousel-dot.is-active {
+    width: 8px !important;
+    height: 8px !important;
+  }
+
+  /* "View full photo" button: below photo as a small full-width outline button */
+  .map-report-view-full-btn {
+    position: static !important;
+    width: 100% !important;
+    height: 34px !important;
+    min-height: 34px !important;
+    box-sizing: border-box !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 6px !important;
+    padding: 0 12px !important;
+    border-radius: 10px !important;
+    background: #ffffff !important;
+    border: 1px solid #cbd5e1 !important;
+    color: #334155 !important;
+    font-size: 12px !important;
+    font-weight: 600 !important;
+    cursor: pointer !important;
+    transition: all 120ms ease !important;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05) !important;
+    flex-shrink: 0 !important;
+    margin: 0 !important;
+  }
+
+  .map-report-view-full-btn:hover {
+    background: #f8fafc !important;
+    border-color: #94a3b8 !important;
+    color: #0f172a !important;
+  }
+
+  .map-report-view-full-icon {
+    font-size: 11px !important;
+    display: inline-flex !important;
+  }
+
+  /* Small muted text for Reported under the photo */
+  .map-report-time {
+    font-size: 11px !important;
+    color: #94a3b8 !important;
+    margin-top: 0 !important;
+    margin-bottom: 2px !important;
+    line-height: 1.3 !important;
   }
 
   .map-report-viewer-arrow.is-prev {
-    left: 12px;
+    left: 12px !important;
   }
 
   .map-report-viewer-arrow.is-next {
-    right: 12px;
+    right: 12px !important;
   }
 }
 
@@ -1103,3 +1392,69 @@
     padding: 6px 7px;
   }
 }
+
+/* Staff action row in hazard details popup */
+.map-report-staff-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--ew-border-subtle, #e2e8f0);
+  margin-top: 4px;
+}
+
+.map-report-btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #ffffff;
+  border: 1px solid var(--line, #e2e8f0);
+  color: var(--ink, #0f172a);
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.map-report-btn-secondary:hover:not(:disabled) {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+}
+
+.map-report-btn-secondary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.map-report-btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid transparent;
+  color: #64748b;
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.map-report-btn-ghost:hover:not(:disabled) {
+  background: #f1f5f9;
+  color: #0f172a;
+}
+
+.map-report-btn-danger {
+  color: #dc2626 !important;
+}
+
+.map-report-btn-danger:hover:not(:disabled) {
+  background: #fee2e2 !important;
+  color: #b91c1c !important;
+}
+
