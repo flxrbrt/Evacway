@@ -496,11 +496,55 @@
   text-decoration: underline;
 }
 
-/* Sign-up dialog layout */
+/* ==========================================================================
+   Resident Sign-up Dialog & Design Tokens
+   ========================================================================== */
+
+.ew-signup-dialog {
+  width: min(640px, calc(100vw - 1.5rem));
+  max-height: calc(100dvh - 1.5rem);
+  overflow-y: auto;
+  border-radius: 16px;
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+  box-shadow: 0 20px 40px rgba(15, 23, 42, 0.2);
+}
+
+.ew-signup {
+  padding: 24px;
+  border-radius: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px; /* 24px between sections */
+  box-sizing: border-box;
+  background: #ffffff;
+}
+
+.ew-signup-header {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ew-signup-header .ew-login-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.ew-signup-header .ew-login-head h2 {
+  margin: 0;
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: #0f172a;
+  letter-spacing: -0.02em;
+}
+
 .ew-signup-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px 14px;
+  gap: 16px; /* 16px between fields */
+  align-items: start;
 }
 
 .ew-signup-wide {
@@ -508,30 +552,269 @@
   min-width: 0;
 }
 
-.ew-field-error,
-.ew-field-note {
-  font-size: 0.78rem;
-  line-height: 1.4;
+.ew-password-guide-row {
+  grid-column: 1 / -1;
+  width: 100%;
 }
 
-.ew-field-error {
-  color: #dc2626;
+@media (min-width: 769px) {
+  .ew-signup .ew-field-password {
+    order: 0;
+  }
+  .ew-signup .ew-field-confirm-password {
+    order: 0;
+  }
+  .ew-signup .ew-password-guide-row {
+    order: 0;
+  }
+}
+
+/* Fields & Labels: 14px semibold #0f172a, asterisk #b91c1c, helper text 12px #64748b */
+.ew-signup .ew-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  text-align: left;
+}
+
+.ew-signup .ew-field-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: #0f172a;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  line-height: 1.3;
+}
+
+.ew-signup .ew-required-star {
+  color: #b91c1c;
+  font-weight: 700;
+}
+
+.ew-signup .ew-field-hint {
+  font-size: 12px;
+  color: #64748b;
+  line-height: 1.4;
+  margin: 0;
+}
+
+/* Inputs & Selects: 40px tall, 8px radius, white background, #e2e8f0 border, 2px blue focus ring, hover: #f8fafc */
+.ew-signup .ew-field input,
+.ew-signup .ew-field select {
+  height: 40px;
+  min-height: 40px;
+  width: 100%;
+  padding: 0 12px;
+  font-size: 14px;
+  color: #0f172a;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  box-sizing: border-box;
+  font-family: inherit;
+  transition: background-color 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.ew-signup .ew-field input:hover:not(:focus):not([aria-invalid="true"]),
+.ew-signup .ew-field select:hover:not(:focus):not([aria-invalid="true"]) {
+  background: #f8fafc;
+}
+
+.ew-signup .ew-field input:focus,
+.ew-signup .ew-field select:focus {
+  outline: none;
+  background: #ffffff;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 2px #2563eb;
+}
+
+/* Error text: 12px, #b91c1c, directly under the field, wrapping fully (no ellipsis). Invalid input gets red border. */
+.ew-signup .ew-field input[aria-invalid="true"],
+.ew-signup .ew-field select[aria-invalid="true"] {
+  border: 1px solid #b91c1c !important;
+  background: #ffffff;
+}
+
+.ew-signup .ew-field input[aria-invalid="true"]:focus,
+.ew-signup .ew-field select[aria-invalid="true"]:focus {
+  outline: none;
+  border: 1px solid #b91c1c !important;
+  box-shadow: 0 0 0 2px rgba(185, 28, 28, 0.25) !important;
+}
+
+.ew-signup .ew-field-error {
+  font-size: 12px;
+  color: #b91c1c;
+  line-height: 1.35;
+  white-space: normal;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  margin: 0;
+}
+
+/* Input wrapper with password show/hide toggle */
+.ew-signup .ew-input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+.ew-signup .ew-input-wrap input {
+  padding-right: 38px;
+}
+
+.ew-signup .ew-eye-toggle {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: transparent;
+  color: #64748b;
+  cursor: pointer;
+  border-radius: 6px;
+  transition: all 150ms ease;
+}
+
+.ew-signup .ew-eye-toggle:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+}
+
+.ew-signup .ew-eye-toggle:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 1px;
+}
+
+/* Actions section & Submit Button: 40px tall, solid #2563eb, hover #1d4ed8 */
+.ew-signup-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.ew-signup .ew-btn-primary {
+  height: 40px;
+  min-height: 40px;
+  width: 100%;
+  background: #2563eb;
+  color: #ffffff;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  box-sizing: border-box;
+  transition: background-color 150ms ease, opacity 150ms ease;
+}
+
+.ew-signup .ew-btn-primary:hover:not(:disabled) {
+  background: #1d4ed8;
+}
+
+.ew-signup .ew-btn-primary:disabled {
+  background: #2563eb;
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+/* Password Guide */
+.ew-password-guide {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-top: 2px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  box-sizing: border-box;
+}
+
+.ew-password-guide-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #0f172a;
+  line-height: 1.35;
+}
+
+.ew-password-guide-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 16px;
+}
+
+.ew-guide-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: #64748b;
+  line-height: 1.4;
+  white-space: normal;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  transition: color 150ms ease;
+}
+
+.ew-guide-item.is-met {
+  color: #15803d;
   font-weight: 500;
 }
 
-.ew-field-note {
-  color: #64748b;
+.ew-guide-bullet {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
 }
 
-.ew-field input[aria-invalid="true"],
-.ew-field select[aria-invalid="true"] {
-  border-color: #dc2626;
-  background: #fef2f2;
+.ew-guide-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background-color: #64748b;
+  display: inline-block;
 }
 
+.ew-guide-icon-check {
+  font-size: 11px;
+  color: #15803d;
+}
+
+/* Accessible utility for screen readers */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Success State */
 .ew-signup-success {
-  padding-top: 24px;
+  padding: 24px;
   text-align: center;
+  background: #ffffff;
 }
 
 .ew-signup-success p {
@@ -541,8 +824,49 @@
   margin: 12px 0 18px;
 }
 
-@media (max-width: 640px) {
+/* Mobile responsive (768px and below): single column, 16px padding, 16px min font size, safe area */
+@media (max-width: 768px) {
+  .ew-signup-dialog {
+    width: calc(100vw - 24px);
+    max-height: calc(100dvh - 24px);
+    border-radius: 16px;
+    margin: auto;
+  }
+
+  .ew-signup {
+    padding: 16px;
+    padding-top: max(16px, env(safe-area-inset-top, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+    padding-bottom: max(16px, env(safe-area-inset-bottom, 0px));
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    gap: 20px;
+  }
+
   .ew-signup-grid {
     grid-template-columns: 1fr;
+    gap: 16px;
+  }
+
+  /* Mobile order: Password, its error, the guide, Confirm password, its error */
+  .ew-signup .ew-field-password {
+    order: 20;
+  }
+
+  .ew-signup .ew-password-guide-row {
+    order: 21;
+  }
+
+  .ew-signup .ew-field-confirm-password {
+    order: 22;
+  }
+
+  .ew-signup .ew-field input,
+  .ew-signup .ew-field select {
+    font-size: 16px !important;
+  }
+
+  .ew-password-guide-list {
+    grid-template-columns: 1fr;
+    gap: 4px;
   }
 }

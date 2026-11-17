@@ -14,7 +14,7 @@ import {
 } from "@fortawesome/free-solid-svg-icons";
 import { api } from "../../services/api";
 import { queryKeys } from "../../hooks/useEvacuationQueries";
-import { createSelectedLocationElement } from "../../utils/mapLocationIndicators";
+import { createSelectedLocationElement, refineGeolocation } from "../../utils/mapLocationIndicators";
 import { useAuth } from "../../context/AuthContext";
 import "./RescueAlertModal.css";
 
@@ -228,39 +228,76 @@ export default function RescueAlertModal({
     setLocationMessage("");
     setError("");
     if (!navigator.geolocation) {
-      setLocationMessage("GPS is unavailable. Describe your location below.");
+      setLocationMessage("GPS is unavailable. Describe your location below or pin on the map.");
       return;
     }
 
     setLocating(true);
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
+    refineGeolocation({
+      onFirstFix: (position) => {
+        const acc = position.coords.accuracy ?? null;
         const captured = {
           latitude: position.coords.latitude,
           longitude: position.coords.longitude,
           lat: position.coords.latitude,
           lng: position.coords.longitude,
-          accuracy: position.coords.accuracy,
+          accuracy: acc,
+          is_manual_pin: false,
+          location_source: acc != null && acc > 100 ? "approximate" : "gps",
         };
         setCoordinates(captured);
-        setLocationMessage("Current GPS coordinates captured.");
-        setLocating(false);
-
+        setLocationMessage(
+          acc != null && acc > 100
+            ? "Approximate location found. Refining signal..."
+            : "Current GPS coordinates captured."
+        );
         if (onLocationCaptured) {
-          onLocationCaptured({
-            lat: position.coords.latitude,
-            lng: position.coords.longitude,
-            accuracy: position.coords.accuracy,
-          });
+          onLocationCaptured(captured);
         }
       },
-      () => {
-        setCoordinates(null);
-        setLocationMessage("GPS was not shared. Describe your location below.");
-        setLocating(false);
+      onImprovement: (position) => {
+        const acc = position.coords.accuracy ?? null;
+        const captured = {
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+          lat: position.coords.latitude,
+          lng: position.coords.longitude,
+          accuracy: acc,
+          is_manual_pin: false,
+          location_source: acc != null && acc > 100 ? "approximate" : "gps",
+        };
+        setCoordinates(captured);
+        setLocationMessage("GPS accuracy improved.");
+        if (onLocationCaptured) {
+          onLocationCaptured(captured);
+        }
       },
-      { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 }
-    );
+    })
+      .then((bestPos) => {
+        const acc = bestPos.coords.accuracy ?? null;
+        const captured = {
+          latitude: bestPos.coords.latitude,
+          longitude: bestPos.coords.longitude,
+          lat: bestPos.coords.latitude,
+          lng: bestPos.coords.longitude,
+          accuracy: acc,
+          is_manual_pin: false,
+          location_source: acc != null && acc > 100 ? "approximate" : "gps",
+        };
+        setCoordinates(captured);
+        setLocationMessage(
+          acc != null && acc > 100
+            ? "Approximate location captured. Please provide landmark details or pin on the map."
+            : "GPS coordinates locked."
+        );
+      })
+      .catch((err) => {
+        setCoordinates(null);
+        setLocationMessage(err.message || "GPS was not shared. Describe your location below or pin on the map.");
+      })
+      .finally(() => {
+        setLocating(false);
+      });
   }
 
   function handleFilesSelected(event) {
@@ -306,6 +343,11 @@ export default function RescueAlertModal({
     setSubmitting(true);
     setError("");
     try {
+      const isManualPinSubmit = Boolean(coordinates?.is_manual_pin || coordinates?.location_source === "manual");
+      const accNum = coordinates?.accuracy != null ? Number(coordinates.accuracy) : null;
+      const isApproxSubmit = !isManualPinSubmit && ((accNum != null && accNum > 100) || coordinates?.location_source === "approximate");
+      const locSource = isManualPinSubmit ? "manual" : (isApproxSubmit ? "approximate" : (hasCoords ? "gps" : ""));
+
       const formData = new FormData();
       formData.append("description", description.trim());
       formData.append("requester_name", finalName);
@@ -313,6 +355,9 @@ export default function RescueAlertModal({
       formData.append("location_description", locationDescription.trim() || "");
       formData.append("latitude", coordinates?.latitude ?? coordinates?.lat ?? "");
       formData.append("longitude", coordinates?.longitude ?? coordinates?.lng ?? "");
+      formData.append("accuracy", accNum != null && !Number.isNaN(accNum) ? String(accNum) : "");
+      formData.append("is_manual_pin", isManualPinSubmit ? "true" : "false");
+      formData.append("location_source", locSource);
       proofImages.forEach((file) => formData.append("proof_images", file));
 
       await api.submitRescueRequest(formData);
@@ -325,7 +370,16 @@ export default function RescueAlertModal({
     }
   }
 
-  const hasCoords = coordinates && Number.isFinite(Number(coordinates.latitude ?? coordinates.lat));
+  const hasCoords = Boolean(coordinates && Number.isFinite(Number(coordinates.latitude ?? coordinates.lat)));
+  const isManualPin = Boolean(coordinates?.is_manual_pin || coordinates?.location_source === "manual");
+  const accuracyMeters =
+    coordinates?.accuracy != null && Number.isFinite(Number(coordinates.accuracy))
+      ? Number(coordinates.accuracy)
+      : null;
+  const isApproximate =
+    !isManualPin &&
+    ((accuracyMeters != null && accuracyMeters > 100) ||
+      coordinates?.location_source === "approximate");
 
   return (
     <div
@@ -478,7 +532,7 @@ export default function RescueAlertModal({
               <label className="rescue-field" style={{ margin: 0 }}>
                 <span className="rescue-field-label">
                   <FontAwesomeIcon icon={faPhone} className="rescue-label-icon" />
-                  Contact number for rescuers (optional)
+                  Enter Contact Number
                 </span>
                 <input
                   type="tel"
@@ -575,7 +629,15 @@ export default function RescueAlertModal({
                 <span className="rescue-field-label">
                   Location <em className="rescue-req">*</em>
                 </span>
-                {hasCoords && <span className="rescue-gps-pill">GPS Locked</span>}
+                {hasCoords && (
+                  isApproximate ? (
+                    <span className="rescue-gps-pill rescue-gps-pill--approximate">Approximate</span>
+                  ) : isManualPin ? (
+                    <span className="rescue-gps-pill rescue-gps-pill--manual">Manually pinned</span>
+                  ) : (
+                    <span className="rescue-gps-pill">GPS Locked</span>
+                  )
+                )}
               </div>
 
               <div className="rescue-location-btn-row">
@@ -610,9 +672,21 @@ export default function RescueAlertModal({
                 <div className="rescue-preview-card">
                   <div ref={previewContainerRef} className="rescue-preview-map" />
                   <div className="rescue-preview-meta">
-                    <div className="rescue-preview-coords">
-                      {Number(coordinates.latitude ?? coordinates.lat).toFixed(5)}° N,{" "}
-                      {Number(coordinates.longitude ?? coordinates.lng).toFixed(5)}° E
+                    <div className="rescue-preview-coords-row">
+                      <span className="rescue-preview-coords">
+                        {Number(coordinates.latitude ?? coordinates.lat).toFixed(5)}° N,{" "}
+                        {Number(coordinates.longitude ?? coordinates.lng).toFixed(5)}° E
+                      </span>
+                      {accuracyMeters != null && !isManualPin && (
+                        <span className="rescue-preview-accuracy">
+                          Accuracy: about {Math.round(accuracyMeters)} m
+                        </span>
+                      )}
+                      {isManualPin && (
+                        <span className="rescue-preview-accuracy is-manual">
+                          Manually pinned
+                        </span>
+                      )}
                     </div>
                     <div
                       className={`rescue-preview-address ${!addressText ? "rescue-preview-address-muted" : ""}`}
@@ -635,11 +709,13 @@ export default function RescueAlertModal({
                 value={locationDescription}
                 onChange={(event) => setLocationDescription(event.target.value)}
                 maxLength={255}
-                required={!hasCoords}
+                required={!hasCoords || (isApproximate && !isManualPin)}
                 placeholder={
-                  hasCoords
-                    ? "Optional landmark, house color, or floor level"
-                    : "Landmark, street, or barangay (required if no GPS)"
+                  !hasCoords
+                    ? "Landmark, street, or barangay (required if no GPS)"
+                    : isApproximate && !isManualPin
+                      ? "Landmark, street, or house details (required for approximate GPS)"
+                      : "Optional landmark, house color, or floor level"
                 }
               />
             </div>

@@ -829,12 +829,19 @@
 
 .right-control-stack {
   position: absolute;
-  top: 16px;
+  top: calc(var(--top-h, 52px) + 16px);
   right: 16px;
   z-index: var(--z-map-controls, 400);
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+@media (min-width: 769px) {
+  .right-control-stack {
+    top: calc(var(--top-h, 52px) + 16px) !important;
+    gap: 8px;
+  }
 }
 
 .right-control-stack.mobile {
@@ -3106,7 +3113,6 @@
   }
 
   /* Right side: stacked on the right below the header and above the bottom sheet */
-  .right-control-stack,
   .right-control-stack.compact,
   .right-control-stack.mobile,
   .right-control-stack.compact.route-open,
@@ -4091,7 +4097,7 @@
 }
 
 /* --------------------------------------------------
-   Recenter Navigation Button
+   Recenter Navigation Button (36px, secondary style)
 -------------------------------------------------- */
 .nav-recenter-btn {
   position: absolute;
@@ -4102,22 +4108,148 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 38px;
-  padding: 0 14px;
-  background: #2563eb;
-  color: #ffffff;
-  border: none;
-  border-radius: 20px;
+  min-height: 36px;
+  height: auto;
+  padding: 6px 12px;
+  background: #ffffff;
+  color: #0f172a;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
   font-size: 13px;
-  font-weight: 700;
+  font-weight: 600;
   cursor: pointer;
-  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.35);
-  transition: transform 0.15s, background-color 0.15s;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08);
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+  white-space: normal;
 }
 
 .nav-recenter-btn:hover {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+}
+
+.nav-recenter-btn:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
+
+.nav-signal-lost-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 9999px;
+  background: #f1f5f9;
+  color: #475569;
+  border: 1px solid #e2e8f0;
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: normal;
+}
+
+/* --------------------------------------------------
+   Approximate Location Notice & Confirmation
+-------------------------------------------------- */
+.approximate-location-card {
+  position: absolute;
+  top: calc(72px + 16px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: var(--z-map-controls, 400);
+  width: min(440px, calc(100vw - 32px));
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 16px;
+  box-shadow: 0 4px 16px rgba(15, 23, 42, 0.08);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  box-sizing: border-box;
+}
+
+.approximate-location-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.approximate-location-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border-radius: 9999px;
+  background: #fffbeb;
+  color: #b45309;
+  border: 1px solid #fef3c7;
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.approximate-badge-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #b45309;
+}
+
+.approximate-location-text {
+  margin: 0;
+  color: #1e293b;
+  font-size: 13.5px;
+  line-height: 1.45;
+  white-space: normal;
+}
+
+.approximate-location-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.approximate-confirm-btn {
+  min-height: 36px;
+  height: auto;
+  padding: 6px 16px;
+  background: #2563eb;
+  color: #ffffff;
+  border: none;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+  white-space: normal;
+}
+
+.approximate-confirm-btn:hover {
   background: #1d4ed8;
-  transform: translateY(-1px);
+}
+
+.approximate-confirm-btn:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
+
+.approximate-dismiss-btn {
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: #64748b;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.approximate-dismiss-btn:hover {
+  background: #f1f5f9;
+  color: #0f172a;
 }
 
 /* --------------------------------------------------
@@ -4265,15 +4397,37 @@
 -------------------------------------------------- */
 @media (max-width: 768px) {
   .nav-compact-pill {
-    top: 58px;
+    top: calc(58px + env(safe-area-inset-top, 0px));
+    max-width: calc(100vw - 32px);
+    height: auto;
+    min-height: 40px;
+    padding: 6px 12px;
+  }
+
+  .nav-pill-distance {
+    white-space: normal;
   }
 
   .nav-active-top-bar {
-    top: 58px;
+    top: calc(58px + env(safe-area-inset-top, 0px));
     width: calc(100% - 24px);
     max-width: none;
-    height: 60px;
-    padding: 6px 10px;
+    height: auto;
+    min-height: 60px;
+    max-height: none;
+    padding: 8px 10px;
+  }
+
+  .nav-bar-instruction,
+  .nav-bar-subline {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+  }
+
+  .approximate-location-card {
+    top: calc(58px + 12px + env(safe-area-inset-top, 0px));
+    padding: 16px;
   }
 
   /* Route preview as bottom sheet anchored above dock */
@@ -4298,8 +4452,10 @@
   }
 
   .nav-recenter-btn {
-    bottom: calc(var(--dock-h, 60px) + 16px);
-    right: 12px;
+    bottom: calc(var(--dock-h, calc(60px + env(safe-area-inset-bottom, 0px))) + 20px);
+    right: calc(12px + env(safe-area-inset-right, 0px));
+    min-height: 36px;
+    white-space: normal;
   }
 }
 
@@ -4519,6 +4675,11 @@
   max-width: 320px;
   z-index: 15;
   transition: box-shadow 0.18s ease, transform 0.18s ease;
+}
+
+.resident-home .evacway-center-label {
+  /* Override the shared dashboard label rule; clicks bubble to the marker. */
+  pointer-events: auto;
 }
 
 .evacway-center-marker.show-label .evacway-center-label {

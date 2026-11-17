@@ -59,6 +59,9 @@ def _rescue_to_dict(rescue):
         'location_description': rescue.location_description,
         'latitude': rescue.latitude,
         'longitude': rescue.longitude,
+        'accuracy': getattr(rescue, 'accuracy', None),
+        'is_manual_pin': bool(getattr(rescue, 'is_manual_pin', False)),
+        'location_source': getattr(rescue, 'location_source', None) or ('manual' if getattr(rescue, 'is_manual_pin', False) else ('gps' if rescue.latitude is not None else None)),
         'status': rescue.status,
         'requester_name': rescue.requester_name,
         'requester_contact': rescue.requester_contact,
@@ -160,6 +163,37 @@ def submit_rescue_request():
     if latitude is None and not location_description:
         return jsonify({'error': 'Provide a GPS location or describe where help is needed.'}), 400
 
+    # Optional accuracy and location source
+    raw_accuracy = data.get('accuracy')
+    accuracy = None
+    if raw_accuracy not in ('', None):
+        try:
+            accuracy = float(raw_accuracy)
+            if not math.isfinite(accuracy) or accuracy < 0:
+                accuracy = None
+        except (TypeError, ValueError):
+            accuracy = None
+
+    raw_manual_pin = data.get('is_manual_pin')
+    is_manual_pin = False
+    if str(raw_manual_pin).strip().lower() in ('true', '1', 'yes'):
+        is_manual_pin = True
+
+    location_source = str(data.get('location_source') or '').strip().lower()
+    if is_manual_pin or location_source == 'manual':
+        location_source = 'manual'
+        is_manual_pin = True
+    elif location_source in ('approximate', 'approx'):
+        location_source = 'approximate'
+    elif location_source in ('gps', 'device'):
+        location_source = 'gps'
+    elif accuracy is not None and accuracy > 100:
+        location_source = 'approximate'
+    elif latitude is not None:
+        location_source = 'gps'
+    else:
+        location_source = None
+
     # All validation passed — only now write photo files to disk.
     uploader_name = requester_name or claims.get('name')
     proof_image_urls = (
@@ -173,6 +207,9 @@ def submit_rescue_request():
         location_description=location_description,
         latitude=latitude,
         longitude=longitude,
+        accuracy=accuracy,
+        is_manual_pin=is_manual_pin,
+        location_source=location_source,
         requester_name=requester_name,
         requester_contact=requester_contact,
         proof_images=json.dumps(proof_image_urls) if proof_image_urls else None,

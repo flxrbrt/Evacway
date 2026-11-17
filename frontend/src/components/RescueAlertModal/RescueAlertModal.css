@@ -148,10 +148,26 @@
 .rescue-gps-pill {
   padding: 2px 8px;
   border-radius: 999px;
-  background: #dcfce7;
+  background: #ecfdf5;
   color: #15803d;
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 600;
+  border: 1px solid #d1fae5;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.rescue-gps-pill--approximate {
+  background: #fffbeb;
+  color: #b45309;
+  border-color: #fef3c7;
+}
+
+.rescue-gps-pill--manual {
+  background: #eff6ff;
+  color: #1d4ed8;
+  border-color: #bfdbfe;
 }
 
 .rescue-text-input,
@@ -383,11 +399,29 @@
   flex-wrap: wrap;
 }
 
+.rescue-preview-coords-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .rescue-preview-coords {
   font-size: 11.5px;
   font-weight: 700;
   color: #15803d;
   font-family: var(--font-mono, monospace);
+}
+
+.rescue-preview-accuracy {
+  font-size: 11px;
+  color: #64748b;
+  font-weight: 500;
+}
+
+.rescue-preview-accuracy.is-manual {
+  color: #2563eb;
+  font-weight: 600;
 }
 
 .rescue-preview-address {

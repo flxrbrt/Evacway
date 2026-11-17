@@ -680,14 +680,69 @@
   text-align: center;
 }
 
+/* =========================================================
+   STANDARDIZED STATUS PILLS (matching CenterList ec-status-pill)
+   ========================================================= */
 .hr-pill {
-  font-size: 11px;
-  font-weight: 700;
-  padding: 3px 8px;
-  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 9999px;
+  border: 1px solid transparent;
   white-space: nowrap;
+  line-height: 1.2;
+}
+
+.hr-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
   flex-shrink: 0;
 }
+
+/* Info / Pending */
+.hr-pill--pending {
+  background-color: #eff6ff;
+  color: #1d4ed8;
+  border-color: #bfdbfe;
+}
+.hr-pill--pending .hr-status-dot {
+  background-color: #3b82f6;
+}
+
+/* Danger / Validated */
+.hr-pill--full {
+  background-color: #fef2f2;
+  color: #b91c1c;
+  border-color: #fecaca;
+}
+.hr-pill--full .hr-status-dot {
+  background-color: #ef4444;
+}
+
+/* Neutral / Rejected */
+.hr-pill--closed {
+  background-color: #f1f5f9;
+  color: #64748b;
+  border-color: #cbd5e1;
+}
+.hr-pill--closed .hr-status-dot {
+  background-color: #94a3b8;
+}
+
+/* Success / Resolved */
+.hr-pill--available {
+  background-color: #ecfdf5;
+  color: #047857;
+  border-color: #a7f3d0;
+}
+.hr-pill--available .hr-status-dot {
+  background-color: #10b981;
+}
+
 .hr-pill--lg {
   font-size: 12px;
   padding: 5px 12px;

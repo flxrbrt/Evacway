@@ -5070,13 +5070,6 @@ export default function FamilyManagement({
                       ? "Household & Evacuation Center Assignment"
                       : "Household & Evacuation Room Assignment"}
                   </h4>
-                  <button
-                    type="button"
-                    className="fm-btn fm-btn-ghost fm-btn-sm"
-                    onClick={backToHouseholdDetails}
-                  >
-                    <FontAwesomeIcon icon={faHouse} /> View Household ({activeFamily.family_code})
-                  </button>
                 </div>
                 <dl className="fm-dl-grid">
                   <div>

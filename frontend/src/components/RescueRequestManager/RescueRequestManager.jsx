@@ -55,6 +55,71 @@ function isResolvedStatus(status) {
   return status === "resolved";
 }
 
+/**
+ * Maps rescue request status to standardized pill variant classes
+ * matching CenterList ec-status-pill pattern:
+ * - pending → --pending (info/blue)
+ * - acknowledged → --near-full (warning/amber)
+ * - responding/in_progress → --in-progress (info/blue)
+ * - resolved → --available (success/green)
+ */
+function getRescueStatusPillClass(status) {
+  switch (status) {
+    case "pending":
+      return "rescue-status-badge--pending";
+    case "acknowledged":
+      return "rescue-status-badge--near-full";
+    case "responding":
+    case "in_progress":
+      return "rescue-status-badge--in-progress";
+    case "resolved":
+      return "rescue-status-badge--available";
+    default:
+      return "rescue-status-badge--pending";
+  }
+}
+
+function getLocationSourceInfo(item) {
+  if (!item) return null;
+  const isManual = Boolean(item.is_manual_pin || item.location_source === "manual");
+  const acc =
+    item.accuracy != null && Number.isFinite(Number(item.accuracy))
+      ? Number(item.accuracy)
+      : null;
+  const isApprox =
+    !isManual &&
+    (item.location_source === "approximate" || (acc != null && acc > 100));
+
+  if (isManual) {
+    return {
+      type: "manual",
+      label: "Manually pinned",
+      className: "rescue-loc-source-pill--manual",
+      accuracyText: null,
+      fullAccuracyText: null,
+    };
+  }
+  if (isApprox) {
+    return {
+      type: "approximate",
+      label: "Approximate",
+      className: "rescue-loc-source-pill--approximate",
+      accuracyText: acc != null ? `±${Math.round(acc)}m` : null,
+      fullAccuracyText: acc != null ? `Accuracy: about ${Math.round(acc)} m` : "Approximate location",
+    };
+  }
+  if (item.latitude != null && Number.isFinite(Number(item.latitude))) {
+    return {
+      type: "gps",
+      label: "GPS",
+      className: "rescue-loc-source-pill--gps",
+      accuracyText: acc != null ? `±${Math.round(acc)}m` : null,
+      fullAccuracyText: acc != null ? `Accuracy: about ${Math.round(acc)} m` : "GPS fix",
+    };
+  }
+  return null;
+}
+
 function resolveProofImageUrl(img) {
   if (!img || typeof img !== "string") return "";
   if (img.startsWith("http://") || img.startsWith("https://") || img.startsWith("data:")) {
@@ -254,12 +319,20 @@ export default function RescueRequestManager({ initialRequestId, onOpenMap }) {
 
   const statCards = [
     {
+      id: "all",
+      label: "Total Requests",
+      count: totalCount,
+      sub: "All time recorded",
+      icon: faInbox,
+      variant: "neutral",
+    },
+    {
       id: "open",
       label: "Open Alerts",
       count: openCount,
       sub: openCount > 0 ? "Requires response" : "All clear",
       icon: faBell,
-      variant: "open",
+      variant: "pending",
     },
     {
       id: "in_progress",
@@ -276,14 +349,6 @@ export default function RescueRequestManager({ initialRequestId, onOpenMap }) {
       sub: "Successfully assisted",
       icon: faCircleCheck,
       variant: "resolved",
-    },
-    {
-      id: "all",
-      label: "Total Requests",
-      count: totalCount,
-      sub: "All time recorded",
-      icon: faInbox,
-      variant: "total",
     },
   ];
 
@@ -573,7 +638,7 @@ export default function RescueRequestManager({ initialRequestId, onOpenMap }) {
 
       {/* 2. STAT CARDS */}
       <section
-        className="rescue-stat-cards"
+        className="stat-card-grid cols-4"
         aria-label="Rescue alert summary and filters"
       >
         {statCards.map((card) => {
@@ -582,20 +647,18 @@ export default function RescueRequestManager({ initialRequestId, onOpenMap }) {
             <button
               type="button"
               key={card.id}
-              className={`rescue-stat-card is-${card.variant} ${isSelected ? "is-selected" : ""}`}
+              className={`stat-card is-clickable is-${card.variant} ${isSelected ? "is-selected" : ""}`}
               onClick={() => handleFilterStatusChange(card.id)}
               aria-pressed={isSelected}
             >
-              <div className="rescue-stat-card-top">
-                <span className="rescue-stat-label">{card.label}</span>
-                <span className={`rescue-stat-icon-wrap is-${card.variant}`}>
-                  <FontAwesomeIcon icon={card.icon} />
-                </span>
+              <div className="stat-card-content">
+                <span className="stat-card-label">{card.label}</span>
+                <strong className="stat-card-value">{card.count}</strong>
+                <span className="stat-card-hint">{card.sub}</span>
               </div>
-              <div className="rescue-stat-card-bottom">
-                <span className="rescue-stat-value">{card.count}</span>
-                <span className="rescue-stat-hint">{card.sub}</span>
-              </div>
+              <span className={`stat-card-icon stat-card-icon--${card.variant}`} aria-hidden="true">
+                <FontAwesomeIcon icon={card.icon} />
+              </span>
             </button>
           );
         })}
@@ -663,7 +726,7 @@ export default function RescueRequestManager({ initialRequestId, onOpenMap }) {
                 <span className="rescue-th-cell">Requester</span>
                 <span className="rescue-th-cell">Location</span>
                 <span className="rescue-th-cell">Time</span>
-                <span className="rescue-th-cell is-status">Status</span>
+                <span className="rescue-th-status">Status</span>
               </div>
 
               {paginatedRequests.map((item) => {
@@ -743,14 +806,29 @@ export default function RescueRequestManager({ initialRequestId, onOpenMap }) {
 
                       <div className="rescue-col-location">
                         <span className="rescue-row-barangay">{barangayText}</span>
-                        {photoCount > 0 && (
-                          <span className="rescue-row-photos">
-                            <FontAwesomeIcon icon={faImages} />
-                            <span>
-                              {photoCount} {photoCount === 1 ? "photo" : "photos"}
+                        <div className="rescue-row-loc-sub">
+                          {(() => {
+                            const locSource = getLocationSourceInfo(item);
+                            if (!locSource) return null;
+                            return (
+                              <span className={`rescue-loc-source-pill ${locSource.className}`}>
+                                <span className="rescue-badge-dot" />
+                                {locSource.label}
+                                {locSource.accuracyText && (
+                                  <span className="rescue-loc-acc-tag">{locSource.accuracyText}</span>
+                                )}
+                              </span>
+                            );
+                          })()}
+                          {photoCount > 0 && (
+                            <span className="rescue-row-photos">
+                              <FontAwesomeIcon icon={faImages} />
+                              <span>
+                                {photoCount} {photoCount === 1 ? "photo" : "photos"}
+                              </span>
                             </span>
-                          </span>
-                        )}
+                          )}
+                        </div>
                       </div>
 
                       <div className={`rescue-col-time ${!timeText ? "is-missing" : ""}`}>
@@ -759,7 +837,7 @@ export default function RescueRequestManager({ initialRequestId, onOpenMap }) {
                       </div>
 
                       <div className="rescue-col-status">
-                        <span className={`rescue-status-badge status-${item.status}`}>
+                        <span className={`rescue-status-badge ${getRescueStatusPillClass(item.status)}`}>
                           {isStillOpen && <span className="rescue-badge-dot" />}
                           {statusLabel}
                         </span>
@@ -778,13 +856,19 @@ export default function RescueRequestManager({ initialRequestId, onOpenMap }) {
                           <FontAwesomeIcon icon={statusIcon} />
                         </span>
                         <strong className="rescue-mr-name">{requesterName}</strong>
-                        <span className={`rescue-status-badge rescue-mr-pill status-${item.status}`}>
+                        <span className={`rescue-status-badge rescue-mr-pill ${getRescueStatusPillClass(item.status)}`}>
                           {isStillOpen && <span className="rescue-badge-dot" />}
                           {statusLabel}
                         </span>
                       </div>
                       <div className="rescue-mr-line2">
-                        {[`#${item.id}`, barangayText, timeText].filter(Boolean).join(" · ")}
+                        {(() => {
+                          const locSource = getLocationSourceInfo(item);
+                          const locLabel = locSource
+                            ? (locSource.accuracyText ? `${locSource.label} (${locSource.accuracyText})` : locSource.label)
+                            : null;
+                          return [`#${item.id}`, barangayText, locLabel, timeText].filter(Boolean).join(" · ");
+                        })()}
                       </div>
                     </div>
                   </button>
@@ -895,7 +979,7 @@ export default function RescueRequestManager({ initialRequestId, onOpenMap }) {
                   <span className="rescue-drawer-alert-id">
                     Rescue Alert #{selected.id}
                   </span>
-                  <span className={`rescue-status-badge status-${selected.status}`}>
+                  <span className={`rescue-status-badge ${getRescueStatusPillClass(selected.status)}`}>
                     {STATUS_LABELS[selected.status] || selected.status.replace("_", " ")}
                   </span>
                   {selectedTimeStatus && (
@@ -1182,10 +1266,29 @@ export default function RescueRequestManager({ initialRequestId, onOpenMap }) {
                       <div className="rescue-drawer-loc-title-text">
                         <h3 className="rescue-drawer-section-title">Location Details</h3>
                         {hasSelectedCoords ? (
-                          <p className="rescue-drawer-coords">
-                            {Number(selected.latitude).toFixed(5)}° N,{" "}
-                            {Number(selected.longitude).toFixed(5)}° E
-                          </p>
+                          <div className="rescue-drawer-coords-stack">
+                            <p className="rescue-drawer-coords">
+                              {Number(selected.latitude).toFixed(5)}° N,{" "}
+                              {Number(selected.longitude).toFixed(5)}° E
+                            </p>
+                            {(() => {
+                              const locSource = getLocationSourceInfo(selected);
+                              if (!locSource) return null;
+                              return (
+                                <div className="rescue-drawer-loc-source-badge">
+                                  <span className={`rescue-loc-source-pill ${locSource.className}`}>
+                                    <span className="rescue-badge-dot" />
+                                    {locSource.label}
+                                  </span>
+                                  {locSource.fullAccuracyText && (
+                                    <span className="rescue-drawer-accuracy-note">
+                                      {locSource.fullAccuracyText}
+                                    </span>
+                                  )}
+                                </div>
+                              );
+                            })()}
+                          </div>
                         ) : (
                           <p className="rescue-drawer-coords is-muted">
                             GPS coordinates were not provided.

@@ -1106,10 +1106,14 @@ function HazardReportReview({ focusReportId, onOpenMap }) {
                           <span>{formatRelativeTime(r.submitted_at)}</span>
                         </span>
 
-                        <span
-                          className="hr-pill"
-                          style={{ background: meta.bg, color: meta.color }}
-                        >
+                        <span className={`hr-pill ${
+                            meta.label === "Pending" ? "hr-pill--pending" :
+                            meta.label === "Validated" ? "hr-pill--full" :
+                            meta.label === "Rejected" ? "hr-pill--closed" :
+                            meta.label === "Resolved" ? "hr-pill--available" :
+                            "hr-pill--pending"
+                          }`}>
+                          <span className="hr-status-dot" aria-hidden="true" />
                           {meta.label}
                         </span>
                       </div>
@@ -1121,10 +1125,14 @@ function HazardReportReview({ focusReportId, onOpenMap }) {
                           <FontAwesomeIcon icon={reportIcon(r.report_type)} />
                         </span>
                         <strong className="hr-mr-street">{streetOrPlace}</strong>
-                        <span
-                          className="hr-pill hr-mr-pill"
-                          style={{ background: meta.bg, color: meta.color }}
-                        >
+                        <span className={`hr-pill hr-mr-pill ${
+                            meta.label === "Pending" ? "hr-pill--pending" :
+                            meta.label === "Validated" ? "hr-pill--full" :
+                            meta.label === "Rejected" ? "hr-pill--closed" :
+                            meta.label === "Resolved" ? "hr-pill--available" :
+                            "hr-pill--pending"
+                          }`}>
+                          <span className="hr-status-dot" aria-hidden="true" />
                           {meta.label}
                         </span>
                       </div>
@@ -1321,13 +1329,14 @@ function HazardReportReview({ focusReportId, onOpenMap }) {
             <div className="hr-drawer-sticky-header">
               <div className="hr-drawer-header-top">
                 <div className="hr-drawer-badge-group">
-                  <span
-                    className="hr-pill hr-pill--lg"
-                    style={{
-                      background: statusMeta(selected.status).bg,
-                      color: statusMeta(selected.status).color,
-                    }}
-                  >
+                  <span className={`hr-pill hr-pill--lg ${
+                      selected.status === "pending" ? "hr-pill--pending" :
+                      selected.status === "validated" ? "hr-pill--full" :
+                      selected.status === "rejected" ? "hr-pill--closed" :
+                      selected.status === "resolved" ? "hr-pill--available" :
+                      "hr-pill--pending"
+                    }`}>
+                    <span className="hr-status-dot" aria-hidden="true" />
                     {statusMeta(selected.status).label}
                   </span>
                   <span className="hr-drawer-title-id">Incident #{selected.id}</span>

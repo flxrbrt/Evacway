@@ -1061,93 +1061,85 @@ export default function EvacueeCheckIn() {
       </div>
 
       {/* Interactive KPI Stat Cards (Click to Filter by Status) */}
-      <section className="checkin-stats-grid" role="group" aria-label="Filter check-in list by arrival status">
+      <section className="stat-card-grid cols-4" role="group" aria-label="Filter check-in list by arrival status">
         {/* Total Assigned */}
         <button
           type="button"
-          className={`checkin-stat-card is-total ${filterStatus === "all" ? "is-selected" : ""}`}
+          className={`stat-card is-clickable is-neutral ${filterStatus === "all" ? "is-selected" : ""}`}
           onClick={() => {
             setFilterStatus("all");
             setCurrentPage(1);
           }}
           aria-pressed={filterStatus === "all"}
         >
-          <div className="checkin-stat-card-main">
-            <span className="checkin-stat-card-label">
-              <span className="checkin-label-full">Total Assigned</span>
-              <span className="checkin-label-short">Total</span>
-            </span>
-            <span className="checkin-stat-value">{summary.total_assigned}</span>
+          <div className="stat-card-content">
+            <span className="stat-card-label">Total Assigned</span>
+            <strong className="stat-card-value">{summary.total_assigned}</strong>
+            <span className="stat-card-hint">All assigned evacuees</span>
           </div>
-          <div className="checkin-stat-icon blue">
+          <span className="stat-card-icon stat-card-icon--neutral" aria-hidden="true">
             <FontAwesomeIcon icon={faUserGroup} />
-          </div>
+          </span>
         </button>
 
         {/* Fully Arrived */}
         <button
           type="button"
-          className={`checkin-stat-card is-arrived ${filterStatus === "checked_in" ? "is-selected" : ""}`}
+          className={`stat-card is-clickable is-resolved ${filterStatus === "checked_in" ? "is-selected" : ""}`}
           onClick={() => {
             setFilterStatus("checked_in");
             setCurrentPage(1);
           }}
           aria-pressed={filterStatus === "checked_in"}
         >
-          <div className="checkin-stat-card-main">
-            <span className="checkin-stat-card-label">
-              <span className="checkin-label-full">Fully Arrived</span>
-              <span className="checkin-label-short">Arrived</span>
-            </span>
-            <span className="checkin-stat-value">{summary.total_checked_in}</span>
+          <div className="stat-card-content">
+            <span className="stat-card-label">Fully Arrived</span>
+            <strong className="stat-card-value">{summary.total_checked_in}</strong>
+            <span className="stat-card-hint">Checked in successfully</span>
           </div>
-          <div className="checkin-stat-icon green">
+          <span className="stat-card-icon stat-card-icon--resolved" aria-hidden="true">
             <FontAwesomeIcon icon={faCircleCheck} />
-          </div>
+          </span>
         </button>
 
         {/* Partially Arrived */}
         <button
           type="button"
-          className={`checkin-stat-card is-partial ${filterStatus === "partial" ? "is-selected" : ""}`}
+          className={`stat-card is-clickable is-warning ${filterStatus === "partial" ? "is-selected" : ""}`}
           onClick={() => {
             setFilterStatus("partial");
             setCurrentPage(1);
           }}
           aria-pressed={filterStatus === "partial"}
         >
-          <div className="checkin-stat-card-main">
-            <span className="checkin-stat-card-label">
-              <span className="checkin-label-full">Partially Arrived</span>
-              <span className="checkin-label-short">Partial</span>
-            </span>
-            <span className="checkin-stat-value">{summary.total_partial || 0}</span>
+          <div className="stat-card-content">
+            <span className="stat-card-label">Partially Arrived</span>
+            <strong className="stat-card-value">{summary.total_partial || 0}</strong>
+            <span className="stat-card-hint">Some members checked in</span>
           </div>
-          <div className="checkin-stat-icon amber">
+          <span className="stat-card-icon stat-card-icon--warning" aria-hidden="true">
             <FontAwesomeIcon icon={faClock} />
-          </div>
+          </span>
         </button>
 
         {/* Pending Arrival */}
         <button
           type="button"
-          className={`checkin-stat-card is-pending ${filterStatus === "pending" ? "is-selected" : ""}`}
+          className={`stat-card is-clickable is-pending ${filterStatus === "pending" ? "is-selected" : ""}`}
           onClick={() => {
             setFilterStatus("pending");
             setCurrentPage(1);
           }}
           aria-pressed={filterStatus === "pending"}
         >
-          <div className="checkin-stat-card-main">
-            <span className="checkin-stat-card-label">
-              <span className="checkin-label-full">Pending Arrival</span>
-              <span className="checkin-label-short">Pending</span>
-            </span>
-            <span className="checkin-stat-value">{summary.total_pending}</span>
+          <div className="stat-card-content">
+            <span className="stat-card-label">Pending Arrival</span>
+            <strong className="stat-card-value">{summary.total_pending}</strong>
+            <span className="stat-card-hint">Not yet checked in</span>
           </div>
-          <div className="checkin-stat-icon slate">
+          <span className="stat-card-icon stat-card-icon--pending" aria-hidden="true">
             <FontAwesomeIcon icon={faCircleExclamation} />
-          </div>
+          </span>
         </button>
       </section>
 
@@ -1251,7 +1243,7 @@ export default function EvacueeCheckIn() {
                     <th scope="col" className="col-barangay">Origin Barangay</th>
                     <th scope="col" className="col-center">Assigned Shelter</th>
                     <th scope="col" className="col-members">Family Members</th>
-                    <th scope="col" className="col-status">Arrival Status</th>
+                    <th scope="col" className="col-status checkin-th-status">STATUS</th>
                     <th scope="col" className="col-action">Staff Action</th>
                   </tr>
                 </thead>
@@ -1354,21 +1346,21 @@ export default function EvacueeCheckIn() {
                           <div className="checkin-status-cell">
                             {isFullyArrived ? (
                               <span
-                                className="checkin-status-badge arrived"
+                                className="checkin-status-badge checkin-status-badge--available"
                                 title={evacuee.checked_in_at ? `Arrival: ${evacuee.checked_in_at_formatted || evacuee.checked_in_at}` : undefined}
                               >
-                                <span className="checkin-status-dot green" />
-                                <span>Fully Arrived</span>
+                                <span className="checkin-status-dot" aria-hidden="true" />
+                                <span>Arrived</span>
                               </span>
                             ) : isPartiallyArrived ? (
-                              <span className="checkin-status-badge partial">
-                                <span className="checkin-status-dot amber" />
+                              <span className="checkin-status-badge checkin-status-badge--near-full">
+                                <span className="checkin-status-dot" aria-hidden="true" />
                                 <span>{evacuee.checked_in_members} of {evacuee.member_count} Here</span>
                               </span>
                             ) : (
-                              <span className="checkin-status-badge pending">
-                                <span className="checkin-status-dot gray" />
-                                <span>Pending Arrival</span>
+                              <span className="checkin-status-badge checkin-status-badge--unmapped">
+                                <span className="checkin-status-dot" aria-hidden="true" />
+                                <span>Pending</span>
                               </span>
                             )}
                           </div>
@@ -1516,18 +1508,18 @@ export default function EvacueeCheckIn() {
                         onClick={(e) => e.stopPropagation()}
                       >
                         {isFullyArrived ? (
-                          <span className="checkin-status-badge arrived">
-                            <span className="checkin-status-dot green" />
+                          <span className="checkin-status-badge checkin-status-badge--available">
+                            <span className="checkin-status-dot" aria-hidden="true" />
                             <span>Arrived</span>
                           </span>
                         ) : isPartiallyArrived ? (
-                          <span className="checkin-status-badge partial">
-                            <span className="checkin-status-dot amber" />
+                          <span className="checkin-status-badge checkin-status-badge--near-full">
+                            <span className="checkin-status-dot" aria-hidden="true" />
                             <span>{evacuee.checked_in_members}/{evacuee.member_count} Here</span>
                           </span>
                         ) : (
-                          <span className="checkin-status-badge pending">
-                            <span className="checkin-status-dot gray" />
+                          <span className="checkin-status-badge checkin-status-badge--unmapped">
+                            <span className="checkin-status-dot" aria-hidden="true" />
                             <span>Pending</span>
                           </span>
                         )}

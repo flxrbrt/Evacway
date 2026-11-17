@@ -10,6 +10,7 @@ import {
   faChevronLeft,
   faChevronRight,
   faUser,
+  faList,
 } from "@fortawesome/free-solid-svg-icons";
 import { useUsers } from "../../hooks/useEvacuationQueries";
 import "./SystemAndLogs.css";
@@ -409,34 +410,41 @@ function SystemAndLogs({ logs = [], user = null, loading = false, error = "" }) 
         </header>
 
         {/* 5. STAT CARDS (NO BLUE HIGHLIGHT UNLESS FILTER) */}
-        <div className="sal-summary-grid">
-          <div className="sal-stat-card">
-            <span>
-              {scopedLogs.length === 200 && !isFilterActive
-                ? "Latest 200 events"
-                : "Events"}
-            </span>
-            <strong>
-              {filteredLogs.length}
+        <section className="stat-card-grid cols-2" aria-label="System log summary">
+          <div className="stat-card is-plain">
+            <div className="stat-card-content">
+              <span className="stat-card-label">
+                {scopedLogs.length === 200 && !isFilterActive
+                  ? "Latest 200 events"
+                  : "Events"}
+              </span>
+              <strong className="stat-card-value">{filteredLogs.length}</strong>
               {isFilterActive && (
-                <span className="sal-stat-sub"> of {scopedLogs.length} loaded</span>
+                <span className="stat-card-hint">of {scopedLogs.length} loaded</span>
               )}
-            </strong>
+            </div>
+            <span className="stat-card-icon stat-card-icon--neutral" aria-hidden="true">
+              <FontAwesomeIcon icon={faList} />
+            </span>
           </div>
 
-          <div className="sal-stat-card">
-            <span>Latest activity</span>
-            <strong
-              title={
-                latestTimestamp
-                  ? new Date(latestTimestamp).toLocaleString()
-                  : undefined
-              }
-            >
-              {loading ? "Loading..." : latestActivityText}
-            </strong>
+          <div className="stat-card is-plain">
+            <div className="stat-card-content">
+              <span className="stat-card-label">Latest activity</span>
+              <strong className="stat-card-value">
+                {loading ? "Loading..." : latestActivityText}
+              </strong>
+              {latestTimestamp && (
+                <span className="stat-card-hint" title={new Date(latestTimestamp).toLocaleString()}>
+                  {new Date(latestTimestamp).toLocaleTimeString()}
+                </span>
+              )}
+            </div>
+            <span className="stat-card-icon stat-card-icon--neutral" aria-hidden="true">
+              <FontAwesomeIcon icon={faClock} />
+            </span>
           </div>
-        </div>
+        </section>
 
         {/* 4. FILTERS TOOLBAR */}
         <div className="sal-toolbar" role="region" aria-label="Filter logs">

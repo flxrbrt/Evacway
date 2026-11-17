@@ -442,6 +442,27 @@
   text-align: right;
 }
 
+/* =========================================================
+   STANDARDIZED STATUS COLUMN HEADER (matching CenterList ec-center-table thead th)
+   ========================================================= */
+.rescue-th-status {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted, #64748b);
+  background-color: var(--bg, #f8fafc);
+  border-bottom: 1px solid var(--border, #e2e8f0);
+  border-top: none;
+  text-align: right;
+  white-space: nowrap;
+  height: 40px;
+  padding: 0 20px;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
 /* COMPACT TABLE ROW */
 .rescue-request-card {
   display: block;
@@ -805,18 +826,20 @@
   outline-offset: 2px;
 }
 
-/* STATUS BADGES */
+/* =========================================================
+   STANDARDIZED STATUS PILLS (matching CenterList ec-status-pill)
+   ========================================================= */
 .rescue-status-badge {
-  padding: 3.5px 10px;
-  border-radius: 9999px;
-  font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  white-space: nowrap;
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 9999px;
+  border: 1px solid transparent;
+  white-space: nowrap;
+  line-height: 1.2;
 }
 
 .rescue-badge-dot {
@@ -827,30 +850,73 @@
   animation: rescuePulse 1.5s infinite ease-in-out;
 }
 
-.rescue-status-badge.status-pending,
-.rescue-status-badge.status-open {
-  background: #fef2f2;
-  color: #b91c1c;
-  border: 1px solid #fecaca;
-}
-
-.rescue-status-badge.status-acknowledged {
-  background: #fffbeb;
-  color: #b45309;
-  border: 1px solid #fde68a;
-}
-
-.rescue-status-badge.status-responding,
-.rescue-status-badge.status-in_progress {
-  background: #eff6ff;
+/* Info / Pending */
+.rescue-status-badge--pending {
+  background-color: #eff6ff;
   color: #1d4ed8;
-  border: 1px solid #bfdbfe;
+  border-color: #bfdbfe;
+}
+.rescue-status-badge--pending .rescue-badge-dot {
+  background-color: #3b82f6;
 }
 
-.rescue-status-badge.status-resolved {
-  background: #ecfdf5;
-  color: #059669;
-  border: 1px solid #a7f3d0;
+/* Warning / Acknowledged */
+.rescue-status-badge--near-full {
+  background-color: #fffbeb;
+  color: #b45309;
+  border-color: #fde68a;
+}
+.rescue-status-badge--near-full .rescue-badge-dot {
+  background-color: #f59e0b;
+}
+
+/* Info / Responding, In Progress */
+.rescue-status-badge--in-progress {
+  background-color: #eff6ff;
+  color: #1d4ed8;
+  border-color: #bfdbfe;
+}
+.rescue-status-badge--in-progress .rescue-badge-dot {
+  background-color: #3b82f6;
+}
+
+/* Success / Resolved */
+.rescue-status-badge--available {
+  background-color: #ecfdf5;
+  color: #047857;
+  border-color: #a7f3d0;
+}
+.rescue-status-badge--available .rescue-badge-dot {
+  background-color: #10b981;
+}
+
+/* Backward compatibility for mobile status icon */
+.rescue-row-status-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin-top: 1px;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.rescue-row-status-icon.is-pending {
+  color: #dc2626;
+}
+
+.rescue-row-status-icon.is-acknowledged {
+  color: #d97706;
+}
+
+.rescue-row-status-icon.is-responding,
+.rescue-row-status-icon.is-in_progress {
+  color: #2563eb;
+}
+
+.rescue-row-status-icon.is-resolved {
+  color: #16a34a;
 }
 
 /* EMPTY & LOADING STATES */
@@ -1973,4 +2039,81 @@
     z-index: 10;
     background: #ffffff;
   }
+}
+
+/* Location source badges in RescueRequestManager */
+.rescue-row-loc-sub {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  flex-wrap: wrap;
+}
+
+.rescue-loc-source-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 9999px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.4;
+  border: 1px solid transparent;
+}
+
+.rescue-loc-source-pill--gps {
+  background: #ecfdf5;
+  color: #15803d;
+  border-color: #d1fae5;
+}
+
+.rescue-loc-source-pill--gps .rescue-badge-dot {
+  background: #15803d;
+}
+
+.rescue-loc-source-pill--approximate {
+  background: #fffbeb;
+  color: #b45309;
+  border-color: #fef3c7;
+}
+
+.rescue-loc-source-pill--approximate .rescue-badge-dot {
+  background: #b45309;
+}
+
+.rescue-loc-source-pill--manual {
+  background: #eff6ff;
+  color: #1d4ed8;
+  border-color: #bfdbfe;
+}
+
+.rescue-loc-source-pill--manual .rescue-badge-dot {
+  background: #2563eb;
+}
+
+.rescue-loc-acc-tag {
+  font-size: 10px;
+  opacity: 0.85;
+  font-family: var(--font-mono, monospace);
+}
+
+.rescue-drawer-coords-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.rescue-drawer-loc-source-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 2px;
+}
+
+.rescue-drawer-accuracy-note {
+  font-size: 12px;
+  color: #64748b;
+  font-weight: 500;
 }

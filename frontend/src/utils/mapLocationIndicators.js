@@ -50,10 +50,16 @@ export function createSelectedLocationElement() {
 }
 
 /**
- * Places or updates the draggable selected location marker on the map.
+ * Places or updates the selected location marker on the map.
  * Ensures only ONE marker exists in the provided ref.
  */
-export function setOrUpdateSelectedLocationMarker(map, markerRef, location, onDragEnd) {
+export function setOrUpdateSelectedLocationMarker(
+  map,
+  markerRef,
+  location,
+  onDragEnd,
+  { draggable = true } = {}
+) {
   if (!map) return null;
 
   if (markerRef && markerRef.current) {
@@ -78,18 +84,18 @@ export function setOrUpdateSelectedLocationMarker(map, markerRef, location, onDr
     const element = createSelectedLocationElement();
     const marker = new mapboxgl.Marker({
       element,
-      draggable: true,
+      draggable,
       anchor: "center",
     })
       .setLngLat([lng, lat])
       .addTo(map);
 
-    marker.on("dragend", () => {
-      const lngLat = marker.getLngLat();
-      if (onDragEnd) {
+    if (draggable && typeof onDragEnd === "function") {
+      marker.on("dragend", () => {
+        const lngLat = marker.getLngLat();
         onDragEnd({ lat: lngLat.lat, lng: lngLat.lng });
-      }
-    });
+      });
+    }
 
     if (markerRef) {
       markerRef.current = marker;
@@ -125,6 +131,15 @@ export function setOrUpdateAccuracyCircle(map, lng, lat, accuracyMeters = 30) {
       const existingSource = map.getSource(sourceId);
       if (existingSource) {
         existingSource.setData(data);
+        if (map.getLayer(fillLayerId)) {
+          map.setPaintProperty(fillLayerId, "fill-color", "#eff6ff");
+          map.setPaintProperty(fillLayerId, "fill-opacity", 0.6);
+        }
+        if (map.getLayer(lineLayerId)) {
+          map.setPaintProperty(lineLayerId, "line-color", "#bfdbfe");
+          map.setPaintProperty(lineLayerId, "line-opacity", 0.9);
+          map.setPaintProperty(lineLayerId, "line-width", 1.5);
+        }
         return;
       }
 
@@ -139,8 +154,8 @@ export function setOrUpdateAccuracyCircle(map, lng, lat, accuracyMeters = 30) {
           type: "fill",
           source: sourceId,
           paint: {
-            "fill-color": "#2563eb",
-            "fill-opacity": 0.14,
+            "fill-color": "#eff6ff",
+            "fill-opacity": 0.6,
           },
         });
       }
@@ -151,8 +166,8 @@ export function setOrUpdateAccuracyCircle(map, lng, lat, accuracyMeters = 30) {
           type: "line",
           source: sourceId,
           paint: {
-            "line-color": "#2563eb",
-            "line-opacity": 0.5,
+            "line-color": "#bfdbfe",
+            "line-opacity": 0.9,
             "line-width": 1.5,
           },
         });
@@ -182,6 +197,181 @@ export function removeAccuracyCircle(map) {
   } catch {
     // Ignore cleanup errors on unmount
   }
+}
+
+/**
+ * Animates marker position and accuracy circle smoothly over duration ms (default 300ms).
+ * Honors prefers-reduced-motion by immediately jumping without animation.
+ */
+export function animateLocationTransition({
+  map,
+  marker,
+  fromLng,
+  fromLat,
+  toLng,
+  toLat,
+  fromAccuracy,
+  toAccuracy,
+  duration = 300,
+  onFrame,
+}) {
+  const prefersReducedMotion =
+    typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  const validFrom = Number.isFinite(fromLng) && Number.isFinite(fromLat);
+  const validTo = Number.isFinite(toLng) && Number.isFinite(toLat);
+
+  if (!validTo) return null;
+
+  if (prefersReducedMotion || !validFrom || duration <= 0) {
+    if (marker && typeof marker.setLngLat === "function") {
+      marker.setLngLat([toLng, toLat]);
+    }
+    if (map) {
+      setOrUpdateAccuracyCircle(map, toLng, toLat, toAccuracy || 30);
+    }
+    if (onFrame) onFrame(toLng, toLat, toAccuracy || 30);
+    return null;
+  }
+
+  const startAccuracy = Number.isFinite(fromAccuracy) ? fromAccuracy : toAccuracy || 30;
+  const targetAccuracy = Number.isFinite(toAccuracy) ? toAccuracy : 30;
+  let startTime = null;
+  let frameId = null;
+
+  function step(timestamp) {
+    if (startTime === null) startTime = timestamp;
+    const elapsed = timestamp - startTime;
+    const progress = Math.min(elapsed / duration, 1);
+    // Cubic ease-out
+    const ease = 1 - Math.pow(1 - progress, 3);
+
+    const curLng = fromLng + (toLng - fromLng) * ease;
+    const curLat = fromLat + (toLat - fromLat) * ease;
+    const curAccuracy = startAccuracy + (targetAccuracy - startAccuracy) * ease;
+
+    if (marker && typeof marker.setLngLat === "function") {
+      marker.setLngLat([curLng, curLat]);
+    }
+    if (map) {
+      setOrUpdateAccuracyCircle(map, curLng, curLat, curAccuracy);
+    }
+    if (onFrame) onFrame(curLng, curLat, curAccuracy);
+
+    if (progress < 1) {
+      frameId = requestAnimationFrame(step);
+    }
+  }
+
+  frameId = requestAnimationFrame(step);
+  return () => {
+    if (frameId) cancelAnimationFrame(frameId);
+  };
+}
+
+/**
+ * Refines GPS location for up to 20 seconds using watchPosition.
+ * Retains the reading with lowest coords.accuracy.
+ * Calls onFirstFix on first fix and onImprovement whenever a better fix arrives.
+ * Resolves with the best position at 20 seconds (or immediately if accuracy <= 10m).
+ * Rejects with user-friendly error string if no fix could be acquired.
+ */
+export function refineGeolocation({
+  onFirstFix,
+  onImprovement,
+  onProgress,
+  maxRefineMs = 20000,
+} = {}) {
+  return new Promise((resolve, reject) => {
+    if (typeof navigator === "undefined" || !navigator.geolocation) {
+      reject(new Error("Your browser does not support geolocation."));
+      return;
+    }
+
+    let bestReading = null;
+    let watchId = null;
+    let timerId = null;
+    let settled = false;
+
+    const cleanup = () => {
+      if (timerId) {
+        clearTimeout(timerId);
+        timerId = null;
+      }
+      if (watchId !== null) {
+        navigator.geolocation.clearWatch(watchId);
+        watchId = null;
+      }
+    };
+
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (bestReading) {
+        resolve(bestReading);
+      } else {
+        reject(new Error("Location request timed out. Please try again or pin on the map."));
+      }
+    };
+
+    timerId = setTimeout(finish, maxRefineMs);
+
+    try {
+      watchId = navigator.geolocation.watchPosition(
+        (pos) => {
+          if (settled) return;
+          const currentAcc = pos.coords.accuracy ?? Infinity;
+          const isFirst = !bestReading;
+          const isBetter = !bestReading || currentAcc < (bestReading.coords.accuracy ?? Infinity);
+
+          if (isFirst) {
+            bestReading = pos;
+            if (onFirstFix) onFirstFix(pos);
+          } else if (isBetter) {
+            bestReading = pos;
+            if (onImprovement) onImprovement(pos);
+          }
+
+          if (onProgress) onProgress(pos, isBetter);
+
+          if (currentAcc <= 10) {
+            finish();
+          }
+        },
+        (err) => {
+          if (settled) return;
+          if (bestReading) {
+            finish();
+            return;
+          }
+          settled = true;
+          cleanup();
+          let message = "Couldn't get your location. Pin on the map instead.";
+          if (err.code === 1) {
+            message = "Location access is blocked. Allow it in your browser settings or pin on the map.";
+          } else if (err.code === 2) {
+            message = "Location information is unavailable. Try moving to an area with clear GPS or pin on the map.";
+          } else if (err.code === 3) {
+            message = "Location request timed out. Please try again or pin on the map.";
+          }
+          const errorObj = new Error(message);
+          errorObj.code = err.code;
+          reject(errorObj);
+        },
+        {
+          enableHighAccuracy: true,
+          timeout: 15000,
+          maximumAge: 0,
+        }
+      );
+    } catch (e) {
+      cleanup();
+      reject(e);
+    }
+  });
 }
 
 /**

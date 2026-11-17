@@ -221,9 +221,8 @@ function ExecutiveKpiCard({
             {title}
           </span>
           <span
-            className={`grid size-9 shrink-0 place-items-center rounded-xl transition-transform duration-200 group-hover:scale-105 ${
-              isEmergency ? "bg-red-50 text-red-600" : "bg-slate-100 text-slate-600"
-            }`}
+            className={`grid size-9 shrink-0 place-items-center rounded-xl transition-transform duration-200 group-hover:scale-105 ${isEmergency ? "bg-red-50 text-red-600" : "bg-slate-100 text-slate-600"
+              }`}
           >
             <FontAwesomeIcon icon={icon} className="text-sm" />
           </span>
@@ -240,15 +239,14 @@ function ExecutiveKpiCard({
         </span>
         {trendText && (
           <span
-            className={`dashboard-mono text-[11px] font-semibold shrink-0 px-2 py-0.5 rounded-full ${
-              trendType === "danger"
-                ? "bg-red-50 text-red-700 border border-red-200"
-                : trendType === "warning"
+            className={`dashboard-mono text-[11px] font-semibold shrink-0 px-2 py-0.5 rounded-full ${trendType === "danger"
+              ? "bg-red-50 text-red-700 border border-red-200"
+              : trendType === "warning"
                 ? "bg-amber-50 text-amber-700 border border-amber-200"
                 : trendType === "success"
-                ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                : "bg-slate-100 text-slate-600 border border-slate-200"
-            }`}
+                  ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                  : "bg-slate-100 text-slate-600 border border-slate-200"
+              }`}
           >
             {trendText}
           </span>
@@ -685,8 +683,8 @@ function IncidentTrendsCard({
     const maxDayWithData = isThisMonth
       ? Math.min(todayDay, totalDays)
       : selectedYear < now.getFullYear() || (selectedYear === now.getFullYear() && selectedMonth < now.getMonth())
-      ? totalDays
-      : 0;
+        ? totalDays
+        : 0;
 
     const list = [];
     for (let d = 1; d <= totalDays; d++) {
@@ -817,11 +815,10 @@ function IncidentTrendsCard({
               onClick={onNextMonth}
               disabled={isCurrentMonth}
               aria-label="Next month"
-              className={`size-7 flex items-center justify-center rounded-lg transition ${
-                isCurrentMonth
-                  ? "text-slate-300 cursor-not-allowed"
-                  : "text-slate-500 hover:text-slate-800 hover:bg-white cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500"
-              }`}
+              className={`size-7 flex items-center justify-center rounded-lg transition ${isCurrentMonth
+                ? "text-slate-300 cursor-not-allowed"
+                : "text-slate-500 hover:text-slate-800 hover:bg-white cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500"
+                }`}
             >
               <FontAwesomeIcon icon={faChevronRight} className="text-[10px]" />
             </button>
@@ -836,9 +833,8 @@ function IncidentTrendsCard({
               type="button"
               aria-pressed={!hiddenSeries.has(s.key)}
               onClick={() => toggleSeries(s.key)}
-              className={`inline-flex items-center gap-1.5 text-xs font-semibold cursor-pointer px-2 py-1 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition ${
-                hiddenSeries.has(s.key) ? "opacity-35 line-through" : "opacity-100 hover:bg-slate-50"
-              }`}
+              className={`inline-flex items-center gap-1.5 text-xs font-semibold cursor-pointer px-2 py-1 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition ${hiddenSeries.has(s.key) ? "opacity-35 line-through" : "opacity-100 hover:bg-slate-50"
+                }`}
             >
               <span
                 className="size-2 rounded-full shrink-0"
@@ -1011,8 +1007,8 @@ function IncidentTrendsCard({
                   hoveredX / vbWidth > 0.65
                     ? "translateX(-100%)"
                     : hoveredX / vbWidth < 0.35
-                    ? "translateX(0%)"
-                    : "translateX(-50%)",
+                      ? "translateX(0%)"
+                      : "translateX(-50%)",
               }}
             >
               <div className="font-bold text-slate-800 border-b border-slate-100 pb-1 mb-1.5 text-xs">
@@ -1469,11 +1465,10 @@ function Dashboard() {
         <div className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 sm:py-8 lg:px-8 space-y-5">
           {/* Push Notification Activation Prompt (Hides once activated) */}
           {(pushStatus === "inactive" || pushSuccess) && !pushStripDismissed && (
-            <div className={`flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 py-3 rounded-2xl border text-xs font-semibold transition ${
-              pushSuccess
-                ? "bg-emerald-50 border-emerald-200 text-emerald-800"
-                : "bg-blue-50/90 border-blue-200 text-blue-900 shadow-2xs"
-            }`}>
+            <div className={`flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 py-3 rounded-2xl border text-xs font-semibold transition ${pushSuccess
+              ? "bg-emerald-50 border-emerald-200 text-emerald-800"
+              : "bg-blue-50/90 border-blue-200 text-blue-900 shadow-2xs"
+              }`}>
               <div className="flex items-center gap-2.5">
                 <FontAwesomeIcon
                   icon={pushSuccess ? faCircleCheck : faBell}
@@ -1506,7 +1501,7 @@ function Dashboard() {
                     type="button"
                     onClick={() => {
                       setPushStripDismissed(true);
-                      try { sessionStorage.setItem("evacway_push_strip_dismissed", "true"); } catch {}
+                      try { sessionStorage.setItem("evacway_push_strip_dismissed", "true"); } catch { }
                     }}
                     className="p-1.5 text-blue-400 hover:text-blue-700 rounded-lg transition cursor-pointer"
                     title="Dismiss"
@@ -1597,7 +1592,7 @@ function Dashboard() {
               <section className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-2xs space-y-4" aria-label="Evacuation arrival and sheltering status">
                 <div>
                   <h2 className="dashboard-heading text-lg sm:text-xl font-black text-slate-900 tracking-tight">
-                    Evacuee Arrival &amp; Shelter Check-In Status
+                    Evacuee &amp; Shelter Arrival Status
                   </h2>
                   <p className="mt-1 text-xs sm:text-sm text-slate-500 font-normal leading-relaxed m-0">
                     <span className="dashboard-mono font-medium text-slate-700">
@@ -1633,51 +1628,86 @@ function Dashboard() {
               </section>
 
               {/* 3. EXECUTIVE KPI METRICS (4 Actionable Command Tiles) */}
-              <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5" aria-label="Executive KPI tiles">
+              <section className="stat-card-grid cols-4" aria-label="Executive KPI tiles">
                 {/* 1. Emergency Alerts & Incidents */}
-                <ExecutiveKpiCard
-                  title="Emergency Alerts"
-                  value={openRescueCount + pendingHazardCount}
-                  subtext={`${openRescueCount} rescues · ${pendingHazardCount} hazards`}
-                  icon={faLifeRing}
-                  isEmergency={true}
-                  trendText={openRescueCount > 0 ? "Needs Rescue" : pendingHazardCount > 0 ? "Needs Review" : "All Clear"}
-                  trendType={openRescueCount > 0 ? "danger" : pendingHazardCount > 0 ? "warning" : "success"}
+                <button
+                  type="button"
+                  className="stat-card is-clickable"
                   onClick={() => handleSectionChange(openRescueCount > 0 ? "rescue" : "reports")}
-                />
+                >
+                  <div className="stat-card-content">
+                    <span className="stat-card-label">Emergency Alerts</span>
+                    <strong className={`stat-card-value ${openRescueCount > 0 || pendingHazardCount > 0 ? "text-red-600" : "text-emerald-700"}`}>
+                      {formatCount(openRescueCount + pendingHazardCount)}
+                    </strong>
+                    <span className="stat-card-hint">
+                      {openRescueCount} rescues · {pendingHazardCount} hazards
+                      {openRescueCount > 0 ? " · Needs Rescue" : pendingHazardCount > 0 ? " · Needs Review" : " · All Clear"}
+                    </span>
+                  </div>
+                  <span className={`stat-card-icon ${openRescueCount > 0 || pendingHazardCount > 0 ? "stat-card-icon--alert" : "stat-card-icon--resolved"}`} aria-hidden="true">
+                    <FontAwesomeIcon icon={faLifeRing} />
+                  </span>
+                </button>
 
                 {/* 2. Pending Arrival (En Route) */}
-                <ExecutiveKpiCard
-                  title="Pending Arrival"
-                  value={pendingArrivalFamilies}
-                  subtext={`${formatCount(pendingResidents)} residents`}
-                  icon={faPersonWalking}
-                  trendText={pendingArrivalFamilies > 0 ? "Awaiting Intake" : "None Pending"}
-                  trendType={pendingArrivalFamilies > 0 ? "warning" : "success"}
+                <button
+                  type="button"
+                  className="stat-card is-clickable"
                   onClick={() => handleSectionChange("checkin")}
-                />
+                >
+                  <div className="stat-card-content">
+                    <span className="stat-card-label">Pending Arrival</span>
+                    <strong className={`stat-card-value ${pendingArrivalFamilies > 0 ? "text-amber-600" : "text-emerald-700"}`}>
+                      {formatCount(pendingArrivalFamilies)}
+                    </strong>
+                    <span className="stat-card-hint">
+                      {formatCount(pendingResidents)} residents
+                      {pendingArrivalFamilies > 0 ? " · Awaiting Intake" : " · None Pending"}
+                    </span>
+                  </div>
+                  <span className={`stat-card-icon ${pendingArrivalFamilies > 0 ? "stat-card-icon--warning" : "stat-card-icon--resolved"}`} aria-hidden="true">
+                    <FontAwesomeIcon icon={faPersonWalking} />
+                  </span>
+                </button>
 
                 {/* 3. Verified Arrived Families */}
-                <ExecutiveKpiCard
-                  title="Families Arrived"
-                  value={totalArrivedFamilies}
-                  subtext={`${formatCount(arrivedResidents)} residents on-site`}
-                  icon={faUserCheck}
-                  trendText={`${familyArrivalRate}% arrived`}
-                  trendType={familyArrivalRate >= 70 ? "success" : "warning"}
+                <button
+                  type="button"
+                  className="stat-card is-clickable"
                   onClick={() => handleSectionChange("checkin")}
-                />
+                >
+                  <div className="stat-card-content">
+                    <span className="stat-card-label">Families Arrived</span>
+                    <strong className="stat-card-value">{formatCount(totalArrivedFamilies)}</strong>
+                    <span className="stat-card-hint">
+                      {formatCount(arrivedResidents)} residents on-site · {familyArrivalRate}% arrived
+                    </span>
+                  </div>
+                  <span className={`stat-card-icon ${familyArrivalRate >= 70 ? "stat-card-icon--resolved" : "stat-card-icon--warning"}`} aria-hidden="true">
+                    <FontAwesomeIcon icon={faUserCheck} />
+                  </span>
+                </button>
 
                 {/* 4. Available Headroom */}
-                <ExecutiveKpiCard
-                  title="Available Headroom"
-                  value={totalRemainingCapacity}
-                  subtext={`of ${formatCount(totalCapacity)} capacity`}
-                  icon={faDoorOpen}
-                  trendText={`${remainingPercent}% free`}
-                  trendType={remainingPercent < 15 ? "danger" : "success"}
+                <button
+                  type="button"
+                  className="stat-card is-clickable"
                   onClick={() => handleSectionChange("centers")}
-                />
+                >
+                  <div className="stat-card-content">
+                    <span className="stat-card-label">Available Headroom</span>
+                    <strong className={`stat-card-value ${remainingPercent < 15 ? "text-red-600" : "text-emerald-700"}`}>
+                      {formatCount(totalRemainingCapacity)}
+                    </strong>
+                    <span className="stat-card-hint">
+                      of {formatCount(totalCapacity)} capacity · {remainingPercent}% free
+                    </span>
+                  </div>
+                  <span className={`stat-card-icon ${remainingPercent < 15 ? "stat-card-icon--alert" : "stat-card-icon--resolved"}`} aria-hidden="true">
+                    <FontAwesomeIcon icon={faDoorOpen} />
+                  </span>
+                </button>
               </section>
 
               {/* 4. CENTER ARRIVAL & CAPACITY MATRIX (Full-Width Simple Bars List) */}
@@ -1752,22 +1782,20 @@ function Dashboard() {
                       <button
                         type="button"
                         onClick={() => setBarangayMetric("households")}
-                        className={`px-3 py-1.5 rounded-lg transition cursor-pointer ${
-                          barangayMetric === "households"
-                            ? "bg-white text-blue-700 shadow-2xs font-extrabold"
-                            : "text-slate-600 hover:text-slate-900"
-                        }`}
+                        className={`px-3 py-1.5 rounded-lg transition cursor-pointer ${barangayMetric === "households"
+                          ? "bg-white text-blue-700 shadow-2xs font-extrabold"
+                          : "text-slate-600 hover:text-slate-900"
+                          }`}
                       >
                         Households
                       </button>
                       <button
                         type="button"
                         onClick={() => setBarangayMetric("residents")}
-                        className={`px-3 py-1.5 rounded-lg transition cursor-pointer ${
-                          barangayMetric === "residents"
-                            ? "bg-white text-blue-700 shadow-2xs font-extrabold"
-                            : "text-slate-600 hover:text-slate-900"
-                        }`}
+                        className={`px-3 py-1.5 rounded-lg transition cursor-pointer ${barangayMetric === "residents"
+                          ? "bg-white text-blue-700 shadow-2xs font-extrabold"
+                          : "text-slate-600 hover:text-slate-900"
+                          }`}
                       >
                         Residents
                       </button>

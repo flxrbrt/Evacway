@@ -538,35 +538,30 @@ export default function CenterList({
       </header>
 
       {/* 3 filter cards: All, Mapped, Unmapped */}
-      <div className="ec-filter-cards" role="group" aria-label="Center filters">
+      <div className="stat-card-grid cols-3" role="group" aria-label="Center filters">
         {FILTER_CARDS.map((card) => {
           const count = counts[card.key]
           const active = quickFilter === card.key
+          const iconVariant = card.colorToken === 'blue' ? 'pending' : card.colorToken === 'green' ? 'cleared' : 'neutral'
           return (
             <button
               key={card.key}
               type="button"
-              role="button"
               aria-pressed={active}
-              className={`ec-filter-card ec-filter-card--${card.colorToken} ${active ? 'is-active' : ''}`}
+              className={`stat-card is-clickable ${active ? 'is-selected' : ''}`}
               onClick={() => {
                 setQuickFilter(card.key)
                 setMobilePage(1)
               }}
             >
-              <div className="ec-fcard-top">
-                <span className={`ec-fcard-icon ec-fcard-icon--${card.colorToken}`} aria-hidden="true">
-                  {card.renderIcon()}
-                </span>
-                <span className="ec-fcard-count">
-                  <AnimatedCount value={count} duration={400} />
-                </span>
+              <div className="stat-card-content">
+                <span className="stat-card-label">{card.label}</span>
+                <strong className="stat-card-value"><AnimatedCount value={count} duration={400} /></strong>
+                <small className="stat-card-hint">{card.helper}</small>
               </div>
-              <div className="ec-fcard-bottom">
-                <span className="ec-fcard-label">{card.label}</span>
-                <span className="ec-fcard-helper">{card.helper}</span>
-              </div>
-              <span className={`ec-fcard-bar ec-fcard-bar--${card.colorToken}`} aria-hidden="true" />
+              <span className={`stat-card-icon stat-card-icon--${iconVariant}`} aria-hidden="true">
+                {card.renderIcon()}
+              </span>
             </button>
           )
         })}

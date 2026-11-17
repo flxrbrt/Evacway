@@ -258,6 +258,8 @@ function BarangayManager() {
       totalUnassigned += Number(b.unassigned_family_count ?? 0);
     }
 
+    const assignedPct = totalHouseholds > 0 ? Math.round((totalAssigned / totalHouseholds) * 100) : 0;
+
     return {
       totalBarangays: barangays.length,
       totalHouseholds,
@@ -265,6 +267,7 @@ function BarangayManager() {
       totalCenters: totalUniqueCenters,
       totalAssigned,
       totalUnassigned,
+      assignedPct,
     };
   }, [barangays, totalUniqueCenters]);
 
@@ -1024,18 +1027,17 @@ function BarangayManager() {
               <div className="bm-hero-title-row">
                 <h3 className="bm-hero-title">{activeRoom.room_name}</h3>
                 <span className="bm-type-pill">{activeRoom.room_type || "Individual/Family"}</span>
-                <span
-                  className={`bm-status-pill ${activeRoom.is_active === false
-                      ? "inactive"
+                <span className={`bm-status-pill ${activeRoom.is_active === false
+                      ? "bm-status-pill--closed"
                       : isRoomAssigned
-                        ? "assigned"
-                        : "unassigned"
-                    }`}
-                >
+                        ? "bm-status-pill--available"
+                        : "bm-status-pill--unmapped"
+                    }`}>
+                  <span className="bm-status-dot" aria-hidden="true" />
                   {activeRoom.is_active === false
                     ? "Inactive"
                     : isRoomAssigned
-                      ? "Assigned"
+                      ? "Available"
                       : "Unassigned"}
                 </span>
               </div>
@@ -1061,26 +1063,26 @@ function BarangayManager() {
             </div>
           </div>
 
-          <div className="bm-stats-grid-4">
-            <div className="bm-stat-card">
-              <span className="bm-stat-label">Room Capacity</span>
-              <strong className="bm-stat-value">{cap}</strong>
-              <span className="bm-stat-sub">Maximum evacuees</span>
+          <div className="stat-card-grid cols-4">
+            <div className="stat-card is-plain">
+              <span className="stat-card-label">Room Capacity</span>
+              <strong className="stat-card-value">{cap}</strong>
+              <span className="stat-card-hint">Maximum evacuees</span>
             </div>
-            <div className="bm-stat-card">
-              <span className="bm-stat-label">Current Occupancy</span>
-              <strong className="bm-stat-value">{occ}</strong>
-              <span className="bm-stat-sub">{occ} of {cap} here · {assigned} assigned</span>
+            <div className="stat-card is-plain">
+              <span className="stat-card-label">Current Occupancy</span>
+              <strong className="stat-card-value">{occ}</strong>
+              <span className="stat-card-hint">{occ} of {cap} here · {assigned} assigned</span>
             </div>
             <div className={`bm-stat-card ${avail > 0 ? "accent-green" : "accent-amber"}`}>
-              <span className="bm-stat-label">Available Slots</span>
-              <strong className="bm-stat-value">{avail}</strong>
-              <span className="bm-stat-sub">{isFull ? "Full" : isFullyAssigned ? "Fully assigned" : "Ready for assignment"}</span>
+              <span className="stat-card-label">Available Slots</span>
+              <strong className="stat-card-value">{avail}</strong>
+              <span className="stat-card-hint">{isFull ? "Full" : isFullyAssigned ? "Fully assigned" : "Ready for assignment"}</span>
             </div>
-            <div className="bm-stat-card">
-              <span className="bm-stat-label">Assigned Households</span>
-              <strong className="bm-stat-value">{assignedFamilies.length}</strong>
-              <span className="bm-stat-sub">Families in this room</span>
+            <div className="stat-card is-plain">
+              <span className="stat-card-label">Assigned Households</span>
+              <strong className="stat-card-value">{assignedFamilies.length}</strong>
+              <span className="stat-card-hint">Families in this room</span>
             </div>
           </div>
 
@@ -1374,26 +1376,26 @@ function BarangayManager() {
             </div>
           </div>
 
-          <div className="bm-stats-grid-4">
-            <div className="bm-stat-card">
-              <span className="bm-stat-label">Total Rooms</span>
-              <strong className="bm-stat-value">{rooms.length}</strong>
-              <span className="bm-stat-sub">Configured rooms</span>
+          <div className="stat-card-grid cols-4">
+            <div className="stat-card is-plain">
+              <span className="stat-card-label">Total Rooms</span>
+              <strong className="stat-card-value">{rooms.length}</strong>
+              <span className="stat-card-hint">Configured rooms</span>
             </div>
-            <div className="bm-stat-card">
-              <span className="bm-stat-label">Total Capacity</span>
-              <strong className="bm-stat-value">{totalCap}</strong>
-              <span className="bm-stat-sub">Maximum center capacity</span>
+            <div className="stat-card is-plain">
+              <span className="stat-card-label">Total Capacity</span>
+              <strong className="stat-card-value">{totalCap}</strong>
+              <span className="stat-card-hint">Maximum center capacity</span>
             </div>
-            <div className="bm-stat-card">
-              <span className="bm-stat-label">Current Occupancy</span>
-              <strong className="bm-stat-value">{totalOcc}</strong>
-              <span className="bm-stat-sub">{totalOcc} of {totalCap} here · {totalAssigned} assigned</span>
+            <div className="stat-card is-plain">
+              <span className="stat-card-label">Current Occupancy</span>
+              <strong className="stat-card-value">{totalOcc}</strong>
+              <span className="stat-card-hint">{totalOcc} of {totalCap} here · {totalAssigned} assigned</span>
             </div>
             <div className={`bm-stat-card ${totalAvail > 0 ? "accent-green" : "accent-amber"}`}>
-              <span className="bm-stat-label">Available Capacity</span>
-              <strong className="bm-stat-value">{totalAvail}</strong>
-              <span className="bm-stat-sub">Remaining slots</span>
+              <span className="stat-card-label">Available Capacity</span>
+              <strong className="stat-card-value">{totalAvail}</strong>
+              <span className="stat-card-hint">Remaining slots</span>
             </div>
           </div>
 
@@ -1439,7 +1441,7 @@ function BarangayManager() {
                         <th>Occupied</th>
                         <th>Available Slots</th>
                         <th>Households</th>
-                        <th>Status</th>
+                        <th className="bm-th-status">STATUS</th>
                         <th className="bm-th-right">Actions</th>
                       </tr>
                     </thead>
@@ -1483,18 +1485,17 @@ function BarangayManager() {
                               <span className="bm-count-badge">{famCount}</span>
                             </td>
                             <td>
-                              <span
-                                className={`bm-status-pill ${rm.is_active === false
-                                    ? "inactive"
-                                    : isRoomAssigned
-                                      ? "assigned"
-                                      : "unassigned"
-                                  }`}
-                              >
+                              <span className={`bm-status-pill ${rm.is_active === false
+                                  ? "bm-status-pill--closed"
+                                  : isRoomAssigned
+                                    ? "bm-status-pill--available"
+                                    : "bm-status-pill--unmapped"
+                                }`}>
+                                <span className="bm-status-dot" aria-hidden="true" />
                                 {rm.is_active === false
                                   ? "Inactive"
                                   : isRoomAssigned
-                                    ? "Assigned"
+                                    ? "Available"
                                     : "Unassigned"}
                               </span>
                             </td>
@@ -1558,18 +1559,17 @@ function BarangayManager() {
                             </span>
                             <h5 className="bm-mobile-card-title">{rm.room_name}</h5>
                           </div>
-                          <span
-                            className={`bm-status-pill ${rm.is_active === false
-                                ? "inactive"
+                          <span className={`bm-status-pill ${rm.is_active === false
+                                ? "bm-status-pill--closed"
                                 : isRoomAssigned
-                                  ? "assigned"
-                                  : "unassigned"
-                              }`}
-                          >
+                                  ? "bm-status-pill--available"
+                                  : "bm-status-pill--unmapped"
+                            }`}>
+                            <span className="bm-status-dot" aria-hidden="true" />
                             {rm.is_active === false
                               ? "Inactive"
                               : isRoomAssigned
-                                ? "Assigned"
+                                ? "Available"
                                 : "Unassigned"}
                           </span>
                         </div>
@@ -1649,28 +1649,28 @@ function BarangayManager() {
           </div>
         </div>
 
-        <div className="bm-stats-grid-4">
-          <div className="bm-stat-card">
-            <span className="bm-stat-label">Evacuation Centers</span>
-            <strong className="bm-stat-value">{centers.length}</strong>
-            <span className="bm-stat-sub">Facilities in barangay</span>
+        <div className="stat-card-grid cols-4">
+          <div className="stat-card is-plain">
+            <span className="stat-card-label">Evacuation Centers</span>
+            <strong className="stat-card-value">{centers.length}</strong>
+            <span className="stat-card-hint">Facilities in barangay</span>
           </div>
-          <div className="bm-stat-card">
-            <span className="bm-stat-label">Total Rooms</span>
-            <strong className="bm-stat-value">{selectedBarangayStats.totalRooms}</strong>
-            <span className="bm-stat-sub">Across all centers</span>
+          <div className="stat-card is-plain">
+            <span className="stat-card-label">Total Rooms</span>
+            <strong className="stat-card-value">{selectedBarangayStats.totalRooms}</strong>
+            <span className="stat-card-hint">Across all centers</span>
           </div>
-          <div className="bm-stat-card">
-            <span className="bm-stat-label">Current Occupancy</span>
-            <strong className="bm-stat-value">
+          <div className="stat-card is-plain">
+            <span className="stat-card-label">Current Occupancy</span>
+            <strong className="stat-card-value">
               {selectedBarangayStats.totalOccupied} / {selectedBarangayStats.totalCapacity}
             </strong>
-            <span className="bm-stat-sub">Assigned evacuees</span>
+            <span className="stat-card-hint">Assigned evacuees</span>
           </div>
           <div className="bm-stat-card accent-green">
-            <span className="bm-stat-label">Available Capacity</span>
-            <strong className="bm-stat-value">{selectedBarangayStats.totalAvailable}</strong>
-            <span className="bm-stat-sub">Remaining room slots</span>
+            <span className="stat-card-label">Available Capacity</span>
+            <strong className="stat-card-value">{selectedBarangayStats.totalAvailable}</strong>
+            <span className="stat-card-hint">Remaining room slots</span>
           </div>
         </div>
 
@@ -1709,7 +1709,7 @@ function BarangayManager() {
                       <th>Rooms</th>
                       <th>Capacity</th>
                       <th>Occupancy</th>
-                      <th>Status</th>
+                      <th className="bm-th-status">STATUS</th>
                       <th className="bm-th-right">Actions</th>
                     </tr>
                   </thead>
@@ -1759,14 +1759,13 @@ function BarangayManager() {
                             </div>
                           </td>
                           <td>
-                            <span
-                              className={`bm-status-pill ${center.is_active === false
-                                  ? "inactive"
-                                  : isFull
-                                    ? "full"
-                                    : "available"
-                                }`}
-                            >
+                            <span className={`bm-status-pill ${center.is_active === false
+                                ? "bm-status-pill--closed"
+                                : isFull
+                                  ? "bm-status-pill--full"
+                                  : "bm-status-pill--available"
+                            }`}>
+                              <span className="bm-status-dot" aria-hidden="true" />
                               {center.is_active === false
                                 ? "Inactive"
                                 : isFull
@@ -1821,14 +1820,13 @@ function BarangayManager() {
                               : "Not shared"}
                           </span>
                         </div>
-                        <span
-                          className={`bm-status-pill ${center.is_active === false
-                              ? "inactive"
+                        <span className={`bm-status-pill ${center.is_active === false
+                              ? "bm-status-pill--closed"
                               : isFull
-                                ? "full"
-                                : "available"
-                            }`}
-                        >
+                                ? "bm-status-pill--full"
+                                : "bm-status-pill--available"
+                            }`}>
+                          <span className="bm-status-dot" aria-hidden="true" />
                           {center.is_active === false
                             ? "Inactive"
                             : isFull
@@ -2054,73 +2052,51 @@ function BarangayManager() {
            ========================================================= */
         <div className="bm-landing">
           {/* Elevated Summary Metric Cards */}
-          <div className="bm-stats-grid-4">
-            <div className="bm-stat-card">
-              <div className="bm-stat-icon-wrapper bg-blue-50 text-blue-600">
+          <div className="stat-card-grid cols-4">
+            <div className="stat-card is-plain">
+              <div className="stat-card-content">
+                <span className="stat-card-label">Barangays</span>
+                <strong className="stat-card-value">{overallStats.totalBarangays}</strong>
+                <span className="stat-card-hint">{overallStats.totalCenters} evacuation centers</span>
+              </div>
+              <span className="stat-card-icon stat-card-icon--neutral" aria-hidden="true">
                 <FontAwesomeIcon icon={faLocationDot} />
-              </div>
-              <div className="bm-stat-content">
-                <span className="bm-stat-label">Barangays</span>
-                <strong className="bm-stat-value">{overallStats.totalBarangays}</strong>
-                <span className="bm-stat-sub">{overallStats.totalCenters} evacuation centers</span>
-              </div>
+              </span>
             </div>
 
-            <div className="bm-stat-card">
-              <div className="bm-stat-icon-wrapper bg-indigo-50 text-indigo-600">
+            <div className="stat-card is-plain">
+              <div className="stat-card-content">
+                <span className="stat-card-label">Households</span>
+                <strong className="stat-card-value">{overallStats.totalHouseholds}</strong>
+                <span className="stat-card-hint">{overallStats.totalResidents} registered residents</span>
+              </div>
+              <span className="stat-card-icon stat-card-icon--neutral" aria-hidden="true">
                 <FontAwesomeIcon icon={faHouse} />
-              </div>
-              <div className="bm-stat-content">
-                <span className="bm-stat-label">Households</span>
-                <strong className="bm-stat-value">{overallStats.totalHouseholds}</strong>
-                <span className="bm-stat-sub">{overallStats.totalResidents} registered residents</span>
-              </div>
+              </span>
             </div>
-
-            <div className="bm-stat-card">
-              <div className="bm-stat-icon-wrapper bg-emerald-50 text-emerald-600">
+            <div className="stat-card is-plain">
+              <div className="stat-card-content">
+                <span className="stat-card-label">Assigned</span>
+                <strong className="stat-card-value text-emerald-700">{overallStats.totalAssigned}</strong>
+                <span className="stat-card-hint">{overallStats.assignedPct}% of households</span>
+              </div>
+              <span className="stat-card-icon stat-card-icon--resolved" aria-hidden="true">
                 <FontAwesomeIcon icon={faCircleCheck} />
-              </div>
-              <div className="bm-stat-content">
-                <div className="bm-stat-header-row">
-                  <span className="bm-stat-label">Assigned</span>
-                  <span className="bm-stat-pct-pill emerald">
-                    {overallStats.totalHouseholds > 0
-                      ? Math.round((overallStats.totalAssigned / overallStats.totalHouseholds) * 100)
-                      : 0}%
-                  </span>
-                </div>
-                <strong className="bm-stat-value text-emerald-700">{overallStats.totalAssigned}</strong>
-                <div className="bm-stat-mini-progress">
-                  <div
-                    className="bm-stat-mini-fill emerald"
-                    style={{
-                      width: `${overallStats.totalHouseholds > 0 ? Math.min(100, Math.round((overallStats.totalAssigned / overallStats.totalHouseholds) * 100)) : 0}%`,
-                    }}
-                  />
-                </div>
-                <span className="bm-stat-sub">Assigned to building &amp; room</span>
-              </div>
+              </span>
             </div>
-
-            <div className="bm-stat-card">
-              <div className={`bm-stat-icon-wrapper ${overallStats.totalUnassigned > 0 ? "bg-amber-50 text-amber-600" : "bg-emerald-50 text-emerald-600"}`}>
-                <FontAwesomeIcon icon={overallStats.totalUnassigned > 0 ? faTriangleExclamation : faShieldHeart} />
-              </div>
-              <div className="bm-stat-content">
-                <div className="bm-stat-header-row">
-                  <span className="bm-stat-label">Unassigned</span>
-                  {overallStats.totalUnassigned === 0 && (
-                    <span className="bm-stat-pct-pill emerald">Safe</span>
-                  )}
-                </div>
-                <strong className={`bm-stat-value ${overallStats.totalUnassigned > 0 ? "text-amber-600" : "text-emerald-700"}`}>
+            <div className="stat-card is-plain">
+              <div className="stat-card-content">
+                <span className="stat-card-label">Unassigned</span>
+                <strong className={overallStats.totalUnassigned > 0 ? "stat-card-value text-amber-600" : "stat-card-value text-emerald-700"}>
                   {overallStats.totalUnassigned}
                 </strong>
-                <span className="bm-stat-sub">
+                <span className="stat-card-hint">
                   {overallStats.totalUnassigned > 0 ? "Awaiting room assignment" : "All households assigned"}
                 </span>
               </div>
+              <span className={overallStats.totalUnassigned > 0 ? "stat-card-icon stat-card-icon--warning" : "stat-card-icon stat-card-icon--resolved"} aria-hidden="true">
+                <FontAwesomeIcon icon={overallStats.totalUnassigned > 0 ? faTriangleExclamation : faShieldHeart} />
+              </span>
             </div>
           </div>
 
@@ -2192,7 +2168,7 @@ function BarangayManager() {
                         <th>Barangay Community</th>
                         <th className="bm-col-center">Households</th>
                         <th>Shelter Assignment</th>
-                        <th className="bm-col-center">Status</th>
+                        <th className="bm-col-center bm-th-status">STATUS</th>
                         <th className="bm-col-center">Evacuation Centers</th>
                       </tr>
                     </thead>
@@ -2262,12 +2238,14 @@ function BarangayManager() {
                             </td>
                             <td className="bm-col-center">
                               {unassignedCount > 0 ? (
-                                <span className="bm-status-chip warning">
-                                  <FontAwesomeIcon icon={faTriangleExclamation} /> {unassignedCount} Unassigned
+                                <span className="bm-status-pill bm-status-pill--near-full">
+                                  <span className="bm-status-dot" aria-hidden="true" />
+                                  Unassigned
                                 </span>
                               ) : (
-                                <span className="bm-status-chip complete">
-                                  <FontAwesomeIcon icon={faCircleCheck} /> Fully Sheltered
+                                <span className="bm-status-pill bm-status-pill--available">
+                                  <span className="bm-status-dot" aria-hidden="true" />
+                                  Sheltered
                                 </span>
                               )}
                             </td>
@@ -2328,14 +2306,19 @@ function BarangayManager() {
                         <h4 className="bm-mobile-card-title">{b.name}</h4>
                         <div className="bm-mobile-card-top-right">
                           {famCount === 0 ? (
-                            <span className="bm-status-chip empty">No Records</span>
+                            <span className="bm-status-pill bm-status-pill--unmapped">
+                              <span className="bm-status-dot" aria-hidden="true" />
+                              No Records
+                            </span>
                           ) : unassignedCount > 0 ? (
-                            <span className="bm-mini-badge unassigned">
-                              {unassignedCount} Unassigned
+                            <span className="bm-status-pill bm-status-pill--near-full">
+                              <span className="bm-status-dot" aria-hidden="true" />
+                              Unassigned
                             </span>
                           ) : (
-                            <span className="bm-mini-badge assigned">
-                              Fully Sheltered
+                            <span className="bm-status-pill bm-status-pill--available">
+                              <span className="bm-status-dot" aria-hidden="true" />
+                              Sheltered
                             </span>
                           )}
                           <FontAwesomeIcon
@@ -2773,13 +2756,14 @@ function BarangayManager() {
                         <dt className="bm-info-label">Status</dt>
                         <dd className="bm-info-value">
                           {unassignedHH === 0 ? (
-                            <span className="bm-status-chip complete">
-                              <FontAwesomeIcon icon={faCircleCheck} /> Fully Sheltered
+                            <span className="bm-status-pill bm-status-pill--available">
+                              <span className="bm-status-dot" aria-hidden="true" />
+                              Sheltered
                             </span>
                           ) : (
-                            <span className="bm-status-chip warning">
-                              <FontAwesomeIcon icon={faTriangleExclamation} />{" "}
-                              {unassignedHH} Unassigned
+                            <span className="bm-status-pill bm-status-pill--near-full">
+                              <span className="bm-status-dot" aria-hidden="true" />
+                              Unassigned
                             </span>
                           )}
                         </dd>

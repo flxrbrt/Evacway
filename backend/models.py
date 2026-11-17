@@ -905,6 +905,9 @@ class RescueRequest(BaseModel):
     requester_name = db.Column(db.String(100), nullable=False, default='')
     requester_contact = db.Column(db.String(20), nullable=False, default='')
     proof_images = db.Column(db.Text, nullable=True)
+    accuracy = db.Column(db.Float, nullable=True)
+    is_manual_pin = db.Column(db.Boolean, default=False)
+    location_source = db.Column(db.String(50), nullable=True, default='gps')
     created_at = db.Column(db.DateTime, nullable=False, default=philippines_now, index=True)
     updated_at = db.Column(db.DateTime, nullable=False, default=philippines_now, onupdate=philippines_now)
 

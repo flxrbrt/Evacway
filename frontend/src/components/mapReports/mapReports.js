@@ -32,7 +32,11 @@ export function resolvePhotoUrl(path) {
   if (!path || typeof path !== "string") return "";
   if (/^(https?:|data:|blob:)/i.test(path)) return path;
 
-  const baseUrl = BASE_URL.endsWith("/") ? BASE_URL : `${BASE_URL}/`;
+  // Same-origin deployments use an empty (or relative) API base.
+  const baseUrl = new URL(
+    BASE_URL.endsWith("/") ? BASE_URL : `${BASE_URL}/`,
+    window.location.origin
+  );
   return new URL(path, baseUrl).toString();
 }
 

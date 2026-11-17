@@ -15,6 +15,8 @@ import {
   setOrUpdateAccuracyCircle,
   removeAccuracyCircle,
   highlightAndOpenSavedReport,
+  refineGeolocation,
+  animateLocationTransition,
 } from "../../utils/mapLocationIndicators";
 
 import { useHazardData } from "../../hooks/useHazardData";
@@ -1102,11 +1104,11 @@ function getGeometryBounds(geometry) {
 // --------------------------------------------------
 
 function useIsMobile(breakpoint = 768) {
-  const [isMobile, setIsMobile] = useState(window.innerWidth < breakpoint);
+  const [isMobile, setIsMobile] = useState(window.innerWidth <= breakpoint);
 
   useEffect(() => {
     function handleResize() {
-      setIsMobile(window.innerWidth < breakpoint);
+      setIsMobile(window.innerWidth <= breakpoint);
     }
 
     window.addEventListener("resize", handleResize);
@@ -1505,6 +1507,31 @@ const ResidentHome = () => {
   const arrowAnimRef = useRef(null);
   const activeEntranceRef = useRef(null);
   const navigationRemainingMetersRef = useRef(null);
+  const [approximatePromptOpen, setApproximatePromptOpen] = useState(false);
+  const [lostSignal, setLostSignal] = useState(false);
+  const lastGoodReadingTimeRef = useRef(0);
+  const lastBatteryThrottleRef = useRef(null);
+  const markerAnimationCleanupRef = useRef(null);
+
+  // Stop geolocation watcher on window unload / unmount
+  useEffect(() => {
+    function handleBeforeUnload() {
+      if (navigationWatchIdRef.current != null && navigator.geolocation) {
+        navigator.geolocation.clearWatch(navigationWatchIdRef.current);
+        navigationWatchIdRef.current = null;
+      }
+    }
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => {
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+      handleBeforeUnload();
+    };
+  }, []);
+
+  const approximatePromptOpenRef = useRef(false);
+  useEffect(() => {
+    approximatePromptOpenRef.current = approximatePromptOpen;
+  }, [approximatePromptOpen]);
 
   // --------------------------------------------------
   // "My evacuation center" (name verification)
@@ -2332,8 +2359,22 @@ const ResidentHome = () => {
       console.error("Mapbox error:", event);
     });
 
-    // Clicking the map while reporting a hazard or requesting rescue.
+    // Clicking the map while reporting a hazard or requesting rescue, or correcting approximate location.
     map.on("click", async (e) => {
+      if (approximatePromptOpenRef.current) {
+        const manualLoc = {
+          lat: e.lngLat.lat,
+          lng: e.lngLat.lng,
+          is_manual_pin: true,
+          location_source: "manual",
+        };
+        setMyLocation(manualLoc);
+        if (mapRef.current) {
+          removeAccuracyCircle(mapRef.current);
+        }
+        return;
+      }
+
       if (!pickingLocationRef.current) {
         return;
       }
@@ -2344,12 +2385,21 @@ const ResidentHome = () => {
       };
 
       if (pickingPurposeRef.current === "rescue") {
-        setRescueCoordinates(loc);
+        const manualLoc = {
+          ...loc,
+          is_manual_pin: true,
+          location_source: "manual",
+        };
+        setRescueCoordinates(manualLoc);
         setRescueAlertOpen(true);
         setPickingLocation(false);
-        setOrUpdateSelectedLocationMarker(map, selectedLocationMarkerRef, loc, (updatedLoc) => {
-          setRescueCoordinates(updatedLoc);
-        });
+        setOrUpdateSelectedLocationMarker(
+          map,
+          selectedLocationMarkerRef,
+          loc,
+          undefined,
+          { draggable: false }
+        );
       } else {
         // Hazard reporting: click is ONLY valid directly on a road
         const bbox = [
@@ -3415,12 +3465,40 @@ const ResidentHome = () => {
     );
 
     if (oldMarker && oldMarker.__navMode === navigationActive) {
-      oldMarker.setLngLat(userCoordinates);
       if (navigationActive) {
+        const curLngLat = oldMarker.getLngLat();
+        if (markerAnimationCleanupRef.current) {
+          markerAnimationCleanupRef.current();
+          markerAnimationCleanupRef.current = null;
+        }
+        markerAnimationCleanupRef.current = animateLocationTransition({
+          map,
+          marker: oldMarker,
+          fromLng: curLngLat.lng,
+          fromLat: curLngLat.lat,
+          toLng: userCoordinates[0],
+          toLat: userCoordinates[1],
+          fromAccuracy: accuracyCircleStateRef.current?.accuracy || 30,
+          toAccuracy: Math.min(myLocation.accuracy || 30, 80),
+          duration: 300,
+        });
+        accuracyCircleStateRef.current = myLocation;
         const arrow = oldMarker.getElement()?.querySelector(".nav-arrow-svg");
         if (arrow) {
           const heading = myLocation.heading || lastHeadingRef.current || 0;
           arrow.style.transform = `rotate(${heading}deg)`;
+        }
+      } else {
+        oldMarker.setLngLat(userCoordinates);
+        if (myLocation.is_manual_pin) {
+          removeAccuracyCircle(map);
+        } else {
+          setOrUpdateAccuracyCircle(
+            map,
+            userCoordinates[0],
+            userCoordinates[1],
+            myLocation.accuracy || 30
+          );
         }
       }
     } else {
@@ -3445,6 +3523,7 @@ const ResidentHome = () => {
       const marker = new mapboxgl.Marker({
         element: markerElement,
         anchor: "center",
+        draggable: false,
       })
         .setLngLat(userCoordinates)
         .setPopup(popup)
@@ -3454,14 +3533,18 @@ const ResidentHome = () => {
       marker.__navMode = navigationActive;
 
       routeMarkersRef.current.push(marker);
-    }
 
-    setOrUpdateAccuracyCircle(
-      map,
-      userCoordinates[0],
-      userCoordinates[1],
-      navigationActive ? Math.min(myLocation.accuracy || 30, 80) : (myLocation.accuracy || 30)
-    );
+      if (!myLocation.is_manual_pin) {
+        setOrUpdateAccuracyCircle(
+          map,
+          userCoordinates[0],
+          userCoordinates[1],
+          navigationActive ? Math.min(myLocation.accuracy || 30, 80) : (myLocation.accuracy || 30)
+        );
+      } else {
+        removeAccuracyCircle(map);
+      }
+    }
   }, [myLocation, navigationActive, mapLoaded, styleVersion]);
 
   // --------------------------------------------------
@@ -4093,7 +4176,7 @@ const ResidentHome = () => {
         center: [loc.lng, loc.lat],
         zoom: Math.max(map.getZoom(), 16.5),
         pitch: 0,
-        bearing: 0,
+        bearing: lastHeadingRef.current || 0,
         duration: 500,
       });
     }
@@ -4106,6 +4189,7 @@ const ResidentHome = () => {
     setIsPannedAway(false);
     setNavPillExpanded(false);
     autoFollowRef.current = true;
+    setLostSignal(false);
 
     if (navigationWatchIdRef.current != null && navigator.geolocation) {
       navigator.geolocation.clearWatch(navigationWatchIdRef.current);
@@ -4214,10 +4298,31 @@ const ResidentHome = () => {
         setNavigationAccuracy(accuracy);
         setLocationPermission("granted");
 
-        // Ignore GPS readings with very poor accuracy (over 100m) to avoid wild jumps
-        if (accuracy > 100) {
+        const now = Date.now();
+
+        // Ignore reading if accuracy > 100 m and better reading arrived within last 10s
+        if (accuracy > 100 && now - lastGoodReadingTimeRef.current < 10000) {
           return;
         }
+        if (accuracy <= 100) {
+          lastGoodReadingTimeRef.current = now;
+        }
+
+        // Battery: lower update rate to once every 5s if user hasn't moved > 5 m
+        if (lastBatteryThrottleRef.current) {
+          const timeSince = now - lastBatteryThrottleRef.current.time;
+          if (timeSince < 5000) {
+            const movedDist = getDistanceMeters(
+              [lastBatteryThrottleRef.current.lat, lastBatteryThrottleRef.current.lng],
+              [rawLat, rawLng]
+            );
+            if (movedDist < 5) {
+              return;
+            }
+          }
+        }
+        lastBatteryThrottleRef.current = { lat: rawLat, lng: rawLng, time: now };
+        setLostSignal(false);
 
         const rawLocation = [rawLat, rawLng];
         liveUserLocationRef.current = { lat: rawLat, lng: rawLng };
@@ -4235,16 +4340,15 @@ const ResidentHome = () => {
             target.latitude ?? target.lat,
           ]);
 
-        // Check arrival (within 20m of chosen entrance)
+        // Check arrival (within 30m of chosen entrance)
         if (arrivalCoordinates) {
           const arrivalLatLng = [arrivalCoordinates[1], arrivalCoordinates[0]];
           const distToDest = getDistanceMeters(rawLocation, arrivalLatLng);
-          if (distToDest <= 20) {
+          if (distToDest <= 30) {
             setNavigationRemainingMeters(0);
             navigationRemainingMetersRef.current = 0;
             setNavigationRemainingSeconds(0);
-            const entranceName = chosenEntrance?.name ? ` (${chosenEntrance.name})` : "";
-            const arrivalMsg = `You have arrived at ${target.name || "the evacuation center"}${entranceName}!`;
+            const arrivalMsg = "You have arrived";
             setArrivalToast(arrivalMsg);
 
             // Auto check-in if user has assigned center
@@ -4353,23 +4457,18 @@ const ResidentHome = () => {
             });
           }
 
-          // Flat camera: smooth pan if autoFollow is active (pitch 0, bearing 0)
+          // Camera follow: keep map centered, rotate toward heading when available
           if (autoFollowRef.current) {
+            const reducedMotion =
+              typeof window !== "undefined" &&
+              window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
             currentMap.easeTo({
               center: [displayLng, displayLat],
               pitch: 0,
-              bearing: 0,
-              duration: 400,
+              bearing: heading != null && Number.isFinite(heading) ? heading : currentMap.getBearing(),
+              duration: reducedMotion ? 0 : 400,
             });
           }
-
-          // Soft accuracy circle
-          setOrUpdateAccuracyCircle(
-            currentMap,
-            displayLng,
-            displayLat,
-            Math.min(accuracy, 80)
-          );
         }
 
         // Calculate remaining distance and time
@@ -4406,17 +4505,17 @@ const ResidentHome = () => {
           setNavigationStatus("Follow the highlighted route to the center.");
         }
 
-        // Off-route check: if > 30m for consecutive updates
-        if (snap.distanceToRoute > 30) {
+        // Off-route check: if > 50m for consecutive updates (throttled to at most once per 10s)
+        if (snap.distanceToRoute > 50) {
           consecutiveOffRouteRef.current += 1;
-          const now = Date.now();
+          const nowReroute = Date.now();
           if (
-            consecutiveOffRouteRef.current >= 3 &&
+            consecutiveOffRouteRef.current >= 2 &&
             !reroutingRef.current &&
-            now - lastRerouteAtRef.current > 12000
+            nowReroute - lastRerouteAtRef.current >= 10000
           ) {
             reroutingRef.current = true;
-            lastRerouteAtRef.current = now;
+            lastRerouteAtRef.current = nowReroute;
             setNavigationStatus("Off route, recalculating...");
 
             const targetCenterId = target?.id || target?.center_id;
@@ -4478,18 +4577,19 @@ const ResidentHome = () => {
         }
       },
       (error) => {
-        const messages = {
-          1: "Location access was denied. Allow location access to navigate.",
-          2: "GPS signal was lost. Check Location Services and try again.",
-          3: "GPS update timed out. Keep navigation open and try again.",
-        };
+        if (error.code === 2 || error.code === 3) {
+          // Lost signal / temporary timeout: retain last known position, show gray note
+          setLostSignal(true);
+          setNavigationStatus("Searching for location...");
+          return;
+        }
         stopWalkingNavigation("GPS tracking stopped.");
-        setRouteError(messages[error.code] || "Live location tracking failed.");
+        setRouteError("Location access was denied. Allow location access to navigate.");
       },
       {
         enableHighAccuracy: true,
         timeout: 15000,
-        maximumAge: 1000,
+        maximumAge: 0,
       }
     );
   }
@@ -4561,66 +4661,80 @@ const ResidentHome = () => {
   // Locate user
   // --------------------------------------------------
 
+  function handleConfirmApproximateLocation() {
+    setApproximatePromptOpen(false);
+    setMyLocation((prev) =>
+      prev
+        ? {
+            ...prev,
+            is_manual_pin: true,
+            location_source: "manual",
+          }
+        : prev
+    );
+  }
+
   function handleLocateMe() {
     setRouteError("");
+    setApproximatePromptOpen(false);
 
     if (!navigator.geolocation) {
       setRouteError("Your browser doesn't support location access.");
-
       return;
     }
 
     setLocating(true);
 
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        const loc = {
-          lat: pos.coords.latitude,
-          lng: pos.coords.longitude,
-          accuracy: pos.coords.accuracy,
-        };
+    const applyLocationFix = (pos, isFinal = false) => {
+      const acc = pos.coords.accuracy ?? null;
+      const isApprox = acc != null && acc > 100;
+      const loc = {
+        lat: pos.coords.latitude,
+        lng: pos.coords.longitude,
+        accuracy: acc,
+        is_manual_pin: false,
+        location_source: isApprox ? "approximate" : "gps",
+      };
 
-        setMyLocation(loc);
-        setLocationPermission("granted");
-        accuracyCircleStateRef.current = loc;
+      setMyLocation(loc);
+      setLocationPermission("granted");
+      accuracyCircleStateRef.current = loc;
 
-        const map = mapRef.current;
-
-        if (map) {
-          map.flyTo({
-            center: [loc.lng, loc.lat],
-            zoom: 16,
-            pitch: 0,
-            bearing: 0,
-            duration: 1000,
-            essential: true,
-          });
-          setOrUpdateAccuracyCircle(map, loc.lng, loc.lat, loc.accuracy || 30);
-        }
-
-        setLocating(false);
-      },
-
-      (err) => {
-        const messages = {
-          1: "Location access was denied. Enable it in your browser's site settings.",
-
-          2: "Your location couldn't be determined. Check that Location Services is turned on in Windows Settings.",
-
-          3: "Getting your location took too long. Try again.",
-        };
-
-        setRouteError(messages[err.code] || "Couldn't get your location.");
-
-        setLocating(false);
-      },
-
-      {
-        enableHighAccuracy: true,
-        timeout: 10000,
-        maximumAge: 0,
+      const map = mapRef.current;
+      if (map) {
+        map.flyTo({
+          center: [loc.lng, loc.lat],
+          zoom: 16,
+          pitch: 0,
+          bearing: 0,
+          duration: 1000,
+          essential: true,
+        });
+        setOrUpdateAccuracyCircle(map, loc.lng, loc.lat, loc.accuracy || 30);
       }
-    );
+
+      if (isFinal && isApprox) {
+        setApproximatePromptOpen(true);
+      }
+    };
+
+    refineGeolocation({
+      onFirstFix: (pos) => {
+        applyLocationFix(pos, false);
+      },
+      onImprovement: (pos) => {
+        applyLocationFix(pos, false);
+      },
+    })
+      .then((bestPos) => {
+        applyLocationFix(bestPos, true);
+      })
+      .catch((err) => {
+        setRouteError(err.message || "Couldn't get your location. Pin on the map instead.");
+      })
+      .finally(() => {
+        setLocating(false);
+      });
   }
 
   // --------------------------------------------------
@@ -4836,7 +4950,16 @@ const ResidentHome = () => {
   }
 
   function handleRescueLocationCaptured(captured) {
-    accuracyCircleStateRef.current = captured;
+    const locWithSource = {
+      lat: captured.lat,
+      lng: captured.lng,
+      accuracy: captured.accuracy,
+      is_manual_pin: Boolean(captured.is_manual_pin),
+      location_source:
+        captured.location_source ||
+        (captured.accuracy != null && captured.accuracy > 100 ? "approximate" : "gps"),
+    };
+    accuracyCircleStateRef.current = locWithSource;
     const map = mapRef.current;
     if (map) {
       map.flyTo({
@@ -4844,11 +4967,15 @@ const ResidentHome = () => {
         zoom: 16,
         essential: true,
       });
-      setMyLocation({ lat: captured.lat, lng: captured.lng, accuracy: captured.accuracy });
+      setMyLocation(locWithSource);
       setOrUpdateAccuracyCircle(map, captured.lng, captured.lat, captured.accuracy || 30);
-      setOrUpdateSelectedLocationMarker(map, selectedLocationMarkerRef, captured, (updatedLoc) => {
-        setRescueCoordinates(updatedLoc);
-      });
+      setOrUpdateSelectedLocationMarker(
+        map,
+        selectedLocationMarkerRef,
+        captured,
+        undefined,
+        { draggable: false }
+      );
     }
   }
 
@@ -7039,11 +7166,13 @@ const ResidentHome = () => {
               />
             </div>
             <span className="nav-pill-distance">
-              {currentWalkingManeuver?.distance != null
-                ? `${Math.round(currentWalkingManeuver.distance)} m`
-                : navigationRemainingMeters != null
-                  ? `${Math.round(navigationRemainingMeters)} m`
-                  : "Next turn"}
+              {lostSignal
+                ? "Searching for location..."
+                : currentWalkingManeuver?.distance != null
+                  ? `${Math.round(currentWalkingManeuver.distance)} m`
+                  : navigationRemainingMeters != null
+                    ? `${Math.round(navigationRemainingMeters)} m`
+                    : "Next turn"}
             </span>
             <FontAwesomeIcon icon={faChevronDown} className="nav-pill-chevron" aria-hidden="true" />
           </div>
@@ -7065,7 +7194,9 @@ const ResidentHome = () => {
                     : "Follow highlighted route")}
               </div>
               <div className="nav-bar-subline">
-                {navigationStatus && navigationStatus.includes("Off route") ? (
+                {lostSignal ? (
+                  <span className="nav-signal-lost-pill">Searching for location...</span>
+                ) : navigationStatus && navigationStatus.includes("Off route") ? (
                   <span className="nav-bar-offroute">{navigationStatus}</span>
                 ) : navigationRemainingMeters != null ? (
                   <span>
@@ -7226,16 +7357,48 @@ const ResidentHome = () => {
         </div>
       )}
 
-      {/* Recenter button when user panned away during active navigation */}
+      {/* Approximate Location Notice & Confirmation */}
+      {approximatePromptOpen && (
+        <div className="approximate-location-card" role="region" aria-label="Approximate location confirmation">
+          <div className="approximate-location-header">
+            <span className="approximate-location-badge">
+              <span className="approximate-badge-dot" />
+              Approximate Location
+            </span>
+            <button
+              type="button"
+              className="approximate-dismiss-btn"
+              onClick={() => setApproximatePromptOpen(false)}
+              aria-label="Dismiss approximate location prompt"
+            >
+              <FontAwesomeIcon icon={faXmark} />
+            </button>
+          </div>
+          <p className="approximate-location-text">
+            We could only find your approximate location.
+          </p>
+          <div className="approximate-location-actions">
+            <button
+              type="button"
+              className="approximate-confirm-btn"
+              onClick={handleConfirmApproximateLocation}
+            >
+              Confirm location
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Re-center button when user panned away during active navigation */}
       {navigationActive && isPannedAway && (
         <button
           type="button"
           className="nav-recenter-btn"
           onClick={handleRecenter}
-          aria-label="Recenter map"
+          aria-label="Re-center map"
         >
           <FontAwesomeIcon icon={faLocationCrosshairs} />
-          <span>Recenter</span>
+          <span>Re-center</span>
         </button>
       )}
 
@@ -7733,7 +7896,7 @@ const ResidentHome = () => {
         <RescueAlertModal
           onClose={handleCloseRescueModal}
           onSubmitted={handleRescueSubmitted}
-          initialCoordinates={rescueCoordinates}
+          initialCoordinates={rescueCoordinates || myLocation}
           onPinOnMap={handlePinRescueOnMap}
           onLocationCaptured={handleRescueLocationCaptured}
           onOpenLogin={openLoginDialog}

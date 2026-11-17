@@ -470,80 +470,76 @@ function UserManagement() {
           </div>
         )}
 
-        {/* 1. STAT CARDS: SINGLE ROW (ICON + NUMBER + LABEL) CLICKABLE FILTERS */}
-        <div className="um-summary-grid">
+        {/* 1. STAT CARDS: CLICKABLE FILTERS */}
+        <section className="stat-card-grid cols-4" aria-label="User account filters">
           <button
             type="button"
-            className={`um-stat-card ${
-              selectedStatCard === "total" ? "is-selected" : ""
-            }`}
+            className={`stat-card is-clickable is-neutral ${selectedStatCard === "total" ? "is-selected" : ""}`}
             onClick={() => handleStatCardClick("total")}
             aria-pressed={selectedStatCard === "total"}
             title="Filter by all accounts"
           >
-            <div className="um-stat-icon-wrap is-total">
+            <div className="stat-card-content">
+              <span className="stat-card-label">Total</span>
+              <strong className="stat-card-value">{totalCount}</strong>
+              <span className="stat-card-hint">All user accounts</span>
+            </div>
+            <span className="stat-card-icon stat-card-icon--neutral" aria-hidden="true">
               <FontAwesomeIcon icon={faUsers} />
-            </div>
-            <div className="um-stat-meta">
-              <span className="um-stat-number">{totalCount}</span>
-              <span className="um-stat-label">Total</span>
-            </div>
+            </span>
           </button>
 
           <button
             type="button"
-            className={`um-stat-card ${
-              selectedStatCard === "active" ? "is-selected" : ""
-            }`}
+            className={`stat-card is-clickable is-resolved ${selectedStatCard === "active" ? "is-selected" : ""}`}
             onClick={() => handleStatCardClick("active")}
             aria-pressed={selectedStatCard === "active"}
             title="Filter by active accounts"
           >
-            <div className="um-stat-icon-wrap is-active">
+            <div className="stat-card-content">
+              <span className="stat-card-label">Active</span>
+              <strong className="stat-card-value">{activeCount}</strong>
+              <span className="stat-card-hint">Active user accounts</span>
+            </div>
+            <span className="stat-card-icon stat-card-icon--resolved" aria-hidden="true">
               <FontAwesomeIcon icon={faUserCheck} />
-            </div>
-            <div className="um-stat-meta">
-              <span className="um-stat-number">{activeCount}</span>
-              <span className="um-stat-label">Active</span>
-            </div>
+            </span>
           </button>
 
           <button
             type="button"
-            className={`um-stat-card ${
-              selectedStatCard === "inactive" ? "is-selected" : ""
-            }`}
+            className={`stat-card is-clickable is-closed ${selectedStatCard === "inactive" ? "is-selected" : ""}`}
             onClick={() => handleStatCardClick("inactive")}
             aria-pressed={selectedStatCard === "inactive"}
             title="Filter by inactive accounts"
           >
-            <div className="um-stat-icon-wrap is-inactive">
+            <div className="stat-card-content">
+              <span className="stat-card-label">Inactive</span>
+              <strong className="stat-card-value">{inactiveCount}</strong>
+              <span className="stat-card-hint">Inactive user accounts</span>
+            </div>
+            <span className="stat-card-icon stat-card-icon--closed" aria-hidden="true">
               <FontAwesomeIcon icon={faUserSlash} />
-            </div>
-            <div className="um-stat-meta">
-              <span className="um-stat-number">{inactiveCount}</span>
-              <span className="um-stat-label">Inactive</span>
-            </div>
+            </span>
           </button>
 
           <button
             type="button"
-            className={`um-stat-card ${
-              selectedStatCard === "admins" ? "is-selected" : ""
-            }`}
+            className={`stat-card is-clickable is-pending ${selectedStatCard === "admins" ? "is-selected" : ""}`}
             onClick={() => handleStatCardClick("admins")}
             aria-pressed={selectedStatCard === "admins"}
             title="Filter by administrator accounts"
           >
-            <div className="um-stat-icon-wrap is-admins">
+            <div className="stat-card-content">
+              <span className="stat-card-label">Admins</span>
+              <strong className="stat-card-value">{adminCount}</strong>
+              <span className="stat-card-hint">Administrator accounts</span>
+            </div>
+            <span className="stat-card-icon stat-card-icon--pending" aria-hidden="true">
               <FontAwesomeIcon icon={faUserShield} />
-            </div>
-            <div className="um-stat-meta">
-              <span className="um-stat-number">{adminCount}</span>
-              <span className="um-stat-label">Admins</span>
-            </div>
+            </span>
           </button>
-        </div>
+        </section>
 
         {/* 2. FILTERS TOOLBAR WITH LABELS & CLEAR BUTTON */}
         <div className="um-toolbar">
@@ -637,7 +633,7 @@ function UserManagement() {
                   <th scope="col" className="um-th-user">User</th>
                   <th scope="col" className="um-th-role">Role</th>
                   <th scope="col" className="um-th-phone">Phone</th>
-                  <th scope="col" className="um-th-status">Status</th>
+                  <th scope="col" className="um-th-status">STATUS</th>
                   <th scope="col" className="um-th-actions">Actions</th>
                 </tr>
               </thead>
@@ -716,7 +712,7 @@ function UserManagement() {
                     <th scope="col" className="um-th-user">User</th>
                     <th scope="col" className="um-th-role">Role</th>
                     <th scope="col" className="um-th-phone">Phone</th>
-                    <th scope="col" className="um-th-status">Status</th>
+                    <th scope="col" className="um-th-status">STATUS</th>
                     <th scope="col" className="um-th-actions">Actions</th>
                   </tr>
                 </thead>
@@ -773,11 +769,9 @@ function UserManagement() {
 
                         {/* STATUS PILL */}
                         <td className="um-td-status">
-                          <span
-                            className={`um-status-pill ${
-                              u.is_active ? "is-active" : "is-inactive"
-                            }`}
-                          >
+                          <span className={`um-status-pill ${
+                            u.is_active ? "um-status-pill--available" : "um-status-pill--closed"
+                          }`}>
                             <span className="um-status-dot" aria-hidden="true" />
                             {u.is_active ? "Active" : "Inactive"}
                           </span>
@@ -917,11 +911,9 @@ function UserManagement() {
                         <div className="um-card-header-meta">
                           <div className="um-card-title-row">
                             <h2 className="um-card-name">{u.name}</h2>
-                            <span
-                              className={`um-status-pill ${
-                                u.is_active ? "is-active" : "is-inactive"
-                              }`}
-                            >
+                            <span className={`um-status-pill ${
+                              u.is_active ? "um-status-pill--available" : "um-status-pill--closed"
+                            }`}>
                               <span className="um-status-dot" aria-hidden="true" />
                               {u.is_active ? "Active" : "Inactive"}
                             </span>
@@ -1351,11 +1343,9 @@ function UserManagement() {
                           {ROLE_LABELS[selectedUser.role] ||
                             selectedUser.role.replace("_", " ")}
                         </span>
-                        <span
-                          className={`um-status-pill ${
-                            selectedUser.is_active ? "is-active" : "is-inactive"
-                          }`}
-                        >
+                        <span className={`um-status-pill ${
+                            selectedUser.is_active ? "um-status-pill--available" : "um-status-pill--closed"
+                          }`}>
                           <span className="um-status-dot" aria-hidden="true" />
                           {selectedUser.is_active ? "Active" : "Inactive"}
                         </span>

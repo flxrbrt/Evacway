@@ -33,14 +33,14 @@ const STATUS_CARDS = [
     label: "Approved",
     sub: "Linked to roster",
     icon: faCircleCheck,
-    variant: "approved",
+    variant: "resolved",
   },
   {
     id: "rejected",
     label: "Rejected",
     sub: "Not accepted",
     icon: faCircleXmark,
-    variant: "rejected",
+    variant: "alert",
   },
 ];
 
@@ -150,6 +150,26 @@ function matchesAutosuggestRecord(resident, suggestion) {
     residentNames.includes(suggestionName)
     && normalizedName(resident.barangay) === normalizedName(suggestion.barangay)
   );
+}
+
+/**
+ * Maps resident registration status to standardized pill variant classes
+ * matching CenterList ec-status-pill pattern:
+ * - pending → --pending (info/blue)
+ * - approved → --available (success/green)
+ * - rejected → --full (danger/red)
+ */
+function getResidentStatusPillClass(status) {
+  switch (status) {
+    case "pending":
+      return "resident-registration-status--pending";
+    case "approved":
+      return "resident-registration-status--available";
+    case "rejected":
+      return "resident-registration-status--full";
+    default:
+      return "resident-registration-status--pending";
+  }
 }
 
 export default function ResidentRegistrations({ focusRegistrationId = null }) {
@@ -792,7 +812,7 @@ export default function ResidentRegistrations({ focusRegistrationId = null }) {
       </header>
 
       {/* Status Filter Stat Cards */}
-      <section className="resident-stat-cards" aria-label="Registration status filters">
+      <section className="stat-card-grid cols-3" aria-label="Registration status filters">
         {STATUS_CARDS.map((card) => {
           const isSelected = activeStatus === card.id;
           return (
@@ -800,23 +820,21 @@ export default function ResidentRegistrations({ focusRegistrationId = null }) {
               key={card.id}
               type="button"
               aria-pressed={isSelected}
-              className={`resident-stat-card ${isSelected ? "is-selected" : ""}`}
+              className={`stat-card is-clickable is-${card.variant} ${isSelected ? "is-selected" : ""}`}
               onClick={() => {
                 setActiveStatus(card.id);
                 setPage(1);
                 setOpenMobileMenuId(null);
               }}
             >
-              <div className="resident-stat-card-top">
-                <span className="resident-stat-label">{card.label}</span>
-                <span className={`resident-stat-icon-wrap is-${card.variant}`} aria-hidden="true">
-                  <FontAwesomeIcon icon={card.icon} />
-                </span>
+              <div className="stat-card-content">
+                <span className="stat-card-label">{card.label}</span>
+                <strong className="stat-card-value">{counts[card.id]}</strong>
+                <span className="stat-card-hint">{card.sub}</span>
               </div>
-              <div className="resident-stat-card-bottom">
-                <span className="resident-stat-value">{counts[card.id]}</span>
-                <span className="resident-stat-hint">{card.sub}</span>
-              </div>
+              <span className={`stat-card-icon stat-card-icon--${card.variant}`} aria-hidden="true">
+                <FontAwesomeIcon icon={card.icon} />
+              </span>
             </button>
           );
         })}
@@ -888,7 +906,7 @@ export default function ResidentRegistrations({ focusRegistrationId = null }) {
                   <span className="resident-th-cell">Barangay</span>
                   <span className="resident-th-cell">Contact</span>
                   <span className="resident-th-cell">Submitted</span>
-                  <span className="resident-th-cell is-status">Status</span>
+                  <span className="resident-th-status">Status</span>
                 </div>
 
                 {paginatedRequests.map((item) => {
@@ -927,7 +945,7 @@ export default function ResidentRegistrations({ focusRegistrationId = null }) {
                         {formatDate(item.created_at?.slice(0, 10))}
                       </div>
                       <div className="resident-row-status-wrap">
-                        <span className={`resident-registration-status is-${item.status}`}>
+                        <span className={`resident-registration-status ${getResidentStatusPillClass(item.status)}`}>
                           {item.status}
                         </span>
                       </div>
@@ -973,7 +991,7 @@ export default function ResidentRegistrations({ focusRegistrationId = null }) {
                           className="resident-mobile-card-actions resident-mobile-menu-anchor"
                           onClick={(e) => e.stopPropagation()}
                         >
-                          <span className={`resident-registration-status is-${item.status}`}>
+                          <span className={`resident-registration-status ${getResidentStatusPillClass(item.status)}`}>
                             {item.status}
                           </span>
                           <button
@@ -1147,7 +1165,7 @@ export default function ResidentRegistrations({ focusRegistrationId = null }) {
               <div className="resident-review-header-info">
                 <div className="resident-review-meta-row">
                   <span className="resident-registrations-eyebrow">Request #{selectedRequest.id}</span>
-                  <span className={`resident-registration-status is-${selectedRequest.status}`}>
+                  <span className={`resident-registration-status ${getResidentStatusPillClass(selectedRequest.status)}`}>
                     {selectedRequest.status}
                   </span>
                 </div>
