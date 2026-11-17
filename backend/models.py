@@ -1852,3 +1852,57 @@ class EvacuationCheckInRecord(BaseModel):
         return f"<EvacuationCheckInRecord id={self.id} op={self.operation_id} res={self.resident_id} center={self.center_id} status='{self.status}'>"
 
 
+class NonRegisteredEvacuee(BaseModel):
+    __tablename__ = 'non_registered_evacuees'
+    id = db.Column(db.Integer, primary_key=True)
+    first_name = db.Column(db.String(60), nullable=False)
+    middle_name = db.Column(db.String(60))
+    last_name = db.Column(db.String(60), nullable=False)
+    sex = db.Column(db.String(6), nullable=False)
+    age_years = db.Column(db.Integer, nullable=False)
+    birthdate = db.Column(db.Date)
+    contact_number = db.Column(db.String(13))
+    address = db.Column(db.String(200))
+    is_pwd = db.Column(db.Boolean, nullable=False, default=False, server_default=db.false())
+    is_pregnant = db.Column(db.Boolean, nullable=False, default=False, server_default=db.false())
+    needs_medical = db.Column(db.Boolean, nullable=False, default=False, server_default=db.false())
+    notes = db.Column(db.String(200))
+    group_code = db.Column(db.Uuid(as_uuid=False), nullable=False)
+    is_group_head = db.Column(db.Boolean, nullable=False, default=False, server_default=db.false())
+    operation_id = db.Column(db.Integer, db.ForeignKey('evacuation_operations.id', ondelete='RESTRICT'), nullable=False)
+    center_id = db.Column(db.Integer, db.ForeignKey('evacuation_centers.id', ondelete='RESTRICT'), nullable=False)
+    arrived_at = db.Column(db.DateTime(timezone=True), nullable=False, default=lambda: datetime.now(PHILIPPINES_TZ))
+    departed_at = db.Column(db.DateTime(timezone=True))
+    recorded_by = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='RESTRICT'), nullable=False)
+    center = db.relationship('EvacuationCenter', foreign_keys=[center_id])
+    operation = db.relationship('EvacuationOperation', foreign_keys=[operation_id])
+    __table_args__ = (
+        db.CheckConstraint("sex IN ('male', 'female', 'other')", name='ck_nre_sex'),
+        db.CheckConstraint('age_years BETWEEN 0 AND 120', name='ck_nre_age'),
+        db.CheckConstraint("NOT is_pregnant OR sex = 'female'", name='ck_nre_pregnancy'),
+        db.CheckConstraint('departed_at IS NULL OR departed_at >= arrived_at', name='ck_nre_departure'),
+        db.Index('ix_nre_operation_center', 'operation_id', 'center_id'),
+        db.Index('ix_nre_group', 'group_code'),
+        db.Index('ix_nre_arrived_desc', db.desc('arrived_at')),
+        db.Index('ix_nre_present_center', 'center_id', postgresql_where=db.text('departed_at IS NULL'), sqlite_where=db.text('departed_at IS NULL')),
+        db.Index('ix_nre_name', db.func.lower(last_name), db.func.lower(first_name)),
+        db.Index('uq_nre_group_head', 'group_code', unique=True, postgresql_where=db.text('is_group_head'), sqlite_where=db.text('is_group_head')),
+    )
+
+    def to_dict(self, include_sensitive=False):
+        result = {key: getattr(self, key) for key in (
+            'id', 'first_name', 'middle_name', 'last_name', 'sex', 'age_years',
+            'address', 'is_group_head', 'operation_id', 'center_id', 'recorded_by',
+        )}
+        result['group_code'] = str(self.group_code)
+        result['name'] = ' '.join(filter(None, (self.first_name, self.middle_name, self.last_name)))
+        for key in ('birthdate', 'arrived_at', 'departed_at'):
+            value = getattr(self, key)
+            result[key] = value.isoformat() if value else None
+        if include_sensitive:
+            result.update({key: getattr(self, key) for key in (
+                'contact_number', 'is_pwd', 'is_pregnant', 'needs_medical', 'notes',
+            )})
+        return result
+
+

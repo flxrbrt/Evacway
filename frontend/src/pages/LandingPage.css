@@ -142,12 +142,19 @@ body:has(.ew) {
   display: inline-flex;
   align-items: center;
   gap: 12px;
-  min-height: 38px;
+  min-height: 40px;
   font-size: 1.0625rem; /* 17px */
   font-weight: 700;
   letter-spacing: -0.02em;
   color: var(--ew-ink);
   text-decoration: none;
+}
+
+.ew-logo-image {
+  display: block;
+  width: auto;
+  height: 40px;
+  object-fit: contain;
 }
 
 .ew-logo-brand {
@@ -334,8 +341,14 @@ body:has(.ew) {
 }
 
 .ew-map {
+  position: absolute;
+  inset: 0;
   width: 100%;
+  max-width: none;
   height: 100%;
+  pointer-events: none;
+  -webkit-mask-image: linear-gradient(to right, transparent 0%, #000 25%);
+  mask-image: linear-gradient(to right, transparent 0%, #000 25%);
 }
 
 .ew-mapart {
@@ -1302,7 +1315,7 @@ body:has(.ew) {
   }
 
   .ew-map {
-    opacity: 0.3;
+    opacity: 0.6;
   }
 
   .ew-mapart {
@@ -1413,16 +1426,6 @@ body:has(.ew) {
     display: flex;
   }
 
-  .ew-map {
-    position: absolute;
-    top: 0;
-    right: 0;
-    bottom: 0;
-    left: 12%;
-    width: auto;
-    height: 100%;
-  }
-
   .ew-steps-list {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
@@ -1446,12 +1449,6 @@ body:has(.ew) {
 
   .ew-footer-info-col {
     text-align: right;
-  }
-}
-
-@media (min-width: 1441px) {
-  .ew-map {
-    left: 4%;
   }
 }
 

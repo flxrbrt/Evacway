@@ -179,7 +179,6 @@
 .brand {
   display: flex;
   align-items: center;
-  gap: 10px;
 
   font-family: "Bricolage Grotesque", "Public Sans", system-ui, sans-serif;
   font-size: 20px;
@@ -188,6 +187,18 @@
   color: var(--ink);
   text-decoration: none;
   cursor: pointer;
+}
+
+.brand-logo {
+  display: block;
+  width: auto;
+  height: 40px;
+  object-fit: contain;
+  flex: 0 0 auto;
+}
+
+.brand-logo-square {
+  display: none;
 }
 
 .brand-link {
@@ -493,14 +504,6 @@
   background: #fef2f2;
   color: #dc2626;
   border-color: #fecaca;
-}
-
-.brand::before {
-  content: "";
-  width: 28px;
-  height: 28px;
-  flex-shrink: 0;
-  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 30 30'%3E%3Crect width='30' height='30' rx='8' fill='%231b5fc1'/%3E%3Cpath d='M7 22c6 0 5-9 9-9s3-4 7-4' fill='none' stroke='white' stroke-width='2.6' stroke-linecap='round'/%3E%3Ccircle cx='7' cy='22' r='2.4' fill='white'/%3E%3C/svg%3E") center / contain no-repeat;
 }
 
 .home-ghost-btn {
@@ -3289,14 +3292,14 @@
     gap: 8px;
   }
 
-  .brand {
-    gap: 6px;
-    font-size: 16px;
+  .brand-logo-wide {
+    display: none;
   }
 
-  .brand::before {
-    width: 22px;
-    height: 22px;
+  .brand-logo-square {
+    display: block;
+    width: 32px;
+    height: 32px;
   }
 
   .top-bar-search {
@@ -3390,11 +3393,6 @@
   .top-bar {
     padding: env(safe-area-inset-top, 0px) 8px 0 8px;
     gap: 6px;
-  }
-
-  .brand {
-    font-size: 14.5px;
-    gap: 5px;
   }
 
   .user-greeting-pill {

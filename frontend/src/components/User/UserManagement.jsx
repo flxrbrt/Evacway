@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useCallback } from "react";
+import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
@@ -88,6 +88,21 @@ function UserManagement() {
   const [savingUser, setSavingUser] = useState(false);
   const [togglingId, setTogglingId] = useState(null);
   const [resettingPassword, setResettingPassword] = useState(false);
+  const [resetError, setResetError] = useState("");
+  const [resetErrorUserId, setResetErrorUserId] = useState(null);
+  const [resetCooldown, setResetCooldown] = useState(0);
+  const [resetSuccess, setResetSuccess] = useState(null);
+  const resetRequestRef = useRef({ sending: false, nextAllowedAt: 0 });
+
+  useEffect(() => {
+    if (resetCooldown <= 0) return undefined;
+
+    const timer = window.setInterval(() => {
+      setResetCooldown((current) => Math.max(0, current - 1));
+    }, 1000);
+
+    return () => window.clearInterval(timer);
+  }, [resetCooldown]);
 
   function invalidateUsersAndLogs() {
     return Promise.all([
@@ -229,6 +244,9 @@ function UserManagement() {
     setSelectedUser(null);
     setModalMode("overview");
     setEditError("");
+    setResetError("");
+    setResetErrorUserId(null);
+    setResetSuccess(null);
   }, []);
 
   // Global escape key handler to close menus/modals
@@ -347,17 +365,26 @@ function UserManagement() {
     }
   }
 
-  async function handleResetPassword(targetUser) {
-    if (!targetUser || !confirm(`Send password reset email to ${targetUser.name}?`)) return;
+  async function handleResetPassword(targetUser, skipConfirmation = false) {
+    if (!targetUser || resetRequestRef.current.sending || Date.now() < resetRequestRef.current.nextAllowedAt) return;
+    if (!skipConfirmation && !confirm(`Send password reset email to ${targetUser.name}?`)) return;
 
+    resetRequestRef.current = { sending: true, nextAllowedAt: Date.now() + 5000 };
+    setResetError("");
+    setResetErrorUserId(null);
+    setResetSuccess(null);
     setResettingPassword(true);
+    setResetCooldown(5);
     try {
       const result = await api.resetUserPassword(targetUser.id);
       await invalidateUsersAndLogs();
-      alert(result.message || `Password setup email sent to ${targetUser.email}.`);
+      setResetSuccess({ userId: targetUser.id, message: result.message || `Password setup email sent to ${targetUser.email}.` });
     } catch (err) {
-      alert(err?.message || String(err) || "Unable to reset password right now.");
+      const message = err?.message || String(err) || "Unable to reset password right now.";
+      setResetError(message);
+      setResetErrorUserId(targetUser.id);
     } finally {
+      resetRequestRef.current.sending = false;
       setResettingPassword(false);
     }
   }
@@ -405,6 +432,9 @@ function UserManagement() {
       role: user.role || "lgu_personnel",
     });
     setEditError("");
+    setResetError("");
+    setResetErrorUserId(null);
+    setResetSuccess(null);
   }
 
   async function handleUpdateUser(event) {
@@ -833,8 +863,10 @@ function UserManagement() {
                     type="button"
                     className="um-menu-item"
                     role="menuitem"
+                    disabled={resettingPassword || resetCooldown > 0}
                     onClick={() => {
                       setOpenActionMenu(null);
+                      openDetailsModal(activeMenuUser);
                       handleResetPassword(activeMenuUser);
                     }}
                   >
@@ -1376,17 +1408,37 @@ function UserManagement() {
 
                 {/* MODAL FOOTER WITH PASSWORD RESET ON LEFT & CLOSE ON RIGHT */}
                 <div className="um-modal-footer um-modal-footer--split">
-                  <button
-                    type="button"
-                    className="um-secondary-btn"
-                    onClick={() => handleResetPassword(selectedUser)}
-                    disabled={resettingPassword}
-                  >
-                    <FontAwesomeIcon icon={faKey} />
-                    <span>
-                      {resettingPassword ? "Sending reset email…" : "Email password reset"}
-                    </span>
-                  </button>
+                  <div className="um-reset-action">
+                    <button
+                      type="button"
+                      className="um-secondary-btn"
+                      onClick={() => handleResetPassword(selectedUser)}
+                      disabled={resettingPassword || resetCooldown > 0}
+                    >
+                      <FontAwesomeIcon icon={faKey} />
+                      <span>
+                        {resettingPassword ? "Sending reset email..." : "Send reset email"}
+                      </span>
+                    </button>
+
+                    {resetSuccess?.userId === selectedUser.id && (
+                      <p className="um-email-hint is-available" role="status">{resetSuccess.message}</p>
+                    )}
+
+                    {resetError && resetErrorUserId === selectedUser.id && (
+                      <div className="um-reset-error" role="alert">
+                        <span>{resetError}</span>
+                        <button
+                          type="button"
+                          className="um-reset-retry-btn"
+                          onClick={() => handleResetPassword(selectedUser, true)}
+                          disabled={resettingPassword || resetCooldown > 0}
+                        >
+                          Retry
+                        </button>
+                      </div>
+                    )}
+                  </div>
 
                   <button
                     type="button"

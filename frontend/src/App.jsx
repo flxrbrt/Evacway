@@ -8,6 +8,7 @@ import LguDashboard from "./pages/lgu/LguDashboard";
 import AdminDashboard from "./pages/admin/AdminDashboard";
 
 import Login from "./pages/auth/Login";
+import ForgotPassword from "./pages/auth/ForgotPassword";
 import PasswordSetup from "./pages/auth/PasswordSetup";
 import NetworkStatus from "./components/NetworkStatus/NetworkStatus";
 import Dashboard from "./components/Dashboard/Dashboard";
@@ -28,6 +29,7 @@ function App() {
           <Route path="/" element={<LandingPage />} />
           <Route path="/map" element={<ResidentHome />} />
           <Route path="/login" element={<Login />} />
+          <Route path="/forgot-password" element={<ForgotPassword />} />
           <Route path="/set-password" element={<PasswordSetup />} />
           <Route
             path="/dashboard"

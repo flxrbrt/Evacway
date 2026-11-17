@@ -1112,6 +1112,38 @@
   font-weight: 500;
 }
 
+.um-reset-action {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.um-reset-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #b91c1c;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.um-reset-retry-btn {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #b91c1c;
+  font: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.um-reset-retry-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 /* WHITE MODAL FOOTER WITH TOP BORDER (NO GRAY STRIP) */
 .um-modal-footer {
   display: flex;
@@ -1667,8 +1699,14 @@
     align-items: stretch;
   }
 
-  .um-modal-footer--split button {
+  .um-modal-footer--split > button,
+  .um-reset-action,
+  .um-reset-action > .um-secondary-btn {
     width: 100%;
     justify-content: center;
+  }
+
+  .um-reset-error {
+    align-self: stretch;
   }
 }

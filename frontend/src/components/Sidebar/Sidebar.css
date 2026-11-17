@@ -59,6 +59,18 @@
   border-bottom: 1px solid var(--border);
 }
 
+.sidebar-logo {
+  display: block;
+  width: auto;
+  height: 40px;
+  object-fit: contain;
+  flex: 0 0 auto;
+}
+
+.sidebar-brand .sidebar-logo-wide {
+  max-width: 190px;
+}
+
 .sidebar-brand-icon {
   width: 36px;
   height: 36px;
@@ -709,10 +721,12 @@
     margin: 0 10px;
   }
 
-  .sidebar-mobile-brand .sidebar-brand-icon {
+  .sidebar-mobile-logo {
+    display: block;
     width: 32px;
     height: 32px;
-    font-size: 14px;
+    object-fit: contain;
+    flex: 0 0 auto;
   }
 
   .sidebar-mobile-brand-title {
@@ -824,6 +838,14 @@
     border-bottom: none;
     padding: 0;
     margin-bottom: 0;
+  }
+
+  .sidebar-drawer-header .sidebar-logo-wide {
+    display: block;
+  }
+
+  .sidebar-mobile-brand-title {
+    display: none;
   }
 
   .sidebar-drawer-close-btn {

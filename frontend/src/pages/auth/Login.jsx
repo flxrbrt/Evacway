@@ -2,7 +2,6 @@ import { useState, useEffect } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
-  faShieldHalved,
   faEnvelope,
   faLock,
   faCircleNotch,
@@ -53,8 +52,8 @@ function Login() {
   return (
     <div className="login-wrapper">
       <form onSubmit={handleSubmit} className="login-card ds-card">
-        <div className="login-icon" aria-hidden="true">
-          <FontAwesomeIcon icon={faShieldHalved} />
+        <div className="login-icon">
+          <img src="/evacway-logo-text.png" alt="EvacWay" className="login-logo" />
         </div>
         <h2 className="login-title">EvacWay Login</h2>
         <p className="login-subtitle">Sign in to your resident, LGU personnel, or admin account.</p>
@@ -93,6 +92,10 @@ function Login() {
             required
           />
         </div>
+
+        <Link to="/forgot-password" className="login-forgot-link">
+          Forgot your password?
+        </Link>
 
         <button type="submit" disabled={loading} className="login-button ds-btn ds-btn--primary">
           {loading ? (

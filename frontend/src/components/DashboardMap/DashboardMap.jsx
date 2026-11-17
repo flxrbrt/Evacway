@@ -355,15 +355,15 @@ export function getOccupancyStatus(occupied = 0, capacity = 0) {
     cap > 0 ? Math.min(100, Math.round((occ / cap) * 100)) : occ > 0 ? 100 : 0;
   const spacesLeft = Math.max(0, cap - occ);
 
-  if (percent >= 90) {
+  if (cap > 0 && occ >= cap) {
     return {
       percent,
       color: "#dc2626", // Red: 90% and above
-      statusText: "Full",
+      statusText: "Shelter full",
       spacesLeftText: `${spacesLeft} spaces left`,
     };
   }
-  if (percent >= 70) {
+  if (cap > 0 && occ / cap >= .9) {
     return {
       percent,
       color: "#d97706", // Amber: 70% to 89%

@@ -1,5 +1,5 @@
 const CACHE_NAME = "evacway-shell-v1";
-const SHELL_URLS = ["/", "/manifest.webmanifest", "/evacway-icon.svg"];
+const SHELL_URLS = ["/", "/manifest.webmanifest", "/evacway-app.png"];
 
 function parsePushPayload(data) {
   if (!data) return {};
@@ -64,8 +64,8 @@ self.addEventListener("push", (event) => {
 
   event.waitUntil(self.registration.showNotification(payload.title || "EvacWay", {
     body: payload.body || "There is a new dashboard notification.",
-    icon: "/evacway-icon.svg",
-    badge: "/evacway-icon.svg",
+    icon: "/evacway-app.png",
+    badge: "/evacway-app.png",
     tag: payload.notificationId ? `evacway-${payload.notificationId}` : "evacway-update",
     requireInteraction: Boolean(payload.emergency),
     data: { url: payload.url || "/" },

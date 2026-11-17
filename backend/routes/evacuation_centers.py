@@ -30,6 +30,7 @@ from geoalchemy2.shape import to_shape, from_shape
 from shapely.geometry import mapping, Polygon, MultiPoint, Point
 from flask_jwt_extended import get_jwt_identity
 from utils import role_required
+from services.non_registered_evacuees import center_occupancy, present_counts, table_ready
 
 centers_bp = Blueprint('centers', __name__)
 
@@ -232,6 +233,10 @@ def _center_metrics(center):
     building_count = len(center_buildings)
     unmapped_room_count = 0 if is_venue_or_private else sum(1 for room in rooms if room.building_id is None)
     mapped_room_count = 0 if is_venue_or_private else sum(1 for room in rooms if room.building_id is not None)
+
+    if table_ready():
+        total_occupied = center_occupancy(center.id)
+        center_available = max(effective_capacity - total_occupied, 0)
 
     return {
         "center_type": center.center_type or "campus",
@@ -2503,6 +2508,13 @@ def _get_checkin_dataset(center_id_param=None, search_query='', status_filter='a
         "occupancy_rate": round(((tot_fully_checked_in + tot_partially_checked_in) / tot_assigned * 100), 1) if tot_assigned > 0 else 0
     }
 
+    non_registered = present_counts(target_op.id) if target_op else {}
+    for center in centers_summary:
+        center['non_registered_present'] = non_registered.get(center['id'], 0)
+        center['current_occupancy'] = center['checked_in'] + center['non_registered_present']
+        center['space_left'] = max(center['capacity'] - center['current_occupancy'], 0)
+        ratio = center['current_occupancy'] / center['capacity'] if center['capacity'] else 0
+        center['capacity_warning'] = 'Shelter full' if ratio >= 1 else ('Near capacity' if ratio >= .9 else None)
     return centers_summary, evacuees, summary, active_sched, active_centers, operations, is_historical
 
 
@@ -3193,7 +3205,7 @@ def export_check_in_report():
 
     for s_idx, cs in enumerate(centers_summary, start=5):
         assigned_val = cs.get("assigned", 0)
-        checked_val = cs.get("checked_in", 0)
+        checked_val = cs.get("current_occupancy", cs.get("checked_in", 0))
         cap_val = cs.get("capacity", 0)
         occ_rate = f"{round((checked_val / cap_val * 100), 1)}%" if cap_val > 0 else "0.0%"
         cutoff_d = cs.get("evacuation_cutoff_date") or cs.get("evacuation_open_date") or "—"
@@ -3241,6 +3253,8 @@ def export_check_in_report():
                 max_len = len(val_str)
         ws2.column_dimensions[col_letter].width = max(max_len + 4, 12)
 
+    from routes.non_registered_evacuees import add_export_sheet
+    add_export_sheet(wb, active_sched.get('operation_id'), center_id_param, search_query, status_filter)
     output = io.BytesIO()
     wb.save(output)
     output.seek(0)

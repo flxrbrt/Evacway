@@ -58,6 +58,14 @@ async function requestFile(path) {
 
 
 export const api = {
+  getNonRegisteredEvacuees: (params = {}) => request(`/api/non-registered-evacuees?${new URLSearchParams(params)}`),
+  getNonRegisteredGroup: (code, sensitive = false) => request(`/api/non-registered-evacuees/groups/${code}?include_sensitive=${sensitive}`),
+  createNonRegisteredGroup: (payload) => request('/api/non-registered-evacuees', { method: 'POST', body: JSON.stringify(payload) }),
+  updateNonRegisteredPerson: (id, payload) => request(`/api/non-registered-evacuees/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
+  addNonRegisteredMember: (code, payload) => request(`/api/non-registered-evacuees/groups/${code}/members`, { method: 'POST', body: JSON.stringify(payload) }),
+  departNonRegistered: (id, departed, group = false) => request(group ? `/api/non-registered-evacuees/groups/${id}/departure` : `/api/non-registered-evacuees/${id}/departure`, { method: 'POST', body: JSON.stringify({ departed }) }),
+  deleteNonRegisteredPerson: (id) => request(`/api/non-registered-evacuees/${id}`, { method: 'DELETE' }),
+  findNonRegisteredDuplicates: (q, operationId) => request(`/api/non-registered-evacuees/duplicates?${new URLSearchParams({ q, operation_id: operationId })}`),
 
   // -------------------------------------------------------
   // AUTH

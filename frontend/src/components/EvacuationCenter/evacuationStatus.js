@@ -23,8 +23,8 @@ export const STATUS_COLORS = {
 };
 
 export const OCCUPANCY_THRESHOLDS = {
-  NEAR_FULL: 85, // percent of capacity assigned => \"Near full\"
-  FULL: 100, // percent of capacity assigned => \"Full\"
+  NEAR_FULL: 90, // percent of capacity on-site
+  FULL: 100, // percent of capacity on-site
 };
 
 export const VULNERABILITY_KEYWORDS = [
@@ -47,14 +47,14 @@ export const FAMILY_STATUS_THRESHOLDS = {
 };
 
 /**
- * Status of a single center based on assigned occupancy vs capacity.
+ * Status of a single center based on people on-site vs capacity.
  */
 export function centerStatus(center, checkedIn, assigned, capacity) {
   if (center.is_active === false) return 'Closed';
   const cap = capacity || 0;
-  const as = assigned || 0;
+  const as = checkedIn ?? center.current_occupancy ?? center.occupied ?? assigned ?? 0;
   if (cap > 0 && as >= cap) return 'Full';
-  if (cap > 0 && Math.round((as / cap) * 100) >= OCCUPANCY_THRESHOLDS.NEAR_FULL) return 'Near full';
+  if (cap > 0 && (as / cap) * 100 >= OCCUPANCY_THRESHOLDS.NEAR_FULL) return 'Near full';
   return 'Available';
 }
 
@@ -166,10 +166,10 @@ export function getOccupancyStatus(occupied = 0, capacity = 0) {
   const occ = Number(occupied) || 0;
   const percent = cap > 0 ? Math.min(100, Math.round((occ / cap) * 100)) : occ > 0 ? 100 : 0;
 
-  if (percent >= 90) {
+  if (cap > 0 && occ >= cap) {
     return { percent, color: "#dc2626", barClass: "is-full", level: "full" };
   }
-  if (percent >= 70) {
+  if (cap > 0 && occ / cap >= .9) {
     return { percent, color: "#d97706", barClass: "is-high", level: "high" };
   }
   return { percent, color: "#16a34a", barClass: "is-low", level: "normal" };

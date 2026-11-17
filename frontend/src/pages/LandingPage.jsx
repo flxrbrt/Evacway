@@ -28,14 +28,7 @@ const STEPS = [
 function Logo() {
   return (
     <Link to="/" className="ew-logo" aria-label="EvacWay - Municipality of Sogod">
-      <div className="ew-logo-brand">
-        <svg width="24" height="24" viewBox="0 0 30 30" aria-hidden="true">
-          <rect width="30" height="30" rx="8" fill="#1B56C4" />
-          <path d="M7 22c6 0 5-9 9-9s3-4 7-4" fill="none" stroke="#fff" strokeWidth="2.6" strokeLinecap="round" />
-          <circle cx="7" cy="22" r="2.4" fill="#fff" />
-        </svg>
-        <span className="ew-logo-name">EvacWay</span>
-      </div>
+      <img src="/evacway-logo-text.png" alt="EvacWay" className="ew-logo-image" />
       <span className="ew-brand-divider" aria-hidden="true" />
       <div className="ew-lgu-partner">
         <img src="/lgu-logo.png" alt="LGU Sogod Seal" className="ew-lgu-logo" />
@@ -981,7 +974,7 @@ export default function LandingPage() {
 
         <div className="ew-map-wrap" aria-hidden="true">
           <div className="ew-map">
-            <MapArt preserveAspectRatio={isCompactHero ? "xMaxYMax slice" : "xMidYMid slice"} />
+            <MapArt preserveAspectRatio={isCompactHero ? "xMaxYMax slice" : "xMaxYMid slice"} />
           </div>
           <span className="ew-chip ew-chip-b" aria-hidden="true"><i />Road closed ahead</span>
           <span className="ew-chip ew-chip-c" aria-hidden="true"><i />Route found</span>
@@ -1115,12 +1108,7 @@ export default function LandingPage() {
           <div className="ew-footer-brand-col">
             <div className="ew-footer-logos">
               <Link to="/" className="ew-logo" aria-label="EvacWay home">
-                <svg width="24" height="24" viewBox="0 0 30 30" aria-hidden="true">
-                  <rect width="30" height="30" rx="8" fill="#1B56C4" />
-                  <path d="M7 22c6 0 5-9 9-9s3-4 7-4" fill="none" stroke="#fff" strokeWidth="2.6" strokeLinecap="round" />
-                  <circle cx="7" cy="22" r="2.4" fill="#fff" />
-                </svg>
-                <span className="ew-logo-name">EvacWay</span>
+                <img src="/evacway-logo-text.png" alt="EvacWay" className="ew-logo-image" />
               </Link>
               <span className="ew-footer-divider" aria-hidden="true" />
               <div className="ew-footer-lgu">

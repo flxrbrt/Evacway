@@ -1,10 +1,20 @@
 import html
+import logging
 import smtplib
 import ssl
 from email.message import EmailMessage
 from email.utils import formataddr
 
 from flask import current_app
+from models import ResidentAccount
+
+
+# Temporary SMTP diagnostic logging; remove after confirming the runtime settings.
+logging.basicConfig(level=logging.INFO)
+
+
+class MailConfigurationError(RuntimeError):
+    pass
 
 
 def _send_smtp_message(message):
@@ -16,13 +26,14 @@ def _send_smtp_message(message):
     encryption = current_app.config.get("MAIL_ENCRYPTION", "tls").lower()
 
     if mailer != "smtp":
-        raise RuntimeError("Only SMTP mail delivery is configured.")
+        raise MailConfigurationError("Only SMTP mail delivery is configured.")
     if not host or not username or not password:
-        raise RuntimeError("SMTP mail settings are incomplete in the backend environment.")
+        raise MailConfigurationError("SMTP mail settings are incomplete in the backend environment.")
     if encryption not in {"tls", "ssl"}:
-        raise RuntimeError("SMTP encryption must be configured as tls or ssl.")
+        raise MailConfigurationError("SMTP encryption must be configured as tls or ssl.")
 
     context = ssl.create_default_context()
+    logging.info("MAIL: host=%r port=%r user=%r encryption=%r pw_len=%s", host, port, username, encryption, len(password or ""))
     if encryption == "ssl":
         with smtplib.SMTP_SSL(host, port, context=context, timeout=20) as server:
             server.login(username, password)
@@ -48,17 +59,37 @@ def send_password_setup_email(user_or_account, token, purpose="setup"):
     from_name = current_app.config.get("MAIL_FROM_NAME", "EvacWay System")
 
     if mailer != "smtp":
-        raise RuntimeError("Only SMTP mail delivery is configured.")
+        raise MailConfigurationError("Only SMTP mail delivery is configured.")
     if not host or not from_address or not username or not password:
-        raise RuntimeError("SMTP mail settings are incomplete in the backend environment.")
+        raise MailConfigurationError("SMTP mail settings are incomplete in the backend environment.")
     if encryption not in {"tls", "ssl"}:
-        raise RuntimeError("SMTP encryption must be configured as tls or ssl.")
+        raise MailConfigurationError("SMTP encryption must be configured as tls or ssl.")
 
-    frontend_url = current_app.config.get("FRONTEND_URL", "http://localhost:5173").rstrip("/")
-    setup_url = f"{frontend_url}/set-password?token={token}"
+    public_url = (current_app.config.get("FRONTEND_URL_PUBLIC") or "").strip().rstrip("/")
+    frontend_url = (current_app.config.get("FRONTEND_URL") or "").strip().rstrip("/")
+    setup_urls = [f"{url}/set-password?token={token}" for url in (public_url, frontend_url) if url]
+    if not setup_urls:
+        raise MailConfigurationError("Configure FRONTEND_URL_PUBLIC or FRONTEND_URL for password emails.")
+    fallback_note = (
+        "Only if the public server is unavailable, try this local link. "
+        "It only works on the computer that runs EvacWay."
+    )
+    plain_links = setup_urls[0]
+    if len(setup_urls) > 1:
+        plain_links += f"\n\n{fallback_note}\n{setup_urls[1]}"
+    html_links = (
+        f"<p><a href='{html.escape(setup_urls[0], quote=True)}' "
+        "style='display:inline-block;padding:12px 18px;background:#1759a6;color:#fff;"
+        "text-decoration:none;border-radius:5px'>Continue to EvacWay</a></p>"
+    )
+    if len(setup_urls) > 1:
+        html_links += (
+            f"<p>{fallback_note}</p>"
+            f"<p><a href='{html.escape(setup_urls[1], quote=True)}'>{html.escape(setup_urls[1])}</a></p>"
+        )
 
     # Handle both User and ResidentAccount
-    if hasattr(user_or_account, 'resident_id'):
+    if isinstance(user_or_account, ResidentAccount):
         # ResidentAccount - get name from resident
         recipient_name = user_or_account.resident.get_full_name() if user_or_account.resident else "there"
     else:
@@ -74,16 +105,14 @@ def send_password_setup_email(user_or_account, token, purpose="setup"):
     message.set_content(
         f"Hello {recipient_name},\n\n"
         f"Use this secure link to {'set' if purpose == 'setup' else 'reset'} your EvacWay password:\n"
-        f"{setup_url}\n\n"
+        f"{plain_links}\n\n"
         "This link expires in one hour. If you did not request this, you can ignore this email.\n"
     )
     message.add_alternative(
         "<!doctype html><html><body style='font-family:Arial,sans-serif;color:#17324d'>"
         f"<h2 style='color:#174f88'>EvacWay account</h2><p>Hello {html.escape(recipient_name)},</p>"
         f"<p>Use this secure link to {'set' if purpose == 'setup' else 'reset'} your password.</p>"
-        f"<p><a href='{html.escape(setup_url, quote=True)}' "
-        "style='display:inline-block;padding:12px 18px;background:#1759a6;color:#fff;"
-        "text-decoration:none;border-radius:5px'>Continue to EvacWay</a></p>"
+        f"{html_links}"
         "<p>This link expires in one hour. If you did not request this, you can ignore this email.</p>"
         "</body></html>",
         subtype="html",
@@ -99,7 +128,6 @@ def send_resident_registration_email(registration):
     if not from_address:
         raise RuntimeError("SMTP sender address is not configured.")
 
-    frontend_url = current_app.config.get("FRONTEND_URL", "http://localhost:5173").rstrip("/")
     recipient_name = " ".join(
         part
         for part in (
@@ -114,21 +142,61 @@ def send_resident_registration_email(registration):
     message["To"] = registration.email
 
     if registration.status == "approved":
-        login_url = f"{frontend_url}/"
+        public_url = (current_app.config.get("APP_URL_PUBLIC") or "").rstrip("/")
+        local_url = (current_app.config.get("APP_URL_LOCAL") or "").rstrip("/")
+        public_map_url = f"{public_url}/map" if public_url else ""
+        local_map_url = f"{local_url}/map" if local_url else ""
+        forgot_password_url = f"{public_url}/forgot-password" if public_url else (f"{local_url}/forgot-password" if local_url else "")
+        logo_url = f"{public_url}/evacway-logo-text.png" if public_url.startswith("https://") else ""
         message["Subject"] = "Your EvacWay account has been approved"
-        message.set_content(
-            f"Hello {recipient_name},\n\n"
-            "Your EvacWay account has been approved. You can now log in using your email and the password you chose during registration.\n"
-            f"Open EvacWay: {login_url}\n"
-        )
-        message.add_alternative(
-            "<!doctype html><html><body style='font-family:Arial,sans-serif;color:#17324d'>"
-            f"<h2 style='color:#174f88'>Your EvacWay account is approved</h2><p>Hello {html.escape(recipient_name)},</p>"
-            "<p>You can now log in using your email and the password you chose during registration.</p>"
-            f"<p><a href='{html.escape(login_url, quote=True)}'>Open EvacWay</a></p>"
-            "</body></html>",
-            subtype="html",
-        )
+        plain_lines = [
+            f"Hello {recipient_name},",
+            "",
+            "Your EvacWay account has been approved. You can now log in using your email and the password you chose during registration.",
+            "",
+            "Username: " + registration.email,
+            "Password: The password you chose during registration.",
+        ]
+        if forgot_password_url:
+            plain_lines.extend(["", "Forgot your password?", forgot_password_url])
+        if public_map_url or local_map_url:
+            plain_lines.extend(["", "Open EvacWay:"])
+            if public_map_url:
+                plain_lines.append(public_map_url)
+            if local_map_url:
+                plain_lines.extend(["If that does not open, try this link:", local_map_url, "The second link only works on the computer that runs EvacWay."])
+        message.set_content("\n".join(plain_lines) + "\n")
+
+        html_parts = [
+            "<!doctype html><html><body style='margin:0;padding:24px;font-family:Arial,sans-serif;font-size:14px;line-height:1.5;color:#17324d'>",
+            "<div style='max-width:560px;margin:0 auto'>",
+        ]
+        if logo_url:
+            html_parts.append(f"<p style='margin:0 0 20px'><img src='{html.escape(logo_url, quote=True)}' alt='EvacWay' style='display:block;width:auto;height:40px;border:0'></p>")
+        html_parts.extend([
+            "<h2 style='margin:0 0 16px;color:#174f88;font-size:22px;line-height:1.25'>Your EvacWay account is approved</h2>",
+            f"<p style='margin:0 0 16px'>Hello {html.escape(recipient_name)},</p>",
+            "<p style='margin:0 0 16px'>You can now log in using your email and the password you chose during registration.</p>",
+            "<div style='margin:0 0 20px;padding:16px;background:#f4f7fb;border:1px solid #dbe5f0;border-radius:8px'>",
+            f"<p style='margin:0 0 8px'><strong>Username:</strong> {html.escape(registration.email)}</p>",
+            "<p style='margin:0'><strong>Password:</strong> The password you chose during registration.</p>",
+            "</div>",
+        ])
+        if forgot_password_url:
+            html_parts.append(
+                f"<p style='margin:0 0 20px'><a href='{html.escape(forgot_password_url, quote=True)}' style='color:#2563eb'>Forgot your password?</a></p>"
+            )
+        if public_map_url:
+            html_parts.append(
+                f"<p style='margin:0 0 10px'><a href='{html.escape(public_map_url, quote=True)}' style='display:inline-block;height:40px;line-height:40px;padding:0 16px;background:#2563eb;color:#fff;text-decoration:none;border-radius:8px'>Open EvacWay</a></p>"
+            )
+        if local_map_url:
+            html_parts.extend([
+                f"<p style='margin:0 0 4px'><a href='{html.escape(local_map_url, quote=True)}' style='display:inline-block;height:40px;line-height:40px;padding:0 16px;background:#2563eb;color:#fff;text-decoration:none;border-radius:8px'>If that does not open, try this link</a></p>",
+                "<p style='margin:0;color:#5b6b82'>The second link only works on the computer that runs EvacWay.</p>",
+            ])
+        html_parts.extend(["</div></body></html>"])
+        message.add_alternative("".join(html_parts), subtype="html")
         return _send_smtp_message(message)
 
     if registration.status != "rejected":

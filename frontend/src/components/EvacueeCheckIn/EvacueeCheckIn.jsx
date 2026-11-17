@@ -31,6 +31,7 @@ import {
 import { useAuth } from "../../context/AuthContext";
 import { api } from "../../services/api";
 import "./EvacueeCheckIn.css";
+import { AddNonRegisteredButton, NonRegisteredModal, NonRegisteredGroups } from './NonRegisteredEvacuees';
 
 export default function EvacueeCheckIn() {
   const queryClient = useQueryClient();
@@ -39,6 +40,9 @@ export default function EvacueeCheckIn() {
   const [filterStatus, setFilterStatus] = useState("all"); // "all" | "pending" | "partial" | "checked_in"
   const [selectedDate] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
+  const [nonRegisteredModal, setNonRegisteredModal] = useState(null);
+  const [nonRegisteredStatus, setNonRegisteredStatus] = useState('all');
+  const [nonRegisteredPage, setNonRegisteredPage] = useState(1);
   const normalizedSearch = useMemo(
     () => searchQuery.trim().replace(/\s+/g, " "),
     [searchQuery]
@@ -118,7 +122,7 @@ export default function EvacueeCheckIn() {
       api.getCheckInList({
         center_id: selectedCenterId,
         q: normalizedSearch,
-        status: filterStatus,
+        status: filterStatus === 'non_registered' ? 'all' : filterStatus,
         date: selectedDate || undefined,
         operation_id: selectedOperationId,
       }),
@@ -179,7 +183,7 @@ export default function EvacueeCheckIn() {
 
   const getCheckInDisabledReason = (evacuee) => {
     if (isHistorical) {
-      return "Viewing archived historical operation. Check-in records from past disaster events are preserved as read-only.";
+      return "Viewing an archived operation. Arrival records from past disaster events are preserved as read-only.";
     }
     if (!isScheduleConfigured) {
       return "Cannot mark as arrived: No evacuation operation has been started. An administrator must open evacuation operations.";
@@ -373,7 +377,7 @@ export default function EvacueeCheckIn() {
       window.URL.revokeObjectURL(url);
       showToast("Evacuee arrival report downloaded successfully.");
     } catch (err) {
-      console.error("Failed to export check-in report:", err);
+      console.error("Failed to export arrival report:", err);
       showToast(err.message || "Failed to download arrival report.");
     } finally {
       setExportingReport(false);
@@ -431,10 +435,10 @@ export default function EvacueeCheckIn() {
       queryClient.invalidateQueries({ queryKey: ["evacuee-check-in-list"] });
       queryClient.invalidateQueries({ queryKey: ["evacuation-centers"] });
       queryClient.invalidateQueries({ queryKey: ["evacuation-center-details"] });
-      showToast(res?.message || "Successfully updated check-in status.");
+      showToast(res?.message || "Successfully updated arrival status.");
     },
     onError: (err) => {
-      showToast(err?.message || "Failed to update check-in status.");
+      showToast(err?.message || "Failed to update arrival status.");
     },
     onSettled: () => {
       setActionLoadingId(null);
@@ -598,6 +602,22 @@ export default function EvacueeCheckIn() {
     [operations]
   );
 
+  const nonRegisteredQuery = useQuery({
+    queryKey: ['non-registered-evacuees', selectedOperationId, selectedCenterId, normalizedSearch, nonRegisteredStatus, nonRegisteredPage],
+    queryFn: () => api.getNonRegisteredEvacuees({ operation_id: selectedOperationId, center_id: selectedCenterId,
+      q: normalizedSearch, status: nonRegisteredStatus, page: nonRegisteredPage, per_page: 10 }),
+    staleTime: 10_000,
+  });
+  const selectedArrivalOperation = selectedOperationId === 'active' ? activeOperation : operations.find((op) => String(op.id) === String(selectedOperationId));
+  const canAddNonRegistered = Boolean(selectedArrivalOperation?.status === 'active' && !isHistorical && !isCenterClosed);
+  const refreshArrivals = () => Promise.all([
+    queryClient.invalidateQueries({ queryKey: ['non-registered-evacuees'] }),
+    queryClient.invalidateQueries({ queryKey: ['evacuee-check-in-list'] }),
+    queryClient.invalidateQueries({ queryKey: ['evacuation-centers'] }),
+    queryClient.invalidateQueries({ queryKey: ['evacuation-center-details'] }),
+    queryClient.invalidateQueries({ queryKey: ['logs'] }),
+  ]);
+
   const archivedOperations = useMemo(() => {
     return operations
       .filter((op) => op.status === "concluded")
@@ -685,7 +705,7 @@ export default function EvacueeCheckIn() {
   );
 
   return (
-    <div className="checkin-container" role="main" aria-label="Evacuee Check-In Management">
+    <div className="checkin-container" role="main" aria-label="Evacuee Arrival Management">
       {/* Toast Alert */}
       {toastMessage && (
         <div
@@ -702,7 +722,7 @@ export default function EvacueeCheckIn() {
       <header className="checkin-header">
         <div className="checkin-header-titles">
           <div className="checkin-title-badge-row">
-            <h1>Evacuee Arrival & Check-In</h1>
+            <h1>Evacuee Arrival</h1>
             {!isHistorical && (
               <span className="checkin-live-badge">
                 <span className="checkin-live-dot" /> Live
@@ -878,7 +898,7 @@ export default function EvacueeCheckIn() {
             onClick={handleExportReport}
             disabled={exportingReport}
             aria-label={exportingReport ? "Exporting report" : isHistorical ? "Export Archive" : "Export Report"}
-            title={isHistorical ? "Download historical check-in report for this archived event" : "Download Excel arrival roster and shelter summary report"}
+            title={isHistorical ? "Download historical arrival report for this archived event" : "Download Excel arrival roster and shelter summary report"}
           >
             <FontAwesomeIcon icon={exportingReport ? faSpinner : faFileExcel} spin={exportingReport} />
             <span className="checkin-export-label">
@@ -936,7 +956,7 @@ export default function EvacueeCheckIn() {
                   <span className="checkin-banner-pill standby">Standby</span>
                 </div>
                 <div className="checkin-banner-meta">
-                  <span>Set an opening date and arrival deadline to enable resident check-in.</span>
+                  <span>Set an opening date and arrival deadline to record resident arrivals.</span>
                 </div>
               </div>
             </div>
@@ -1027,7 +1047,7 @@ export default function EvacueeCheckIn() {
                   <span className="checkin-banner-dot">•</span>
                   <span>Scope: {selectedCenterId !== "all" ? centers.find((c) => String(c.id) === String(selectedCenterId))?.name || "Selected Center" : "All Shelters"}</span>
                   <span className="checkin-banner-dot">•</span>
-                  <span>Arrival check-ins active 24/7</span>
+                  <span>Arrival recording active 24/7</span>
                 </div>
               </div>
             </div>
@@ -1061,7 +1081,7 @@ export default function EvacueeCheckIn() {
       </div>
 
       {/* Interactive KPI Stat Cards (Click to Filter by Status) */}
-      <section className="stat-card-grid cols-4" role="group" aria-label="Filter check-in list by arrival status">
+      <section className="stat-card-grid cols-4" role="group" aria-label="Filter list by arrival status">
         {/* Total Assigned */}
         <button
           type="button"
@@ -1095,7 +1115,7 @@ export default function EvacueeCheckIn() {
           <div className="stat-card-content">
             <span className="stat-card-label">Fully Arrived</span>
             <strong className="stat-card-value">{summary.total_checked_in}</strong>
-            <span className="stat-card-hint">Checked in successfully</span>
+            <span className="stat-card-hint">All household members arrived</span>
           </div>
           <span className="stat-card-icon stat-card-icon--resolved" aria-hidden="true">
             <FontAwesomeIcon icon={faCircleCheck} />
@@ -1115,7 +1135,7 @@ export default function EvacueeCheckIn() {
           <div className="stat-card-content">
             <span className="stat-card-label">Partially Arrived</span>
             <strong className="stat-card-value">{summary.total_partial || 0}</strong>
-            <span className="stat-card-hint">Some members checked in</span>
+            <span className="stat-card-hint">Some household members arrived</span>
           </div>
           <span className="stat-card-icon stat-card-icon--warning" aria-hidden="true">
             <FontAwesomeIcon icon={faClock} />
@@ -1135,11 +1155,18 @@ export default function EvacueeCheckIn() {
           <div className="stat-card-content">
             <span className="stat-card-label">Pending Arrival</span>
             <strong className="stat-card-value">{summary.total_pending}</strong>
-            <span className="stat-card-hint">Not yet checked in</span>
+            <span className="stat-card-hint">No household members arrived</span>
           </div>
           <span className="stat-card-icon stat-card-icon--pending" aria-hidden="true">
             <FontAwesomeIcon icon={faCircleExclamation} />
           </span>
+        </button>
+        <button type="button" className={`stat-card is-clickable is-neutral ${filterStatus === 'non_registered' ? 'is-selected' : ''}`}
+          aria-pressed={filterStatus === 'non_registered'} onClick={() => { setFilterStatus('non_registered'); setNonRegisteredPage(1); }}>
+          <div className="stat-card-content"><span className="stat-card-label">Non-registered</span>
+            <strong className="stat-card-value">{nonRegisteredQuery.data?.summary?.people ?? '—'}</strong>
+            <span className="stat-card-hint">{nonRegisteredQuery.data?.summary?.groups ?? 0} groups · {nonRegisteredQuery.data?.summary?.present ?? 0} on-site</span>
+          </div><span className="stat-card-icon stat-card-icon--neutral" aria-hidden="true"><FontAwesomeIcon icon={faUsers} /></span>
         </button>
       </section>
 
@@ -1159,6 +1186,7 @@ export default function EvacueeCheckIn() {
             onChange={(e) => {
               setSearchQuery(e.target.value);
               setCurrentPage(1);
+              setNonRegisteredPage(1);
             }}
             aria-label="Search evacuees"
           />
@@ -1177,6 +1205,11 @@ export default function EvacueeCheckIn() {
           )}
         </div>
 
+        <div className="nre-filter-chips" role="group" aria-label="Arrival records">
+          <button type="button" aria-pressed={filterStatus === 'all'} onClick={() => setFilterStatus('all')}>All arrivals</button>
+          <button type="button" aria-pressed={filterStatus === 'non_registered'} onClick={() => setFilterStatus('non_registered')}>Non-registered</button>
+        </div>
+        <AddNonRegisteredButton disabled={!canAddNonRegistered} onClick={() => setNonRegisteredModal({ kind: 'create' })} />
         <button
           type="button"
           className={`checkin-mobile-filter-btn ${selectedCenterId !== "all" ? "has-active" : ""}`}
@@ -1203,9 +1236,23 @@ export default function EvacueeCheckIn() {
         </button>
       </section>
 
+      {centers.filter((center) => (selectedCenterId === 'all' || String(center.id) === String(selectedCenterId)) && center.capacity_warning).map((center) =>
+        <p key={center.id} className={`nre-capacity-warning ${center.capacity_warning === 'Shelter full' ? 'is-full' : ''}`} role="status">
+          {center.name}: {center.capacity_warning} · {center.current_occupancy}/{center.capacity} people on-site
+        </p>)}
+      {nonRegisteredModal && <NonRegisteredModal mode={nonRegisteredModal} centers={centers} centerId={selectedCenterId}
+        operation={selectedArrivalOperation} onClose={() => setNonRegisteredModal(null)} onSaved={refreshArrivals} />}
+
       {/* Evacuee List Section */}
-      <section className="checkin-table-card" aria-label="Evacuee check-in list">
-        {isLoading ? (
+      <section className="checkin-table-card" aria-label="Evacuee arrival list">
+        {(filterStatus === 'non_registered' || (filterStatus === 'all' && (nonRegisteredQuery.data?.total > 0 || nonRegisteredQuery.error))) && <NonRegisteredGroups
+          result={nonRegisteredQuery.data} loading={nonRegisteredQuery.isLoading} error={nonRegisteredQuery.error} retry={nonRegisteredQuery.refetch}
+          status={nonRegisteredStatus} setStatus={setNonRegisteredStatus} page={nonRegisteredPage} setPage={setNonRegisteredPage}
+          canEdit={canAddNonRegistered} isAdmin={isAdmin} onChanged={refreshArrivals}
+          onEdit={(person, group) => setNonRegisteredModal({ kind: 'edit', person, group })}
+          onMember={(group) => setNonRegisteredModal({ kind: 'member', group })}
+          onAdd={() => setNonRegisteredModal({ kind: 'create' })} addDisabled={!canAddNonRegistered} />}
+        {filterStatus === 'non_registered' ? null : isLoading ? (
           <div className="checkin-loading-spinner" role="status">
             <FontAwesomeIcon icon={faSpinner} spin />
             <span>Loading assigned evacuees...</span>
@@ -1214,7 +1261,7 @@ export default function EvacueeCheckIn() {
           <div className="checkin-empty-state">
             <div className="checkin-empty-icon">!</div>
             <h3 className="checkin-empty-title">Error Loading Evacuees</h3>
-            <p className="checkin-empty-text">{error.message || "Failed to load check-in data."}</p>
+            <p className="checkin-empty-text">{error.message || "Failed to load arrival data."}</p>
           </div>
         ) : evacuees.length === 0 ? (
           <div className="checkin-empty-state">
@@ -1231,6 +1278,7 @@ export default function EvacueeCheckIn() {
                     ? "No households have partial arrivals right now."
                     : "No households match the current filters."}
             </p>
+            <AddNonRegisteredButton disabled={!canAddNonRegistered} onClick={() => setNonRegisteredModal({ kind: 'create' })} />
           </div>
         ) : (
           <>
@@ -1387,8 +1435,8 @@ export default function EvacueeCheckIn() {
                                   className="checkin-action-btn btn-undo"
                                   onClick={() => handleQuickUndo(evacuee)}
                                   disabled={isRowLoading}
-                                  title="Undo check-in for this household"
-                                  aria-label={`Undo check-in for ${evacuee.head_name}`}
+                                  title="Undo arrival for this household"
+                                  aria-label={`Undo arrival for ${evacuee.head_name}`}
                                 >
                                   {isRowLoading ? (
                                     <FontAwesomeIcon icon={faSpinner} spin />
@@ -1414,7 +1462,7 @@ export default function EvacueeCheckIn() {
                                   className="checkin-action-btn btn-manage"
                                   onClick={() => handleOpenMemberModal(evacuee)}
                                   disabled={isRowLoading}
-                                  title="Manage or check in remaining family members"
+                                  title="Manage or mark remaining family members as arrived"
                                   aria-label={`Manage members for ${evacuee.head_name}`}
                                 >
                                   <FontAwesomeIcon icon={faListCheck} />
@@ -1439,7 +1487,7 @@ export default function EvacueeCheckIn() {
                                   onClick={() => handleQuickCheckInAll(evacuee)}
                                   disabled={isRowLoading || !canCheckIn}
                                   title={getCheckInDisabledReason(evacuee) || "Mark all members of this household as arrived"}
-                                  aria-label={`Check in all for ${evacuee.head_name}`}
+                                  aria-label={`Mark all as arrived for ${evacuee.head_name}`}
                                 >
                                   {isRowLoading ? (
                                     <FontAwesomeIcon icon={faSpinner} spin />
@@ -1452,8 +1500,8 @@ export default function EvacueeCheckIn() {
                                   type="button"
                                   className="checkin-action-btn btn-icon-only"
                                   onClick={() => handleOpenMemberModal(evacuee)}
-                                  title="Check in specific family members only"
-                                  aria-label="Check in specific members"
+                                  title="Mark specific family members as arrived"
+                                  aria-label="Mark specific members as arrived"
                                 >
                                   <FontAwesomeIcon icon={faListCheck} />
                                 </button>
@@ -1959,7 +2007,7 @@ export default function EvacueeCheckIn() {
                     <div>
                       <strong>Conclude &amp; Save to Archive?</strong>
                       <p>
-                        Concluding &ldquo;{scheduleEventName.trim()}&rdquo; pauses check-ins and saves current records into historical archives.
+                        Concluding &ldquo;{scheduleEventName.trim()}&rdquo; pauses arrivals and saves current records into historical archives.
                       </p>
                     </div>
                   </div>
@@ -2214,7 +2262,7 @@ export default function EvacueeCheckIn() {
                     <div>
                       <strong>Start New Operation?</strong>
                       <p>
-                        &ldquo;{effectiveSchedule?.evacuation_event_name || "Current Operation"}&rdquo; will be archived and all shelter check-ins will reset to 0 arrived for &ldquo;{scheduleEventName.trim()}&rdquo;.
+                        &ldquo;{effectiveSchedule?.evacuation_event_name || "Current Operation"}&rdquo; will be archived and all shelter arrival counts will reset to 0 for &ldquo;{scheduleEventName.trim()}&rdquo;.
                       </p>
                     </div>
                   </div>
@@ -2251,7 +2299,7 @@ export default function EvacueeCheckIn() {
                 <div className="checkin-modal-body checkin-op-modal-body">
                   <div className="checkin-op-short-notice is-new">
                     <FontAwesomeIcon icon={faBoxArchive} />
-                    <span>Archives the current event and resets check-ins to 0 arrived.</span>
+                    <span>Archives the current event and resets arrival counts to 0.</span>
                   </div>
 
                   <div className="checkin-form-group">
@@ -2427,7 +2475,7 @@ export default function EvacueeCheckIn() {
 
             <div className="checkin-modal-body" style={{ padding: "18px 22px" }}>
               <p style={{ fontSize: "13px", color: "var(--muted, #64748b)", margin: "0 0 16px" }}>
-                Prolong the allowed arrival window for evacuees. Once extended, check-in controls will immediately reactivate so staff can continue recording arrivals.
+                Prolong the allowed arrival window for evacuees. Once extended, arrival controls will immediately reactivate so staff can continue recording arrivals.
               </p>
 
               <div className="checkin-form-group">

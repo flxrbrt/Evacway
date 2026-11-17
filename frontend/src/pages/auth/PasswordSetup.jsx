@@ -60,14 +60,7 @@ function PasswordSetup() {
     <main className="password-setup-page">
       <section className="password-setup-panel ds-card" aria-labelledby="password-setup-title">
         <div className="password-setup-brand">
-          <span className="password-setup-brand-icon">
-            <svg width="30" height="30" viewBox="0 0 30 30" aria-hidden="true">
-              <rect width="30" height="30" rx="8" fill="var(--brand)" />
-              <path d="M7 22c6 0 5-9 9-9s3-4 7-4" fill="none" stroke="#fff" strokeWidth="2.6" strokeLinecap="round" />
-              <circle cx="7" cy="22" r="2.4" fill="#fff" />
-            </svg>
-          </span>
-          <span>EvacWay</span>
+          <img src="/evacway-logo-text.png" alt="EvacWay" className="password-setup-logo" />
         </div>
 
         {complete ? (

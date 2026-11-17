@@ -23,10 +23,26 @@ from routes.rescue_requests import rescue_bp
 from routes.buildings import buildings_bp
 from routes.resident_registrations import registrations_bp
 from routes.reference_options import reference_options_bp
+from routes.non_registered_evacuees import nre_bp
 
 
 app = Flask(__name__)
 app.config.from_object(Config)
+
+
+def _warn_if_smtp_config_missing():
+    smtp_settings = {
+        "MAIL_HOST": app.config.get("MAIL_HOST"),
+        "MAIL_PORT": os.environ.get("MAIL_PORT", "").strip(),
+        "MAIL_USERNAME": app.config.get("MAIL_USERNAME"),
+        "MAIL_PASSWORD": app.config.get("MAIL_PASSWORD"),
+    }
+    missing = [name for name, value in smtp_settings.items() if value in (None, "")]
+    if missing:
+        app.logger.warning("Mail configuration is missing or empty: %s", ", ".join(missing))
+
+
+_warn_if_smtp_config_missing()
 
 
 # =========================================================
@@ -115,6 +131,7 @@ app.register_blueprint(rescue_bp)
 app.register_blueprint(buildings_bp)
 app.register_blueprint(registrations_bp)
 app.register_blueprint(reference_options_bp)
+app.register_blueprint(nre_bp)
 
 
 # =========================================================

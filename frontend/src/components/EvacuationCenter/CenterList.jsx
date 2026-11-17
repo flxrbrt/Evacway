@@ -483,7 +483,7 @@ export default function CenterList({
     const key = st === 'Near full' ? 'near-full' : st.toLowerCase()
     return {
       key,
-      label: st,
+      label: st === 'Full' ? 'Shelter full' : st,
     }
   }, [])
 
@@ -747,7 +747,7 @@ export default function CenterList({
                     const cap = Number(props.capacity || 0)
                     const assigned = Number(props.assigned || 0)
                     const arrived = Number(props.occupied || 0)
-                    const occupancyPct = cap > 0 ? Math.min(100, Math.round((assigned / cap) * 100)) : 0
+                    const occupancyPct = cap > 0 ? Math.min(100, Math.round((arrived / cap) * 100)) : 0
                     const { key: statusKey, label: statusLabel } = getStatusInfo(props, arrived, assigned, cap)
 
                     return (
@@ -799,10 +799,10 @@ export default function CenterList({
                             </div>
                             <div className="ec-occupancy-text">
                               <span className="ec-occupancy-assigned">
-                                <strong>{assigned}</strong> of {cap} assigned
+                                <strong>{arrived}</strong> of {cap} on-site
                               </span>
                               <span className="ec-occupancy-arrived">
-                                {arrived} arrived
+                                {assigned} assigned
                               </span>
                             </div>
                           </div>
@@ -849,7 +849,7 @@ export default function CenterList({
                 const cap = Number(props.capacity || 0)
                 const assigned = Number(props.assigned || 0)
                 const arrived = Number(props.occupied || 0)
-                const occupancyPct = cap > 0 ? Math.min(100, Math.round((assigned / cap) * 100)) : 0
+                const occupancyPct = cap > 0 ? Math.min(100, Math.round((arrived / cap) * 100)) : 0
                 const { key: statusKey, label: statusLabel } = getStatusInfo(props, arrived, assigned, cap)
 
                 return (
@@ -893,10 +893,10 @@ export default function CenterList({
                       </div>
                       <div className="ec-occupancy-text">
                         <span className="ec-occupancy-assigned">
-                          <strong>{assigned}</strong> of {cap} assigned
+                          <strong>{arrived}</strong> of {cap} on-site
                         </span>
                         <span className="ec-occupancy-arrived">
-                          {arrived} arrived
+                          {assigned} assigned
                         </span>
                       </div>
                     </div>

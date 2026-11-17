@@ -4,6 +4,7 @@ import secrets
 
 from flask import current_app
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
+from models import ResidentAccount
 
 
 PASSWORD_SETUP_SALT = "evacway-password-setup"
@@ -34,7 +35,7 @@ def create_password_setup_token(user_or_account):
     payload = {
         "user_id": user_or_account.id,
         "email": user_or_account.email,
-        "account_type": "resident_account" if hasattr(user_or_account, "resident_id") else "user",
+        "account_type": "resident_account" if isinstance(user_or_account, ResidentAccount) else "user",
         "pfp": password_fingerprint(getattr(user_or_account, "password_hash", "")),
         "jti": secrets.token_urlsafe(12),
     }

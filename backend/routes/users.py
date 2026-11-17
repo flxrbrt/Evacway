@@ -1,5 +1,9 @@
+import logging
+import os
 import re
 import secrets
+import smtplib
+import socket
 
 from flask import Blueprint, current_app, request, jsonify
 from models import db, User, ResidentAccount, SystemLog
@@ -7,7 +11,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 from flask_jwt_extended import get_jwt_identity
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
-from services.mailer import send_password_setup_email
+from services.mailer import MailConfigurationError, send_password_setup_email
 from services.password_setup import create_password_setup_token
 from utils import role_required
 
@@ -15,6 +19,14 @@ users_bp = Blueprint('users', __name__)
 PASSWORD_POLICY_ERROR = (
     'Password must have at least 8 characters, including an uppercase letter, '
     'a lowercase letter, a number, and a special character'
+)
+SMTP_LOGIN_ERROR = (
+    'The mail server rejected the login. Check the mail username and app password.'
+)
+SMTP_CONNECTION_ERROR = 'Could not reach the mail server. Check the host, port, and network.'
+SMTP_DISCONNECTED_ERROR = (
+    'The mail server closed the connection while signing in. The app password may be '
+    'missing, wrong, or revoked, or an antivirus may be scanning email.'
 )
 
 
@@ -31,6 +43,28 @@ def valid_password(password):
 
 def current_user():
     return db.session.get(User, int(get_jwt_identity()))
+
+
+def _safe_smtp_error_message(error):
+    message = str(error)
+    for password in (current_app.config.get('MAIL_PASSWORD'), os.environ.get('MAIL_PASSWORD')):
+        if password:
+            message = message.replace(password, '[redacted]')
+            normalized = password.strip().strip("\"'").replace(' ', '')
+            if normalized:
+                message = message.replace(normalized, '[redacted]')
+    return message
+
+
+def _password_email_failure(error, message):
+    detail = _safe_smtp_error_message(error)
+    # Redact the traceback's exception text too, not just the formatted log message.
+    logging.exception(
+        'Password reset email failed with %s (SMTP code=%s): %s',
+        type(error).__name__, getattr(error, 'smtp_code', None), detail,
+        exc_info=(RuntimeError, RuntimeError(detail), error.__traceback__),
+    )
+    return jsonify({'error': message}), 502
 
 
 @users_bp.route('/api/users', methods=['GET'])
@@ -258,9 +292,29 @@ def reset_user_password(user_id):
     try:
         token = create_password_setup_token(user)
         send_password_setup_email(user, token, purpose="reset")
-    except Exception:
-        current_app.logger.exception("Could not send password reset email to %s", user.email)
-        return jsonify({"error": "Password email could not be sent. Check backend SMTP settings."}), 503
+    except smtplib.SMTPAuthenticationError as error:
+        return _password_email_failure(error, SMTP_LOGIN_ERROR)
+    except smtplib.SMTPServerDisconnected as error:
+        return _password_email_failure(error, SMTP_DISCONNECTED_ERROR)
+    except (
+        TimeoutError,
+        ConnectionRefusedError,
+        socket.gaierror,
+        smtplib.SMTPConnectError,
+    ) as error:
+        return _password_email_failure(error, SMTP_CONNECTION_ERROR)
+    except smtplib.SMTPRecipientsRefused as error:
+        return _password_email_failure(error, 'The recipient address was rejected.')
+    except MailConfigurationError as error:
+        return _password_email_failure(
+            error, 'Email is not configured correctly. Check the backend MAIL_* settings and frontend URLs.'
+        )
+    except smtplib.SMTPException as error:
+        return _password_email_failure(error, 'Could not send the email. The mail server rejected the message.')
+    except OSError as error:
+        return _password_email_failure(error, SMTP_CONNECTION_ERROR)
+    except Exception as error:
+        return _password_email_failure(error, 'Could not send the email. Check the backend logs for details.')
 
     admin_id = get_jwt_identity()
     db.session.add(SystemLog(user_id=admin_id, action=f"Sent password reset email to: {user.email}"))

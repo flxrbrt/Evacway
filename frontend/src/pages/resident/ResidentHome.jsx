@@ -3265,9 +3265,9 @@ const ResidentHome = () => {
         const pct = cap > 0 ? Math.min(100, Math.round((occ / cap) * 100)) : 0;
 
         let statusColor = "#16a34a"; // Green: Normal
-        if (pct >= 90) {
+        if (cap > 0 && occ >= cap) {
           statusColor = "#dc2626"; // Red: Full
-        } else if (pct >= 70) {
+        } else if (cap > 0 && occ / cap >= .9) {
           statusColor = "#d97706"; // Amber: High
         }
         if (isMine) {
@@ -3332,8 +3332,27 @@ const ResidentHome = () => {
       updateCenterMarkerVisibility();
     }
 
-    function handleMapBackgroundClick() {
+    function handleMapBackgroundClick(e) {
       if (pickingLocationRef.current) return;
+
+      const clickableLayers = [
+        "evacuation-centers-fill",
+        "evacuation-centers-line",
+        "evacway-buildings-fill",
+        "evacway-buildings-outline",
+      ].filter((layerId) => map.getLayer(layerId));
+
+      try {
+        if (
+          clickableLayers.length > 0 &&
+          map.queryRenderedFeatures(e.point, { layers: clickableLayers }).length > 0
+        ) {
+          return;
+        }
+      } catch (error) {
+        // Keep the background clear behavior if the style is reloading.
+      }
+
       setSelectedCenter(null);
     }
 
@@ -6032,7 +6051,8 @@ const ResidentHome = () => {
       {/* Header (slim 48px bar on phones) */}
       <header className="top-bar">
         <Link to="/" className="brand brand-link" aria-label="EvacWay Home" title="EvacWay Home">
-          EvacWay
+          <img src="/evacway-logo-text.png" alt="EvacWay" className="brand-logo brand-logo-wide" />
+          <img src="/evacway-app.png" alt="EvacWay" className="brand-logo brand-logo-square" />
         </Link>
 
         {/* Search evacuation center bar: centered in header between logo and user actions */}

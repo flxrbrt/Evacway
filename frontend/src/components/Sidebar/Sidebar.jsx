@@ -8,7 +8,6 @@ import {
   faUsers,
   faClockRotateLeft,
   faRightFromBracket,
-  faShieldHalved,
   faUser,
   faChartLine,
   faLifeRing,
@@ -73,7 +72,7 @@ const NAV_SECTIONS = [
       },
       {
         key: "checkin",
-        label: "Evacuee Check-In",
+        label: "Evacuee Arrival",
         icon: faUserCheck,
         roles: ["admin", "lgu_personnel"],
       },
@@ -538,10 +537,7 @@ function Sidebar({
         </button>
 
         <div className="sidebar-mobile-brand">
-          <span className="sidebar-brand-icon">
-            <FontAwesomeIcon icon={faShieldHalved} />
-          </span>
-          <span className="sidebar-mobile-brand-title">EvacWay</span>
+          <img src="/evacway-logo-text.png" alt="EvacWay" className="sidebar-mobile-logo" />
         </div>
 
         <div className="sidebar-mobile-right">
@@ -619,12 +615,7 @@ function Sidebar({
       >
         <div className="sidebar-drawer-header">
           <div className="sidebar-brand">
-            <span className="sidebar-brand-icon">
-              <FontAwesomeIcon icon={faShieldHalved} />
-            </span>
-            <span className="sidebar-brand-copy">
-              <strong>EvacWay</strong>
-            </span>
+            <img src="/evacway-logo-text.png" alt="EvacWay" className="sidebar-logo sidebar-logo-wide" />
           </div>
           <button
             type="button"
@@ -741,12 +732,7 @@ function Sidebar({
       {/* Desktop Sidebar Rail (Visible > 1024px) */}
       <aside className="sidebar-rail">
         <div className="sidebar-brand">
-          <span className="sidebar-brand-icon">
-            <FontAwesomeIcon icon={faShieldHalved} />
-          </span>
-          <span className="sidebar-brand-copy">
-            <strong>EvacWay</strong>
-          </span>
+          <img src="/evacway-logo-text.png" alt="EvacWay" className="sidebar-logo sidebar-logo-wide" />
           <NotificationCenter onSelect={onSelectNotification} />
         </div>
 
