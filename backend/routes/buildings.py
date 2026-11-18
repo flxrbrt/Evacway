@@ -14,6 +14,7 @@ from models import (
     Family,
     Resident,
     User,
+    SystemLog,
 )
 from geoalchemy2.shape import to_shape, from_shape
 from shapely.geometry import mapping, Polygon, shape, Point
@@ -530,8 +531,6 @@ def delete_building(building_id):
 
     bld_name = building.name or f"Building #{building_id}"
     db.session.delete(building)
-    db.session.commit()
-
     user_id = get_jwt_identity()
     db.session.add(SystemLog(user_id=user_id, action=f"Deleted building '{bld_name}' (ID: {building_id}). Rooms safely unlinked."))
     db.session.commit()

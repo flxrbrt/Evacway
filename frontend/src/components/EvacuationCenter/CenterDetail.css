@@ -828,6 +828,12 @@
   color: #16a34a;
 }
 
+.ec-ss-hint {
+  color: #64748b;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
 /* Toolbar: Search, Filter, View Toggle */
 .ec-structure-toolbar {
   display: flex;
@@ -2332,4 +2338,163 @@
   .ec-room-actions {
     opacity: 1 !important;
   }
+}
+.ec-room-detail-page {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  width: 100%;
+  padding: 24px 24px 0;
+  box-sizing: border-box;
+}
+
+.ec-room-detail-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 12px;
+  min-height: 32px;
+}
+.ec-room-household-remove:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
+
+.ec-room-detail-header,
+.ec-room-detail-title-row,
+.ec-room-detail-actions,
+.ec-room-households-header,
+.ec-room-household-row {
+  display: flex;
+  align-items: center;
+}
+
+.ec-room-detail-header,
+.ec-room-households-header {
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.ec-room-detail-header {
+  width: 100%;
+}
+
+.ec-room-detail-title-row { gap: 10px; flex-wrap: wrap; }
+.ec-room-detail-title-row h1 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 24px;
+  line-height: 1.25;
+}
+
+.ec-room-detail-location {
+  margin: 7px 0 0;
+  color: #64748b;
+  font-size: 13px;
+}
+
+.ec-room-detail-actions { gap: 8px; flex-wrap: wrap; }
+
+.ec-room-detail-status,
+.ec-room-household-arrived {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.ec-room-detail-status.is-available,
+.ec-room-household-arrived { background: #ecfdf5; color: #047857; }
+.ec-room-detail-status.is-full { background: #fef2f2; color: #b91c1c; }
+.ec-room-detail-status.is-inactive { background: #f1f5f9; color: #475569; }
+
+.ec-room-detail-stats {
+  margin: 0;
+}
+
+.ec-room-detail-stats .ec-kpi-label { line-height: 1.35; }
+
+.ec-room-households-header {
+  padding-bottom: 14px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.ec-room-households-header h2 { margin: 0; color: #0f172a; font-size: 17px; }
+.ec-room-households-header p { margin: 5px 0 0; color: #64748b; font-size: 13px; }
+.ec-room-households-count {
+  min-width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #2563eb;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.ec-room-households-list { display: flex; flex-direction: column; }
+.ec-room-household-row { gap: 12px; min-height: 72px; border-bottom: 1px solid #f1f5f9; }
+.ec-room-household-row:last-child { border-bottom: 0; }
+.ec-room-household-avatar {
+  width: 38px;
+  height: 38px;
+  flex: 0 0 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: #eff6ff;
+  color: #2563eb;
+  font-size: 12px;
+  font-weight: 700;
+}
+.ec-room-household-info { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 4px; }
+.ec-room-household-info strong { overflow: hidden; color: #0f172a; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
+.ec-room-household-info span { color: #64748b; font-size: 12px; }
+.ec-room-household-remove {
+  min-height: 34px;
+  padding: 0 11px;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  background: #fff;
+  color: #b91c1c;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.ec-room-household-remove:hover { background: #fef2f2; }
+
+.ec-room-households-state,
+.ec-room-households-empty {
+  min-height: 150px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: #64748b;
+  text-align: center;
+}
+.ec-room-households-empty > svg { color: #94a3b8; font-size: 22px; }
+.ec-room-households-empty h3 { margin: 4px 0 0; color: #0f172a; font-size: 15px; }
+.ec-room-households-empty p { margin: 0 0 8px; font-size: 13px; }
+
+@media (max-width: 768px) {
+  .ec-room-detail-page { padding: 16px 16px 0; }
+  .ec-room-detail-topbar { align-items: flex-start; }
+  .ec-room-detail-header { align-items: flex-start; flex-direction: column; }
+  .ec-room-detail-actions { width: 100%; }
+  .ec-room-detail-actions > button { flex: 1; justify-content: center; }
+}
+
+@media (max-width: 420px) {
+  .ec-room-household-row { flex-wrap: wrap; padding: 12px 0; }
+  .ec-room-household-info { flex-basis: calc(100% - 54px); }
+  .ec-room-household-arrived { margin-left: 50px; }
 }

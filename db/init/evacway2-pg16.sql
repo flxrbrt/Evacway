@@ -10,7 +10,7 @@ SET lock_timeout = 0;
 SET idle_in_transaction_session_timeout = 0;
 SET client_encoding = 'UTF8';
 SET standard_conforming_strings = on;
-SELECT pg_catalog.set_config('search_path', '', false);
+SELECT pg_catalog.set_config('search_path', 'public', false);
 SET check_function_bodies = false;
 SET xmloption = content;
 SET client_min_messages = warning;
@@ -104,7 +104,7 @@ COMMENT ON EXTENSION pgcrypto IS 'cryptographic functions';
 -- Name: postgis; Type: EXTENSION; Schema: -; Owner: -
 --
 
-CREATE EXTENSION IF NOT EXISTS postgis WITH SCHEMA extensions;
+-- CREATE EXTENSION IF NOT EXISTS postgis WITH SCHEMA extensions;
 
 
 --
@@ -394,7 +394,7 @@ COMMENT ON FUNCTION auth.uid() IS 'Deprecated. Use auth.jwt() -> ''sub'' instead
 -- Name: grant_pg_cron_access(); Type: FUNCTION; Schema: extensions; Owner: -
 --
 
-CREATE FUNCTION extensions.grant_pg_cron_access() RETURNS event_trigger
+CREATE FUNCTION grant_pg_cron_access() RETURNS event_trigger
     LANGUAGE plpgsql
     SET search_path TO ''
     AS $$
@@ -433,14 +433,14 @@ $$;
 -- Name: FUNCTION grant_pg_cron_access(); Type: COMMENT; Schema: extensions; Owner: -
 --
 
-COMMENT ON FUNCTION extensions.grant_pg_cron_access() IS 'Grants access to pg_cron';
+COMMENT ON FUNCTION grant_pg_cron_access() IS 'Grants access to pg_cron';
 
 
 --
 -- Name: grant_pg_graphql_access(); Type: FUNCTION; Schema: extensions; Owner: -
 --
 
-CREATE FUNCTION extensions.grant_pg_graphql_access() RETURNS event_trigger
+CREATE FUNCTION grant_pg_graphql_access() RETURNS event_trigger
     LANGUAGE plpgsql
     SET search_path TO ''
     AS $_$
@@ -488,14 +488,14 @@ $_$;
 -- Name: FUNCTION grant_pg_graphql_access(); Type: COMMENT; Schema: extensions; Owner: -
 --
 
-COMMENT ON FUNCTION extensions.grant_pg_graphql_access() IS 'Grants access to pg_graphql';
+COMMENT ON FUNCTION grant_pg_graphql_access() IS 'Grants access to pg_graphql';
 
 
 --
 -- Name: grant_pg_net_access(); Type: FUNCTION; Schema: extensions; Owner: -
 --
 
-CREATE FUNCTION extensions.grant_pg_net_access() RETURNS event_trigger
+CREATE FUNCTION grant_pg_net_access() RETURNS event_trigger
     LANGUAGE plpgsql
     SET search_path TO ''
     AS $$
@@ -547,14 +547,14 @@ $$;
 -- Name: FUNCTION grant_pg_net_access(); Type: COMMENT; Schema: extensions; Owner: -
 --
 
-COMMENT ON FUNCTION extensions.grant_pg_net_access() IS 'Grants access to pg_net';
+COMMENT ON FUNCTION grant_pg_net_access() IS 'Grants access to pg_net';
 
 
 --
 -- Name: pgrst_ddl_watch(); Type: FUNCTION; Schema: extensions; Owner: -
 --
 
-CREATE FUNCTION extensions.pgrst_ddl_watch() RETURNS event_trigger
+CREATE FUNCTION pgrst_ddl_watch() RETURNS event_trigger
     LANGUAGE plpgsql
     SET search_path TO ''
     AS $$
@@ -588,7 +588,7 @@ END; $$;
 -- Name: pgrst_drop_watch(); Type: FUNCTION; Schema: extensions; Owner: -
 --
 
-CREATE FUNCTION extensions.pgrst_drop_watch() RETURNS event_trigger
+CREATE FUNCTION pgrst_drop_watch() RETURNS event_trigger
     LANGUAGE plpgsql
     SET search_path TO ''
     AS $$
@@ -620,7 +620,7 @@ END; $$;
 -- Name: set_graphql_placeholder(); Type: FUNCTION; Schema: extensions; Owner: -
 --
 
-CREATE FUNCTION extensions.set_graphql_placeholder() RETURNS event_trigger
+CREATE FUNCTION set_graphql_placeholder() RETURNS event_trigger
     LANGUAGE plpgsql
     SET search_path TO ''
     AS $_$
@@ -679,7 +679,7 @@ $_$;
 -- Name: FUNCTION set_graphql_placeholder(); Type: COMMENT; Schema: extensions; Owner: -
 --
 
-COMMENT ON FUNCTION extensions.set_graphql_placeholder() IS 'Reintroduces placeholder function for graphql_public.graphql';
+COMMENT ON FUNCTION set_graphql_placeholder() IS 'Reintroduces placeholder function for graphql_public.graphql';
 
 
 --
@@ -4480,7 +4480,7 @@ CREATE TABLE public.barangays (
     id integer NOT NULL,
     name character varying(100) NOT NULL,
     population integer,
-    geom extensions.geometry(Polygon,4326)
+    geom geometry(Polygon,4326)
 );
 
 
@@ -4640,7 +4640,7 @@ CREATE TABLE public.evacuation_center_buildings (
     id integer NOT NULL,
     evacuation_center_id integer NOT NULL,
     name character varying(100),
-    geom extensions.geometry(Polygon,4326),
+    geom geometry(Polygon,4326),
     created_at timestamp without time zone,
     updated_at timestamp without time zone,
     max_rooms integer,
@@ -4719,8 +4719,8 @@ CREATE TABLE public.evacuation_centers (
     hazard_exposure_score double precision,
     contact_number character varying(20),
     is_active boolean,
-    geom extensions.geometry(Polygon,4326),
-    entrance_geom extensions.geometry(MultiPoint,4326),
+    geom geometry(Polygon,4326),
+    entrance_geom geometry(MultiPoint,4326),
     managed_by integer,
     created_at timestamp without time zone,
     owner_name character varying(150) DEFAULT NULL::character varying,
@@ -4937,7 +4937,7 @@ CREATE TABLE public.hazard_reports (
     status character varying(20),
     response_notes text,
     validated_by integer,
-    geom extensions.geometry(Point,4326) NOT NULL,
+    geom geometry(Point,4326) NOT NULL,
     submitted_at timestamp without time zone,
     validated_at timestamp without time zone,
     photos jsonb DEFAULT '[]'::jsonb,
@@ -4975,7 +4975,7 @@ CREATE TABLE public.hazard_zones (
     name character varying(100) NOT NULL,
     hazard_type character varying(50) NOT NULL,
     risk_level character varying(20) NOT NULL,
-    geom extensions.geometry(MultiPolygon,4326) NOT NULL,
+    geom geometry(MultiPolygon,4326) NOT NULL,
     created_by integer,
     created_at timestamp without time zone
 );
@@ -5219,7 +5219,7 @@ CREATE TABLE public.road_segments (
     base_weight double precision,
     is_closed boolean,
     hazard_zone_id integer,
-    geom extensions.geometry(LineString,4326) NOT NULL,
+    geom geometry(LineString,4326) NOT NULL,
     closed_by_report_id integer
 );
 
@@ -6083,7 +6083,7 @@ COPY auth.webauthn_credentials (id, user_id, credential_id, public_key, attestat
 -- Data for Name: spatial_ref_sys; Type: TABLE DATA; Schema: extensions; Owner: -
 --
 
-COPY extensions.spatial_ref_sys (srid, auth_name, auth_srid, srtext, proj4text) FROM stdin;
+COPY spatial_ref_sys (srid, auth_name, auth_srid, srtext, proj4text) FROM stdin;
 \.
 
 
@@ -14041,7 +14041,7 @@ CREATE PUBLICATION supabase_realtime WITH (publish = 'insert, update, delete, tr
 
 CREATE EVENT TRIGGER issue_graphql_placeholder ON sql_drop
          WHEN TAG IN ('DROP EXTENSION')
-   EXECUTE FUNCTION extensions.set_graphql_placeholder();
+   EXECUTE FUNCTION set_graphql_placeholder();
 
 
 --
@@ -14050,7 +14050,7 @@ CREATE EVENT TRIGGER issue_graphql_placeholder ON sql_drop
 
 CREATE EVENT TRIGGER issue_pg_cron_access ON ddl_command_end
          WHEN TAG IN ('CREATE EXTENSION')
-   EXECUTE FUNCTION extensions.grant_pg_cron_access();
+   EXECUTE FUNCTION grant_pg_cron_access();
 
 
 --
@@ -14059,7 +14059,7 @@ CREATE EVENT TRIGGER issue_pg_cron_access ON ddl_command_end
 
 CREATE EVENT TRIGGER issue_pg_graphql_access ON ddl_command_end
          WHEN TAG IN ('CREATE EXTENSION')
-   EXECUTE FUNCTION extensions.grant_pg_graphql_access();
+   EXECUTE FUNCTION grant_pg_graphql_access();
 
 
 --
@@ -14068,7 +14068,7 @@ CREATE EVENT TRIGGER issue_pg_graphql_access ON ddl_command_end
 
 CREATE EVENT TRIGGER issue_pg_net_access ON ddl_command_end
          WHEN TAG IN ('CREATE EXTENSION')
-   EXECUTE FUNCTION extensions.grant_pg_net_access();
+   EXECUTE FUNCTION grant_pg_net_access();
 
 
 --
@@ -14076,7 +14076,7 @@ CREATE EVENT TRIGGER issue_pg_net_access ON ddl_command_end
 --
 
 CREATE EVENT TRIGGER pgrst_ddl_watch ON ddl_command_end
-   EXECUTE FUNCTION extensions.pgrst_ddl_watch();
+   EXECUTE FUNCTION pgrst_ddl_watch();
 
 
 --
@@ -14084,10 +14084,13 @@ CREATE EVENT TRIGGER pgrst_ddl_watch ON ddl_command_end
 --
 
 CREATE EVENT TRIGGER pgrst_drop_watch ON sql_drop
-   EXECUTE FUNCTION extensions.pgrst_drop_watch();
+   EXECUTE FUNCTION pgrst_drop_watch();
 
 
 --
 -- PostgreSQL database dump complete
 --
+
+
+
 

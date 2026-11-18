@@ -161,6 +161,33 @@
   margin-bottom: var(--space-4);
 }
 
+/* Building selector within the structure toolbar */
+.ec-building-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-secondary, #64748b);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.ec-building-filter select {
+  min-height: 38px;
+  max-width: 220px;
+  padding: 0 30px 0 12px;
+  border: 1px solid var(--border-color, #dbe3ee);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--text-primary, #0f172a);
+  font: inherit;
+  cursor: pointer;
+}
+
+.ec-building-filter select:focus-visible {
+  outline: 2px solid var(--brand, #2563eb);
+  outline-offset: 2px;
+}
+
 /* StructureTab - building groups */
 .ec-structure {
   display: flex;

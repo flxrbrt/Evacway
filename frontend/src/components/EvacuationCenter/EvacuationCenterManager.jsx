@@ -22,7 +22,7 @@ import {
 import "./EvacuationCenterManager.css";
 
 import CenterList from "./CenterList";
-import CenterDetailPage from "./CenterDetail";
+import CenterDetailPage, { RoomDetailPage } from "./CenterDetail";
 import { CenterFormModal, CenterRoomModal, AddBuildingModal, EditBuildingModal, BuildingFormModal, AssignFamilyModal, MoveFamilyModal, ConfirmCenterDialog } from "./CenterModals";
 
 function isCenterMapped(item) {
@@ -103,6 +103,12 @@ export default function EvacuationCenterManager({
   }, [centerBuildingsQuery.data]);
 
   const [selectedRoom, setSelectedRoom] = useState(null);
+  const [roomDetail, setRoomDetail] = useState(null);
+  useEffect(() => {
+    if (!selectedCenter) return undefined;
+    const frameId = window.requestAnimationFrame(() => window.scrollTo(0, 0));
+    return () => window.cancelAnimationFrame(frameId);
+  }, [roomDetail?.id, selectedCenter?.id]);
   const roomFamiliesQuery = useRoomFamilies(
     selectedRoom?.id && selectedRoom?.id !== "all" ? selectedRoom.id : null
   );
@@ -609,52 +615,45 @@ export default function EvacuationCenterManager({
         : `Are you sure you want to delete building "${bldName}"?`,
       confirmText: "Delete Building",
       danger: true,
+      onCancel: () => setConfirmDialog(null),
       onConfirm: async () => {
+        const buildingId = building?.properties?.id ?? building?.id;
+        const cId = selectedCenter?.id || selectedCenter?.properties?.id;
+        const refreshCenterStructure = () => Promise.all([
+          queryClient.invalidateQueries({ queryKey: queryKeys.buildings(cId) }),
+          queryClient.invalidateQueries({ queryKey: queryKeys.rooms(cId) }),
+          queryClient.invalidateQueries({ queryKey: ["evacuation-centers"] }),
+          queryClient.invalidateQueries({ queryKey: ["evacuation-center-details"] }),
+        ]);
+
         try {
-          await api.deleteBuilding(building.id);
+          await api.deleteBuilding(buildingId);
+          setConfirmDialog(null);
           setNotice(`Building "${bldName}" deleted successfully.`);
-          const cId = selectedCenter?.id || selectedCenter?.properties?.id;
-          await Promise.all([
-            queryClient.invalidateQueries({ queryKey: queryKeys.buildings(cId) }),
-            queryClient.invalidateQueries({ queryKey: queryKeys.rooms(cId) }),
-            queryClient.invalidateQueries({ queryKey: ["evacuation-centers"] }),
-            queryClient.invalidateQueries({ queryKey: ["evacuation-center-details"] }),
-          ]);
+          await refreshCenterStructure();
         } catch (err) {
+          if (err.status === 404) {
+            await refreshCenterStructure();
+            setConfirmDialog(null);
+            setError("That building could not be found. The building list was refreshed; select it again if it is still shown.");
+            return;
+          }
           setError(err.message || "Failed to delete building.");
         }
       },
     });
   }
 
-  async function handleUnlinkRoomFromBuilding(room, building) {
-    const roomName = formatRoomLabel(room.room_number);
-    const bldName = building?.name || "building";
-    try {
-      await api.unlinkRoomFromBuilding(room.id);
-      setNotice(`${roomName} removed from ${bldName} (now unassigned).`);
-      const cId = selectedCenter?.id || selectedCenter?.properties?.id;
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: queryKeys.rooms(cId) }),
-        queryClient.invalidateQueries({ queryKey: queryKeys.buildings(cId) }),
-        queryClient.invalidateQueries({ queryKey: ["evacuation-centers"] }),
-        queryClient.invalidateQueries({ queryKey: ["evacuation-center-details"] }),
-      ]);
-    } catch (err) {
-      setError(err.message || "Failed to unlink room from building.");
-    }
-  }
-
   function confirmDeleteRoom(room) {
     setConfirmDialog({
       title: "Delete Room",
-      message: `Are you sure you want to delete ${formatRoomLabel(room.room_number)}? Deletion will be safely blocked if families are assigned.`,
+      message: `Are you sure you want to permanently delete ${formatRoomLabel(room.room_number)}? Move or unassign its households first; deletion is blocked while households are assigned.`,
       confirmText: "Delete Room",
       danger: true,
       onConfirm: async () => {
         try {
           await api.deleteRoom(room.id);
-          setNotice(`${formatRoomLabel(room.room_number)} deleted/deactivated.`);
+          setNotice(`${formatRoomLabel(room.room_number)} deleted.`);
           if (selectedRoom?.id === room.id) {
             setSelectedRoom(null);
             setCenterSection("rooms");
@@ -689,7 +688,10 @@ export default function EvacuationCenterManager({
       remaining = Math.max(capacity - assigned, 0);
     } else if (selectedRoom) {
       capacity = Number(selectedRoom.capacity || 0);
-      remaining = selectedRoom.available ?? Math.max(capacity - (selectedRoom.occupied || 0), 0);
+      const assigned = Number(selectedRoom.assigned ?? (selectedRoom.unassigned != null
+        ? capacity - Number(selectedRoom.unassigned)
+        : selectedRoom.occupied ?? 0));
+      remaining = Math.max(capacity - assigned, 0);
     } else {
       setError("Please select a room before assigning this household.");
       return;
@@ -991,6 +993,7 @@ export default function EvacuationCenterManager({
   }
 
   function handleBack() {
+    setRoomDetail(null);
     setSelectedCenter(null);
     setSelectedRoom(null);
     setCenterSection("buildings");
@@ -1046,6 +1049,26 @@ export default function EvacuationCenterManager({
 
       {/* EVACUATION CENTERS DIRECTORY (List / Details) */}
       {selectedCenter ? (
+        roomDetail ? (
+          <RoomDetailPage
+            center={selectedCenter}
+            room={centerRooms.find((room) => String(room.id) === String(roomDetail.id)) || roomDetail}
+            buildingName={buildings.find((building) => String(building.id) === String(roomDetail.building_id))?.name}
+            families={roomFamilies}
+            loading={roomFamiliesQuery.isLoading}
+            error={roomFamiliesQuery.error}
+            onRetry={() => roomFamiliesQuery.refetch()}
+            onBack={() => {
+              setRoomDetail(null);
+              setSelectedRoom(null);
+              setCenterSection("structure");
+            }}
+            onBackToList={handleBack}
+            onAddHousehold={handleAssignHouseholdClick}
+            onUnassignHousehold={confirmUnassignFamily}
+            onEditRoom={openEditRoomModal}
+          />
+        ) : (
         <CenterDetailPage
           center={selectedCenter}
           section={centerSection}
@@ -1060,6 +1083,10 @@ export default function EvacuationCenterManager({
           centerOccupied={centerOccupied}
           centerAssigned={centerAssigned}
           centerAvailable={centerAvailable}
+          householdCapacity={selectedCenter?.household_capacity}
+          householdAssigned={selectedCenter?.household_assigned}
+          householdArrived={selectedCenter?.household_arrived}
+          householdSpaceLeft={selectedCenter?.household_space_left}
           centerBuildingCount={centerBuildingCount}
           onBack={handleBack}
           onSectionChange={setCenterSection}
@@ -1078,12 +1105,16 @@ export default function EvacuationCenterManager({
           onEditBuilding={openEditBuildingModal}
           onDeleteBuilding={confirmDeleteBuilding}
           onAddRoomToBuilding={openAddRoomForBuilding}
-          onUnlinkRoom={handleUnlinkRoomFromBuilding}
           onAddRoom={() => {
             setRoomModalMode("add");
             setError("");
           }}
           onEditRoom={(room) => openEditRoomModal(room)}
+          onOpenRoom={(room) => {
+            setSelectedRoom(room);
+            setRoomDetail(room);
+            setCenterSection("structure");
+          }}
           onViewBuildingMap={(building) => {
             const cId = selectedCenter?.id || selectedCenter?.properties?.id;
             if (cId && building?.id) {
@@ -1097,8 +1128,6 @@ export default function EvacuationCenterManager({
               navigate(`${mapBasePath}?center=${cId}&building=${building.id}&mode=${action}`);
             }
           }}
-          onLinkRoom={(room) => openEditRoomModal(room)}
-          onDeleteRoom={(room) => confirmDeleteRoom(room)}
           onMove={(family) => openMoveModal(family)}
           onUnassign={(family) => confirmUnassignFamily(family)}
           canDeactivate={canDeactivate}
@@ -1107,6 +1136,7 @@ export default function EvacuationCenterManager({
             navigate(`${mapBasePath}?center=${cId}&mode=place`);
           }}
         />
+        )
       ) : (
         <CenterList
           centers={centers}
@@ -1124,6 +1154,8 @@ export default function EvacuationCenterManager({
             setError("");
           }}
           onRowOpen={(feature) => {
+            setRoomDetail(null);
+            setSelectedRoom(null);
             setSelectedCenter(normalizeCenter(feature));
             setCenterSection("overview");
           }}
@@ -1224,8 +1256,17 @@ export default function EvacuationCenterManager({
         message={confirmDialog?.message}
         confirmText={confirmDialog?.confirmText}
         danger={confirmDialog?.danger}
-        onConfirm={confirmDialog?.onConfirm}
-        onCancel={confirmDialog?.onCancel}
+        onConfirm={async () => {
+          try {
+            await confirmDialog?.onConfirm?.();
+          } finally {
+            setConfirmDialog(null);
+          }
+        }}
+        onCancel={() => {
+          confirmDialog?.onCancel?.();
+          setConfirmDialog(null);
+        }}
       />
 
       {/* MOBILE FILTERS BOTTOM SHEET */}

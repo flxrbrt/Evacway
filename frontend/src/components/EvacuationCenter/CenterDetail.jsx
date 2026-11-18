@@ -21,16 +21,14 @@ import {
   faChevronRight,
   faSearch,
   faDownload,
-  faLink,
-  faLinkSlash,
   faList,
   faTableCellsLarge,
-  faEllipsisVertical,
   faXmark,
 } from '@fortawesome/free-solid-svg-icons'
 import { api } from '../../services/api'
 import { useAuth } from '../../context/AuthContext'
 import { useCenterDetails } from '../../hooks/useEvacuationQueries'
+import { formatRoomLabel } from '../../utils/formatRoomLabel'
 import {
   centerStatus,
   CENTER_TABS,
@@ -135,6 +133,10 @@ export default function CenterDetail({
   centerCapacity,
   centerOccupied,
   centerAssigned,
+  householdCapacity,
+  householdAssigned,
+  householdArrived,
+  householdSpaceLeft,
   onBack,
   onSectionChange,
   onAssignHousehold,
@@ -142,6 +144,7 @@ export default function CenterDetail({
   onEditCenter,
   onAddRooms,
   onAddBuilding,
+  onOpenRoom,
   onEditBuilding,
   onDeleteBuilding,
   onAddRoomToBuilding,
@@ -149,9 +152,6 @@ export default function CenterDetail({
   onEditRoom,
   onViewBuildingMap,
   onPlaceBuilding,
-  onLinkRoom,
-  onUnlinkRoom,
-  onDeleteRoom,
   onMove,
   onUnassign,
   onDeactivate,
@@ -258,7 +258,7 @@ export default function CenterDetail({
         onAssignHousehold={onAssignHousehold}
         onViewMap={onViewMap}
         onEditCenter={isAdmin ? onEditCenter : undefined}
-        onAddRooms={onAddRooms}
+        onAddRooms={structureMode === 'rooms_only' ? onAddRooms : undefined}
         onAddBuilding={isAdmin ? onAddBuilding : undefined}
         onDeactivate={isAdmin ? () => onDeactivate?.(center) : undefined}
         canDeactivate={canDeactivate}
@@ -292,9 +292,13 @@ export default function CenterDetail({
             assigned={assigned}
             checkedIn={checkedIn}
             spaceLeft={spaceLeft}
+            householdCapacity={householdCapacity}
+            householdAssigned={householdAssigned}
+            householdArrived={householdArrived}
+            householdSpaceLeft={householdSpaceLeft}
             onEdit={isAdmin ? onEditCenter : undefined}
             onPlaceOnMap={onPlaceOnMap}
-            onAddRooms={onAddRooms}
+            onAddRooms={structureMode === 'rooms_only' ? onAddRooms : undefined}
             onAddBuilding={isAdmin ? onAddBuilding : undefined}
           />
         </section>
@@ -312,19 +316,18 @@ export default function CenterDetail({
               center={center}
               rooms={rooms}
               buildings={buildings}
+              centerFamilies={centerFamilies}
               onAddBuilding={isAdmin ? onAddBuilding : undefined}
+              onOpenRoom={onOpenRoom}
               onEditBuilding={isAdmin ? onEditBuilding : undefined}
               onDeleteBuilding={isAdmin ? onDeleteBuilding : undefined}
               onAddRoomToBuilding={isAdmin ? onAddRoomToBuilding : undefined}
-              onAddRoom={onAddRoom}
+              onAddRoom={structureMode === 'rooms_only' ? onAddRoom : undefined}
               onAssignHousehold={onAssignHousehold}
               onEditCenter={onEditCenter}
               onEditRoom={onEditRoom}
               onViewBuildingMap={onViewBuildingMap}
               onPlaceBuilding={onPlaceBuilding}
-              onLinkRoom={onLinkRoom}
-              onUnlinkRoom={isAdmin ? onUnlinkRoom : undefined}
-              onDeleteRoom={onDeleteRoom}
             />
           </section>
         )}
@@ -567,20 +570,20 @@ export function CenterHeader({
 }
 
 export function KpiStrip({
-  capacity = 0,
-  assigned = 0,
-  checkedIn = 0,
-  spaceLeft = 0,
+  householdCapacity,
+  householdAssigned,
+  householdArrived,
+  householdSpaceLeft,
   isOpenArea = false,
   onEditCapacity,
 }) {
-  const cap = Number(capacity || 0)
-  const asg = Number(assigned || 0)
-  const arrived = Number(checkedIn || 0)
-  const left = Math.max(0, Number(spaceLeft || 0))
+  const householdCap = Number(householdCapacity ?? householdAssigned ?? 0)
+  const householdAsg = Number(householdAssigned ?? 0)
+  const householdCheckIn = Number(householdArrived ?? 0)
+  const householdLeft = Math.max(0, Number(householdSpaceLeft || 0))
 
-  const pctAssigned = cap > 0 ? Math.min(100, Math.round((asg / cap) * 100)) : 0
-  const pctArrived = asg > 0 ? Math.min(100, Math.round((arrived / asg) * 100)) : 0
+  const pctAssigned = householdCap > 0 ? Math.min(100, Math.round((householdAsg / householdCap) * 100)) : 0
+  const pctArrived = householdAsg > 0 ? Math.min(100, Math.round((householdCheckIn / householdAsg) * 100)) : 0
 
   return (
     <div className="ec-kpi-strip">
@@ -601,9 +604,9 @@ export function KpiStrip({
             <FontAwesomeIcon icon={faBuildingColumns} className="ec-kpi-icon-muted" />
           )}
         </div>
-        <div className="ec-kpi-val">{cap > 0 ? cap : '—'}</div>
+        <div className="ec-kpi-val">{householdCap > 0 ? householdCap : '—'}</div>
         <div className="ec-kpi-helper">
-          {isOpenArea ? 'Editable center capacity' : 'Total of room capacities'}
+          {isOpenArea ? 'Estimated household capacity' : 'Estimated household capacity'}
         </div>
       </div>
 
@@ -612,11 +615,11 @@ export function KpiStrip({
           <span className="ec-kpi-label">Assigned</span>
           <FontAwesomeIcon icon={faUserPlus} className="ec-kpi-icon-muted" />
         </div>
-        <div className="ec-kpi-val">{asg}</div>
+        <div className="ec-kpi-val">{householdAsg}</div>
         <div className="ec-kpi-progress-track">
           <div className="ec-kpi-progress-fill" style={{ width: `${pctAssigned}%` }} />
         </div>
-        <div className="ec-kpi-helper">{cap > 0 ? `${asg} of ${cap} assigned` : 'Total assigned'}</div>
+        <div className="ec-kpi-helper">{householdCap > 0 ? `${householdAsg} of ${householdCap} households assigned` : 'Total households assigned'}</div>
       </div>
 
       <div className="ec-kpi-card">
@@ -624,8 +627,8 @@ export function KpiStrip({
           <span className="ec-kpi-label">Space Left</span>
           <FontAwesomeIcon icon={faDoorOpen} className="ec-kpi-icon-muted" />
         </div>
-        <div className="ec-kpi-val">{left}</div>
-        <div className="ec-kpi-helper">People it can still take</div>
+        <div className="ec-kpi-val">{householdLeft}</div>
+        <div className="ec-kpi-helper">Households it can still take</div>
       </div>
 
       <div className="ec-kpi-card">
@@ -633,11 +636,11 @@ export function KpiStrip({
           <span className="ec-kpi-label">Arrived</span>
           <FontAwesomeIcon icon={faCircleCheck} className="ec-kpi-icon-muted" />
         </div>
-        <div className="ec-kpi-val">{arrived}</div>
+        <div className="ec-kpi-val">{householdCheckIn}</div>
         <div className="ec-kpi-progress-track">
           <div className="ec-kpi-progress-fill" style={{ width: `${pctArrived}%` }} />
         </div>
-        <div className="ec-kpi-helper">{asg > 0 ? `${arrived} of ${asg} arrived` : 'No one assigned yet'}</div>
+        <div className="ec-kpi-helper">{householdAsg > 0 ? `${householdCheckIn} of ${householdAsg} households arrived` : 'No households assigned yet'}</div>
       </div>
     </div>
   )
@@ -726,6 +729,10 @@ export function OverviewTab({
   assigned = 0,
   checkedIn = 0,
   spaceLeft = 0,
+  householdCapacity,
+  householdAssigned,
+  householdArrived,
+  householdSpaceLeft,
   onEdit,
   onPlaceOnMap,
   onAddRooms,
@@ -783,6 +790,10 @@ export function OverviewTab({
         assigned={assigned}
         checkedIn={checkedIn}
         spaceLeft={spaceLeft}
+        householdCapacity={householdCapacity}
+        householdAssigned={householdAssigned}
+        householdArrived={householdArrived}
+        householdSpaceLeft={householdSpaceLeft}
         isOpenArea={isOpenArea}
         onEditCapacity={isAdmin && onEdit && isOpenArea ? () => onEdit(1) : undefined}
       />
@@ -842,60 +853,45 @@ function getInitialStructureViewMode() {
   return 'list'
 }
 
-function getRoomStatus(room) {
-  const cap = Number(room?.capacity || 0)
-  const asg = Number(room?.assigned || 0)
-  if (cap > 0 && asg >= cap) return 'full'
-  if (asg === 0) return 'empty'
-  return 'available'
+function getRoomHouseholdCount(room, averageHouseholdSize = null) {
+  const families = room?.families || room?.assigned_families
+  if (Array.isArray(families)) {
+    const householdKeys = families.map((family, index) =>
+      family?.family_id ?? family?.id ?? family?.family_code ?? `household-${index}`
+    )
+    return new Set(householdKeys.map(String)).size
+  }
+  return averageHouseholdSize != null && averageHouseholdSize > 0
+    ? Math.round(Number(room?.assigned || 0) / averageHouseholdSize)
+    : 0
+}
+
+function getRoomArrivedHouseholdCount(room) {
+  const families = room?.families || room?.assigned_families
+  if (!Array.isArray(families)) return 0
+  return families.filter((family) => family?.is_checked_in || family?.checked_in_at).length
 }
 
 function RoomCard({
   room,
-  building = null,
+  averageHouseholdSize = null,
+  householdAssigned,
+  householdArrived,
   index = 0,
+  onOpenRoom,
   onEditRoom,
-  onDeleteRoom,
-  onLinkRoom,
-  onUnlinkRoom,
 }) {
-  const cap = Number(room?.capacity || 0)
-  const asg = Number(room?.assigned || 0)
-  const occupied = Number(room?.occupied || 0)
-  const status = getRoomStatus(room) // 'available' | 'full' | 'empty'
+  const cap = room?.household_capacity != null
+    ? Number(room.household_capacity)
+    : averageHouseholdSize != null
+      ? Math.floor(Number(room?.capacity || 0) / averageHouseholdSize)
+      : null
+  const asg = Number(householdAssigned ?? getRoomHouseholdCount(room, averageHouseholdSize))
+  const occupied = Number(householdArrived ?? getRoomArrivedHouseholdCount(room))
+  const status = cap != null && cap > 0 && asg >= cap ? 'full' : asg === 0 ? 'empty' : 'available'
   const isFull = status === 'full'
-  const pct = cap > 0 ? Math.min(100, Math.round((asg / cap) * 100)) : asg > 0 ? 100 : 0
+  const pct = cap == null ? 0 : cap > 0 ? Math.min(100, Math.round((asg / cap) * 100)) : asg > 0 ? 100 : 0
   const roomName = room?.room_number || `Room #${room?.id || ''}`
-
-  const menuItems = useMemo(() => {
-    const items = []
-    const isUnassigned = !room?.building_id && !building?.id
-
-    if (isUnassigned && onLinkRoom) {
-      items.push({
-        label: 'Link to building',
-        icon: faLink,
-        onClick: () => onLinkRoom(room),
-      })
-    } else if (!isUnassigned && onUnlinkRoom) {
-      items.push({
-        label: building?.name ? `Unlink from ${building.name}` : 'Unlink from building',
-        icon: faLinkSlash,
-        onClick: () => onUnlinkRoom(room, building),
-      })
-    }
-
-    if (onDeleteRoom) {
-      items.push({
-        label: 'Delete room',
-        icon: faTrash,
-        danger: true,
-        onClick: () => onDeleteRoom(room),
-      })
-    }
-
-    return items
-  }, [room, building, onLinkRoom, onUnlinkRoom, onDeleteRoom])
 
   return (
     <div
@@ -903,14 +899,15 @@ function RoomCard({
       role="listitem"
       tabIndex={0}
       style={{ animationDelay: `${Math.min(index, 9) * 20}ms` }}
-      onClick={() => onEditRoom?.(room)}
+      onClick={() => (onOpenRoom || onEditRoom)?.(room)}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault()
-          onEditRoom?.(room)
+          if (onOpenRoom) onOpenRoom(room)
+          else onEditRoom?.(room)
         }
       }}
-      title={`Room ${roomName} - ${status} (${asg}/${cap} assigned)`}
+      title={`Open ${roomName} details - ${status} (${asg}/${cap ?? '—'} households assigned)`}
     >
       <div className="ec-room-card-top">
         <div className={`ec-room-card-icon is-${status}`} aria-hidden="true">
@@ -933,11 +930,11 @@ function RoomCard({
       </div>
 
       <span className="ec-room-card-assigned">
-        {asg} / {cap} assigned
+        {asg} / {cap ?? '—'} households assigned
       </span>
 
       <div className="ec-room-card-footer">
-        <span className="ec-room-card-arrived">Arrived: {occupied}</span>
+        <span className="ec-room-card-arrived">Households arrived: {occupied}</span>
 
         <div className="ec-room-card-actions" onClick={(e) => e.stopPropagation()}>
           {onEditRoom && (
@@ -955,14 +952,171 @@ function RoomCard({
             </button>
           )}
 
-          <FloatingMenuTrigger
-            label={`Actions for ${roomName}`}
-            items={menuItems}
-            align="right"
-          />
         </div>
       </div>
     </div>
+  )
+}
+
+export function RoomDetailPage({
+  center,
+  room,
+  buildingName,
+  families = [],
+  loading = false,
+  error = null,
+  onBack,
+  onBackToList,
+  onAddHousehold,
+  onUnassignHousehold,
+  onEditRoom,
+  onRetry,
+}) {
+  const assignedPeople = Number(center?.assigned ?? center?.total_assigned ?? 0)
+  const assignedHouseholds = Number(center?.household_assigned ?? families.length ?? 0)
+  const averageHouseholdSize = assignedHouseholds > 0
+    ? Math.max(1, assignedPeople / assignedHouseholds)
+    : null
+  const householdCapacity = room?.household_capacity != null
+    ? Number(room.household_capacity)
+    : averageHouseholdSize != null
+      ? Math.floor(Number(room?.capacity || 0) / averageHouseholdSize)
+      : null
+  const householdAssigned = families.length
+  const householdArrived = families.filter((family) => family?.is_checked_in).length
+  const totalMembers = families.reduce(
+    (total, family) => total + Number(family?.member_count || family?.family_members || family?.assigned_members || 1),
+    0
+  )
+  const roomTitle = formatRoomLabel(room?.room_number)
+  const isInactive = room?.is_active === false
+  const isFull = householdCapacity > 0 && householdAssigned >= householdCapacity
+
+  return (
+    <main className="ec-room-detail-page">
+      <div className="ec-room-detail-topbar">
+        <nav className="ec-breadcrumb" aria-label="Breadcrumb">
+          <button type="button" className="ec-breadcrumb-link" onClick={onBackToList}>
+            <FontAwesomeIcon icon={faBuildingColumns} className="ec-breadcrumb-icon" />
+            <span>Evacuation Centers</span>
+          </button>
+          <span className="ec-breadcrumb-separator">›</span>
+          <button type="button" className="ec-breadcrumb-link" onClick={onBack}>
+            {center?.name || 'Evacuation Center'}
+          </button>
+          <span className="ec-breadcrumb-separator">›</span>
+          <span className="ec-breadcrumb-current">{roomTitle}</span>
+        </nav>
+      </div>
+
+      <header className="ec-title-row ec-room-detail-header">
+        <div className="ec-title-info">
+          <div className="ec-title-line">
+            <h1 id="ec-room-detail-title" className="ec-detail-title">{roomTitle}</h1>
+            <HeaderStatusPill status={isInactive ? 'Inactive' : isFull ? 'Full' : 'Available'} />
+          </div>
+          <div className="ec-title-meta-line">
+            <span>{buildingName || 'Unassigned building'}</span>
+            {room?.floor && <span>Floor {room.floor}</span>}
+          </div>
+        </div>
+        <div className="ec-title-actions ec-room-detail-actions">
+          {onEditRoom && (
+            <button type="button" className="ec-btn-secondary-action" onClick={() => onEditRoom(room)}>
+              <FontAwesomeIcon icon={faPen} size="xs" />
+              <span>Edit room</span>
+            </button>
+          )}
+          {onAddHousehold && (
+            <button type="button" className="ec-btn-primary-action" onClick={onAddHousehold}>
+              <FontAwesomeIcon icon={faPlus} size="xs" />
+              <span>Add household</span>
+            </button>
+          )}
+        </div>
+      </header>
+
+      <div className="ec-kpi-strip ec-room-detail-stats">
+        <div className="ec-kpi-card">
+          <span className="ec-kpi-label">Estimated household capacity</span>
+          <span className="ec-kpi-val">{householdCapacity ?? '—'}</span>
+        </div>
+        <div className="ec-kpi-card">
+          <span className="ec-kpi-label">Assigned households</span>
+          <span className="ec-kpi-val">{householdAssigned}</span>
+        </div>
+        <div className="ec-kpi-card">
+          <span className="ec-kpi-label">Households arrived</span>
+          <span className="ec-kpi-val">{householdArrived}</span>
+        </div>
+        <div className="ec-kpi-card">
+          <span className="ec-kpi-label">Assigned members</span>
+          <span className="ec-kpi-val">{totalMembers}</span>
+        </div>
+      </div>
+
+      <section className="ec-households-card ec-room-households" aria-labelledby="ec-room-households-title">
+        <div className="ec-households-card-header ec-room-households-header">
+          <div className="ec-households-title-line">
+            <h2 id="ec-room-households-title" className="ec-households-card-title">Households in this room</h2>
+            <span className="ec-room-households-count">{families.length}</span>
+          </div>
+          <p>Manage the households assigned to {roomTitle}.</p>
+        </div>
+
+        {loading ? (
+          <div className="ec-room-households-state" role="status">Loading assigned households…</div>
+        ) : error ? (
+          <div className="ec-room-households-state" role="alert">
+            <span>Could not load this room’s households.</span>
+            {onRetry && <button type="button" className="ec-btn-secondary-action" onClick={onRetry}>Try again</button>}
+          </div>
+        ) : families.length === 0 ? (
+          <div className="ec-room-households-empty">
+            <FontAwesomeIcon icon={faPeopleGroup} aria-hidden="true" />
+            <h3>No households assigned yet</h3>
+            <p>Add a household to begin managing this room’s occupants.</p>
+            {onAddHousehold && (
+              <button type="button" className="ec-btn-primary-action" onClick={onAddHousehold}>
+                <FontAwesomeIcon icon={faPlus} size="xs" />
+                <span>Add household</span>
+              </button>
+            )}
+          </div>
+        ) : (
+          <div className="ec-room-households-list">
+            {families.map((family, index) => {
+              const id = family.family_id ?? family.id ?? `household-${index}`
+              const name = family.household_head_name || family.head_name || 'Unnamed household'
+              const members = Number(family.member_count || family.family_members || family.assigned_members || 1)
+              const arrived = Boolean(family.is_checked_in)
+              return (
+                <article className="ec-room-household-row" key={id}>
+                  <div className="ec-room-household-avatar" aria-hidden="true">
+                    {name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0].toUpperCase()).join('') || 'HH'}
+                  </div>
+                  <div className="ec-room-household-info">
+                    <strong>{name}</strong>
+                    <span>{members} {members === 1 ? 'member' : 'members'} · {arrived ? 'Arrived' : 'Not arrived'}</span>
+                  </div>
+                  {arrived && <span className="ec-room-household-arrived">Arrived</span>}
+                  {onUnassignHousehold && (
+                    <button
+                      type="button"
+                      className="ec-room-household-remove"
+                      onClick={() => onUnassignHousehold(family)}
+                      aria-label={`Unassign ${name} from ${roomTitle}`}
+                    >
+                      Unassign
+                    </button>
+                  )}
+                </article>
+              )
+            })}
+          </div>
+        )}
+      </section>
+    </main>
   )
 }
 
@@ -970,17 +1124,16 @@ export function StructureTab({
   center,
   rooms = [],
   buildings = [],
+  centerFamilies = [],
   onAddBuilding,
   onEditBuilding,
   onDeleteBuilding,
   onAddRoomToBuilding,
   onAddRoom,
+  onOpenRoom,
   onEditRoom,
   onViewBuildingMap,
   onPlaceBuilding,
-  onLinkRoom,
-  onUnlinkRoom,
-  onDeleteRoom,
   onAssignHousehold,
   onEditCenter,
 }) {
@@ -994,6 +1147,7 @@ export function StructureTab({
   const [viewMode, setViewModeState] = useState(getInitialStructureViewMode)
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState('all') // 'all' | 'available' | 'full'
+  const [buildingFilter, setBuildingFilter] = useState('all')
 
   const setViewMode = useCallback((mode) => {
     setViewModeState(mode)
@@ -1016,25 +1170,44 @@ export function StructureTab({
   )
   const centerCapacity = Number(center?.capacity || 0)
   const centerAvailable = Math.max(centerCapacity - centerAssigned, 0)
-
-  // Summary counts across all rooms
-  const totalRoomCapacity = useMemo(() => {
-    return rooms.reduce((sum, r) => sum + (Number(r.capacity) || 0), 0)
-  }, [rooms])
-
-  const totalRoomAssigned = useMemo(() => {
-    return rooms.reduce((sum, r) => sum + (Number(r.assigned) || 0), 0)
-  }, [rooms])
-
-  const totalRoomAvailable = Math.max(0, totalRoomCapacity - totalRoomAssigned)
-
-  const availableCount = useMemo(() => {
-    return rooms.filter((r) => getRoomStatus(r) !== 'full').length
-  }, [rooms])
-
-  const fullCount = useMemo(() => {
-    return rooms.filter((r) => getRoomStatus(r) === 'full').length
-  }, [rooms])
+  const roomFamilyCount = centerFamilies.length || rooms.reduce((count, room) => {
+    const families = room?.families || room?.assigned_families
+    return count + (Array.isArray(families) ? families.length : 0)
+  }, 0)
+  const assignedHouseholds = Number(center?.household_assigned ?? roomFamilyCount)
+  const averageHouseholdSize = assignedHouseholds > 0
+    ? Math.max(1, centerAssigned / assignedHouseholds)
+    : null
+  const roomHouseholdCapacity = (room) => {
+    if (room?.household_capacity != null) return Number(room.household_capacity)
+    return averageHouseholdSize != null
+      ? Math.floor(Number(room?.capacity || 0) / averageHouseholdSize)
+      : null
+  }
+  const familiesByRoom = useMemo(() => {
+    const map = new Map()
+    centerFamilies.forEach((family) => {
+      if (family?.room_id == null) return
+      const roomId = String(family.room_id)
+      const key = String(family.family_id ?? family.id ?? family.family_code ?? family.head_name)
+      if (!map.has(roomId)) map.set(roomId, new Map())
+      map.get(roomId).set(key, family)
+    })
+    return map
+  }, [centerFamilies])
+  const roomFamilyRecords = (room) => familiesByRoom.get(String(room?.id))
+  const roomHouseholdAssigned = (room) => {
+    const familyRecords = roomFamilyRecords(room)
+    return familyRecords
+      ? familyRecords.size
+      : getRoomHouseholdCount(room, averageHouseholdSize)
+  }
+  const roomHouseholdArrived = (room) => {
+    const familyRecords = roomFamilyRecords(room)
+    return familyRecords
+      ? Array.from(familyRecords.values()).filter((family) => family?.is_checked_in).length
+      : getRoomArrivedHouseholdCount(room)
+  }
 
   // Filter helper
   const isRoomMatching = useCallback(
@@ -1045,13 +1218,18 @@ export function StructureTab({
         if (!name.includes(q)) return false
       }
       if (statusFilter !== 'all') {
-        const st = getRoomStatus(room)
+        const capacity = roomHouseholdCapacity(room)
+        const familyRecords = familiesByRoom.get(String(room?.id))
+        const assigned = familyRecords
+          ? familyRecords.size
+          : getRoomHouseholdCount(room, averageHouseholdSize)
+        const st = capacity > 0 && assigned >= capacity ? 'full' : assigned === 0 ? 'empty' : 'available'
         if (statusFilter === 'available' && st === 'full') return false
         if (statusFilter === 'full' && st !== 'full') return false
       }
       return true
     },
-    [searchQuery, statusFilter]
+    [searchQuery, statusFilter, averageHouseholdSize, familiesByRoom]
   )
 
   const groups = useMemo(() => {
@@ -1085,9 +1263,40 @@ export function StructureTab({
       .map(([, v]) => v)
   }, [isSingleVenue, isPrivateProperty, rooms, buildings])
 
-  const totalMatchingRooms = useMemo(() => {
-    return rooms.filter(isRoomMatching).length
-  }, [rooms, isRoomMatching])
+  const filteredGroups = useMemo(() => {
+    if (buildingFilter === 'all') return groups
+    return groups.filter(({ building }) =>
+      String(building?.id ?? 'unassigned') === buildingFilter
+    )
+  }, [groups, buildingFilter])
+  const selectedRooms = buildingFilter === 'all'
+    ? rooms
+    : filteredGroups.flatMap((group) => group.rooms)
+  const roomCapacityEstimates = selectedRooms.map(roomHouseholdCapacity)
+  const displayedCapacity = roomCapacityEstimates.some((capacity) => capacity == null)
+    ? null
+    : roomCapacityEstimates.reduce((sum, capacity) => sum + capacity, 0)
+  const displayedAssigned = selectedRooms.reduce((sum, room) => sum + roomHouseholdAssigned(room), 0)
+  const householdCapacityForView = buildingFilter === 'all' && center?.household_capacity != null
+    ? Number(center.household_capacity)
+    : displayedCapacity
+  const householdAssignedForView = buildingFilter === 'all' && center?.household_assigned != null
+    ? Number(center.household_assigned)
+    : displayedAssigned
+  const householdsAvailableForView = buildingFilter === 'all' && center?.household_space_left != null
+    ? Number(center.household_space_left)
+    : householdCapacityForView == null
+      ? null
+      : Math.max(0, householdCapacityForView - householdAssignedForView)
+  const roomStatus = (room) => {
+    const capacity = roomHouseholdCapacity(room)
+    const assigned = roomHouseholdAssigned(room)
+    if (capacity > 0 && assigned >= capacity) return 'full'
+    return assigned === 0 ? 'empty' : 'available'
+  }
+  const availableCount = selectedRooms.filter((room) => roomStatus(room) !== 'full').length
+  const fullCount = selectedRooms.filter((room) => roomStatus(room) === 'full').length
+  const totalMatchingRooms = selectedRooms.filter(isRoomMatching).length
 
   if (isSingleVenue) {
     return (
@@ -1155,7 +1364,7 @@ export function StructureTab({
               <span>Add building</span>
             </button>
           )}
-          {canAddRoom && onAddRoom && (
+          {isPrivateProperty && onAddRoom && (
             <button type="button" className="ec-btn-primary" onClick={onAddRoom}>
               <FontAwesomeIcon icon={faPlus} size="xs" />
               <span>Add room</span>
@@ -1168,20 +1377,23 @@ export function StructureTab({
       <div className="ec-structure-summary-strip">
         <div className="ec-ss-tile">
           <span className="ec-ss-label">Total Rooms</span>
-          <span className="ec-ss-value">{rooms.length}</span>
+          <span className="ec-ss-value">{selectedRooms.length}</span>
         </div>
         <div className="ec-ss-tile">
-          <span className="ec-ss-label">Total Capacity</span>
-          <span className="ec-ss-value">{totalRoomCapacity || centerCapacity}</span>
+          <span className="ec-ss-label">Estimated Household Capacity</span>
+          <span className="ec-ss-value">{householdCapacityForView ?? '—'}</span>
+          {householdCapacityForView == null && (
+            <span className="ec-ss-hint">Estimate needs assigned household sizes</span>
+          )}
         </div>
         <div className="ec-ss-tile">
-          <span className="ec-ss-label">Assigned</span>
-          <span className="ec-ss-value">{totalRoomAssigned || centerAssigned}</span>
+          <span className="ec-ss-label">Assigned Households</span>
+          <span className="ec-ss-value">{householdAssignedForView}</span>
         </div>
         <div className="ec-ss-tile">
-          <span className="ec-ss-label">Available Spaces</span>
+          <span className="ec-ss-label">Available Households</span>
           <span className="ec-ss-value is-available">
-            {totalRoomCapacity > 0 ? totalRoomAvailable : centerAvailable}
+            {householdsAvailableForView ?? '—'}
           </span>
         </div>
       </div>
@@ -1211,6 +1423,25 @@ export function StructureTab({
             )}
           </div>
 
+          {buildings.length > 0 && (
+            <label className="ec-building-filter">
+              <span>Building</span>
+              <select
+                value={buildingFilter}
+                onChange={(event) => setBuildingFilter(event.target.value)}
+                aria-label="Filter by building"
+              >
+                <option value="all">All buildings</option>
+                {buildings.map((building) => (
+                  <option key={building.id} value={String(building.id)}>{building.name}</option>
+                ))}
+                {rooms.some((room) => room.building_id == null) && (
+                  <option value="unassigned">Unassigned rooms</option>
+                )}
+              </select>
+            </label>
+          )}
+
           <div className="ec-status-filter-group" role="group" aria-label="Filter by room status">
             <button
               type="button"
@@ -1218,7 +1449,7 @@ export function StructureTab({
               onClick={() => setStatusFilter('all')}
               aria-pressed={statusFilter === 'all'}
             >
-              All <span className="ec-filter-count">{rooms.length}</span>
+              All <span className="ec-filter-count">{selectedRooms.length}</span>
             </button>
             <button
               type="button"
@@ -1263,13 +1494,17 @@ export function StructureTab({
         </div>
       </div>
 
-      {rooms.length === 0 ? (
+          {selectedRooms.length === 0 ? (
         <EmptyState
           icon={faDoorOpen}
           title="No rooms yet"
-          text={canAddRoom ? "Click 'Add room' above to add your first room." : "No rooms configured."}
+          text={canAddBuilding
+            ? 'Add a building first, then add rooms from that building.'
+            : canAddRoom
+              ? "Click 'Add room' above to add your first room."
+              : 'No rooms configured.'}
         />
-      ) : totalMatchingRooms === 0 ? (
+          ) : totalMatchingRooms === 0 ? (
         <EmptyState
           icon={faSearch}
           title="No rooms found."
@@ -1283,47 +1518,48 @@ export function StructureTab({
               <thead>
                 <tr>
                   <th scope="col" className="ec-col-room" style={{ width: '25%', textAlign: 'left' }}>Room</th>
-                  <th scope="col" className="ec-col-capacity" style={{ width: '25%', textAlign: 'center' }}>Capacity</th>
-                  <th scope="col" className="ec-col-assigned" style={{ width: '25%', textAlign: 'center' }}>Assigned</th>
-                  <th scope="col" className="ec-col-arrived" style={{ width: '25%', textAlign: 'center' }}>Arrived</th>
+                  <th scope="col" className="ec-col-capacity" style={{ width: '25%', textAlign: 'center' }}>Household capacity</th>
+                  <th scope="col" className="ec-col-assigned" style={{ width: '25%', textAlign: 'center' }}>Households assigned</th>
+                  <th scope="col" className="ec-col-arrived" style={{ width: '25%', textAlign: 'center' }}>Households arrived</th>
                 </tr>
               </thead>
               <tbody>
-                {rooms.filter(isRoomMatching).map((room) => (
+                {selectedRooms.filter(isRoomMatching).map((room) => (
                   <tr
                     key={room.id}
                     className="ec-room-row"
                     tabIndex={0}
                     role="row"
-                    onClick={() => onEditRoom?.(room)}
+                    onClick={() => (onOpenRoom || onEditRoom)?.(room)}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' || e.key === ' ') {
                         e.preventDefault()
-                        onEditRoom?.(room)
+                        if (onOpenRoom) onOpenRoom(room)
+                        else onEditRoom?.(room)
                       }
                     }}
-                    style={{ cursor: onEditRoom ? 'pointer' : 'default' }}
+                    style={{ cursor: onOpenRoom || onEditRoom ? 'pointer' : 'default' }}
                   >
                     <td className="ec-col-room" data-label="Room" style={{ textAlign: 'left' }}>{room.room_number || 'Room #' + (room.id || '')}</td>
-                    <td className="ec-num ec-col-capacity" data-label="Capacity" style={{ textAlign: 'center' }}>{room.capacity}</td>
-                    <td className="ec-num ec-col-assigned" data-label="Assigned" style={{ textAlign: 'center' }}>{room.assigned}</td>
-                    <td className="ec-num ec-col-arrived" data-label="Arrived" style={{ textAlign: 'center' }}>{room.occupied || 0}</td>
+                    <td className="ec-num ec-col-capacity" data-label="Household capacity" style={{ textAlign: 'center' }} title={roomHouseholdCapacity(room) == null ? 'Estimate needs assigned household sizes' : undefined}>{roomHouseholdCapacity(room) ?? '—'}</td>
+                    <td className="ec-num ec-col-assigned" data-label="Households assigned" style={{ textAlign: 'center' }}>{roomHouseholdAssigned(room)}</td>
+                    <td className="ec-num ec-col-arrived" data-label="Households arrived" style={{ textAlign: 'center' }}>{roomHouseholdArrived(room)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           ) : (
             <div className="ec-rooms-grid" role="list">
-              {rooms.filter(isRoomMatching).map((room, idx) => (
+              {selectedRooms.filter(isRoomMatching).map((room, idx) => (
                 <RoomCard
                   key={room.id}
                   room={room}
-                  building={null}
+                  averageHouseholdSize={averageHouseholdSize}
+                  householdAssigned={roomHouseholdAssigned(room)}
+                  householdArrived={roomHouseholdArrived(room)}
                   index={idx}
                   onEditRoom={onEditRoom}
-                  onDeleteRoom={onDeleteRoom}
-                  onLinkRoom={onLinkRoom}
-                  onUnlinkRoom={onUnlinkRoom}
+                  onOpenRoom={onOpenRoom}
                 />
               ))}
             </div>
@@ -1332,7 +1568,7 @@ export function StructureTab({
       ) : (
         /* Building groups */
         <div key={viewMode} className="ec-structure-groups ec-view-animated">
-          {groups.map(({ building, rooms: groupRooms }) => {
+          {filteredGroups.map(({ building, rooms: groupRooms }) => {
             const isUnassigned = !building || !building.id
             const groupKey = building?.id != null ? String(building.id) : 'unassigned'
             const isCollapsed = Boolean(collapsedGroups[groupKey])
@@ -1346,13 +1582,13 @@ export function StructureTab({
                   building.geometry.coordinates.length > 0)
               )
             const groupAssigned = groupRooms.reduce(
-              (sum, r) => sum + (Number(r.assigned) || 0),
+              (sum, room) => sum + roomHouseholdAssigned(room),
               0
             )
-            const groupCapacity = groupRooms.reduce(
-              (sum, r) => sum + (Number(r.capacity) || 0),
-              0
-            )
+            const groupCapacityEstimates = groupRooms.map(roomHouseholdCapacity)
+            const groupCapacity = groupCapacityEstimates.some((capacity) => capacity == null)
+              ? null
+              : groupCapacityEstimates.reduce((sum, capacity) => sum + capacity, 0)
             const groupPct = groupCapacity > 0 ? Math.min(100, Math.round((groupAssigned / groupCapacity) * 100)) : 0
 
             const filteredGroupRooms = groupRooms.filter(isRoomMatching)
@@ -1383,13 +1619,13 @@ export function StructureTab({
                     />
                     <h3 className="ec-sb-title">{building?.name || 'Unassigned rooms'}</h3>
                     <span className="ec-sb-meta">
-                      {groupRooms.length} {groupRooms.length === 1 ? 'room' : 'rooms'} · {groupAssigned} assigned
+                      {groupRooms.length} {groupRooms.length === 1 ? 'room' : 'rooms'} · {groupAssigned} households assigned
                     </span>
                     {groupCapacity > 0 && (
                       <div
                         className="ec-sb-bar-wrap"
-                        title={`${groupAssigned} / ${groupCapacity} assigned (${groupPct}%)`}
-                        aria-label={`${groupAssigned} of ${groupCapacity} assigned`}
+                        title={`${groupAssigned} / ${groupCapacity} households assigned (${groupPct}%)`}
+                        aria-label={`${groupAssigned} of ${groupCapacity} households assigned`}
                       >
                         <div
                           className="ec-sb-bar-fill"
@@ -1494,9 +1730,9 @@ export function StructureTab({
                       <thead>
                         <tr>
                           <th scope="col" className="ec-col-room" style={{ width: '25%', textAlign: 'left' }}>Room</th>
-                          <th scope="col" className="ec-col-capacity" style={{ width: '25%', textAlign: 'center' }}>Capacity</th>
-                          <th scope="col" className="ec-col-assigned" style={{ width: '25%', textAlign: 'center' }}>Assigned</th>
-                          <th scope="col" className="ec-col-arrived" style={{ width: '25%', textAlign: 'center' }}>Arrived</th>
+                          <th scope="col" className="ec-col-capacity" style={{ width: '25%', textAlign: 'center' }}>Household capacity</th>
+                          <th scope="col" className="ec-col-assigned" style={{ width: '25%', textAlign: 'center' }}>Households assigned</th>
+                          <th scope="col" className="ec-col-arrived" style={{ width: '25%', textAlign: 'center' }}>Households arrived</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -1506,19 +1742,20 @@ export function StructureTab({
                             className="ec-room-row"
                             tabIndex={0}
                             role="row"
-                            onClick={() => onEditRoom?.(room)}
+                            onClick={() => (onOpenRoom || onEditRoom)?.(room)}
                             onKeyDown={(e) => {
                               if (e.key === 'Enter' || e.key === ' ') {
                                 e.preventDefault()
-                                onEditRoom?.(room)
+                                if (onOpenRoom) onOpenRoom(room)
+                                else onEditRoom?.(room)
                               }
                             }}
-                            style={{ cursor: onEditRoom ? 'pointer' : 'default' }}
+                            style={{ cursor: onOpenRoom || onEditRoom ? 'pointer' : 'default' }}
                           >
                             <td className="ec-col-room" data-label="Room" style={{ textAlign: 'left' }}>{room.room_number || 'Room #' + (room.id || '')}</td>
-                            <td className="ec-num ec-col-capacity" data-label="Capacity" style={{ textAlign: 'center' }}>{room.capacity}</td>
-                            <td className="ec-num ec-col-assigned" data-label="Assigned" style={{ textAlign: 'center' }}>{room.assigned}</td>
-                            <td className="ec-num ec-col-arrived" data-label="Arrived" style={{ textAlign: 'center' }}>{room.occupied || 0}</td>
+                            <td className="ec-num ec-col-capacity" data-label="Household capacity" style={{ textAlign: 'center' }} title={roomHouseholdCapacity(room) == null ? 'Estimate needs assigned household sizes' : undefined}>{roomHouseholdCapacity(room) ?? '—'}</td>
+                            <td className="ec-num ec-col-assigned" data-label="Households assigned" style={{ textAlign: 'center' }}>{roomHouseholdAssigned(room)}</td>
+                            <td className="ec-num ec-col-arrived" data-label="Households arrived" style={{ textAlign: 'center' }}>{roomHouseholdArrived(room)}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -1529,12 +1766,12 @@ export function StructureTab({
                         <RoomCard
                           key={room.id}
                           room={room}
-                          building={building}
+                          averageHouseholdSize={averageHouseholdSize}
+                          householdAssigned={roomHouseholdAssigned(room)}
+                          householdArrived={roomHouseholdArrived(room)}
                           index={idx}
                           onEditRoom={onEditRoom}
-                          onDeleteRoom={onDeleteRoom}
-                          onLinkRoom={onLinkRoom}
-                          onUnlinkRoom={onUnlinkRoom}
+                          onOpenRoom={onOpenRoom}
                         />
                       ))}
                     </div>

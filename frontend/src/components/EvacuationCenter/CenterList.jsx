@@ -462,13 +462,18 @@ export default function CenterList({
     [handleRowOpen]
   )
 
-  const structureText = useCallback((cen) => {
-    const buildingCount = Number(cen.building_count || 0)
-    const roomCount = Number(cen.room_count || cen.total_rooms || 0)
-    if (buildingCount <= 1) {
-      return roomCount > 0 ? `${roomCount} room${roomCount !== 1 ? 's' : ''}` : 'Single venue'
+  const centerTypeText = useCallback((cen) => {
+    const savedTypeName = String(cen.center_type_name || '').trim()
+    if (savedTypeName) return savedTypeName
+
+    const typeCode = String(cen.center_type || '').trim().toLowerCase()
+    const knownTypes = {
+      campus: 'Campus / Multi-building',
+      single_venue: 'Single venue',
+      private_property: 'Private property',
     }
-    return `${buildingCount} building${buildingCount !== 1 ? 's' : ''} · ${roomCount} room${roomCount !== 1 ? 's' : ''}`
+    if (knownTypes[typeCode]) return knownTypes[typeCode]
+    return typeCode.replace(/[_-]+/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase()) || 'Center'
   }, [])
 
   const getStatusInfo = useCallback((props, arrived, assigned, cap) => {
@@ -765,7 +770,7 @@ export default function CenterList({
                             {name}
                           </div>
                           <div className="ec-center-structure">
-                            {structureText(props)}
+                            {centerTypeText(props)}
                           </div>
                         </td>
                         <td className="ec-cell-barangay" data-label="Barangay">
@@ -874,9 +879,9 @@ export default function CenterList({
                       </div>
                     </div>
 
-                    {/* Row 2: Type/rooms + Status pill with dot */}
+                    {/* Row 2: Center type + Status pill with dot */}
                     <div className="ec-mcard-line2">
-                      <span className="ec-mcard-structure">{structureText(props)}</span>
+                      <span className="ec-mcard-structure">{centerTypeText(props)}</span>
                       <span className={`ec-status-pill ec-status-pill--${statusKey}`}>
                         <span className="ec-status-dot" aria-hidden="true" />
                         {statusLabel}

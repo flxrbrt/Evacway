@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { api } from '../../services/api';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faCircleNotch, faXmark, faTriangleExclamation, faTrash, faCheck } from '@fortawesome/free-solid-svg-icons';
+import { faCircleNotch, faXmark, faTriangleExclamation, faTrash, faCheck, faCircleInfo, faSearch, faDoorOpen, faBuildingColumns } from '@fortawesome/free-solid-svg-icons';
 import { stripDigits, centerNeedsMapping, resolveCenterStructureMode } from './utils';
 import { formatRoomLabel } from '../../utils/formatRoomLabel';
 import { displayEntityName } from '../../utils/displayEntityName';
@@ -1041,10 +1041,16 @@ export function CenterRoomModal({
   onDeleteRoom,
 }) {
   const isEdit = mode === 'edit';
-  const title = !isEdit
-    ? 'Add Room to ' + (selectedCenter?.name || 'the center')
-    : 'Edit ' + formatRoomLabel(selectedRoom?.room_number);
-  const subtitle = !isEdit ? 'Add a new room to this evacuation center' : 'Edit room details';
+  const roomLabel = formatRoomLabel(selectedRoom?.room_number);
+  const selectedBuildingName = buildings.find(
+    (building) => String(building.id) === String(roomForm.building_id)
+  )?.name;
+  const title = isEdit ? 'Edit room' : 'Add room';
+  const subtitle = isEdit
+    ? `${roomLabel} · ${selectedCenter?.name || 'Evacuation center'}`
+    : selectedBuildingName
+      ? `${selectedBuildingName} · ${selectedCenter?.name || 'Evacuation center'}`
+      : `Add a room to ${selectedCenter?.name || 'this evacuation center'}`;
   const [fieldErrors, setFieldErrors] = useState({});
 
   function clearFieldError(field) {
@@ -1148,16 +1154,19 @@ export function CenterRoomModal({
       footer={modalFooter}
       dialogClassName="crm-dialog"
     >
-      <form id="room-form" onSubmit={handleSubmit} noValidate>
+      <form id="room-form" className="crm-room-form" onSubmit={handleSubmit} noValidate>
         {centerNotMapped && (
-          <p className="info-note">
-            <span role="img" aria-label="info">\\u2139</span>{' '}
-            This center isn\\u2019t on the map yet. You can still add a room; place the center on the map so staff can route families here.
-          </p>
+          <div className="crm-room-note" role="status">
+            <FontAwesomeIcon icon={faCircleInfo} aria-hidden="true" />
+            <span>
+              This center isn’t on the map yet. You can still {isEdit ? 'edit this room' : 'add it'};
+              mapping the center helps staff find it.
+            </span>
+          </div>
         )}
         <div className="form-group">
-          <label htmlFor="room-number">
-            Room Number / Name <span>*</span>
+          <label htmlFor="room-number" className="crm-room-label">
+            Room name <span className="crm-room-required">*</span>
           </label>
           <input
             id="room-number"
@@ -1173,8 +1182,9 @@ export function CenterRoomModal({
           {fieldErrors.room_number && <p className="field-error">{fieldErrors.room_number}</p>}
         </div>
         <div className="form-group">
-          <label htmlFor="room-capacity">
-            Room Capacity <span>*</span> <span className="hint">(Max people)</span>
+          <label htmlFor="room-capacity" className="crm-room-label">
+            Room capacity <span className="crm-room-required">*</span>
+            <span className="crm-room-label-hint">Maximum people</span>
           </label>
           <input
             id="room-capacity"
@@ -1449,21 +1459,62 @@ export function EditBuildingModal(props) {
 
 export function AssignFamilyModal({ open = false, selectedCenter, selectedRoom, availableFamilies = [], loadingAvailableFamilies = false, selectedFamilyIdToAssign = '', assigningFamily = false, onClose, onFamilyChange, onConfirm }) {
   const isSingleVenue = resolveCenterStructureMode(selectedCenter) === 'open_area';
+  const [householdSearch, setHouseholdSearch] = useState('');
+  const [householdPickerOpen, setHouseholdPickerOpen] = useState(false);
+  const householdPickerRef = useRef(null);
+
+  useEffect(() => {
+    if (open) return;
+    setHouseholdSearch('');
+    setHouseholdPickerOpen(false);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const handleOutsideClick = (event) => {
+      if (!householdPickerRef.current?.contains(event.target)) {
+        setHouseholdPickerOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleOutsideClick);
+    return () => document.removeEventListener('mousedown', handleOutsideClick);
+  }, [open]);
+
+  const householdOptions = useMemo(() => {
+    const query = householdSearch.trim().toLowerCase();
+    if (!query) return availableFamilies;
+    return availableFamilies.filter((family) => {
+      const searchable = [
+        family.household_head_name,
+        family.head_name,
+        family.family_code,
+        family.barangay,
+      ].filter(Boolean).join(' ').toLowerCase();
+      return searchable.includes(query);
+    });
+  }, [availableFamilies, householdSearch]);
 
   // Open area assigns directly to the center; rooms_only & buildings_and_rooms require a room
   if (!open || (!selectedRoom && !isSingleVenue)) return null;
 
   const selectedFamily = availableFamilies.find((f) => String(f.id) === String(selectedFamilyIdToAssign)) || null;
   const memCount = selectedFamily ? selectedFamily.member_count || selectedFamily.family_members || 1 : 0;
+  const selectedFamilyName = selectedFamily
+    ? displayEntityName(selectedFamily.household_head_name || selectedFamily.head_name)
+    : '';
 
   const centerCapacity = Number(selectedCenter?.capacity || 0);
   const centerAssigned = Number(selectedCenter?.assigned ?? selectedCenter?.total_assigned ?? selectedCenter?.occupied ?? selectedCenter?.current_occupancy ?? 0);
   const roomCapacity = Number(selectedRoom?.capacity || 0);
-  const roomAssigned = Number(selectedRoom?.occupied || selectedRoom?.assigned || 0);
+  const roomAssigned = Number(selectedRoom?.assigned ?? (
+    selectedRoom?.unassigned != null
+      ? roomCapacity - Number(selectedRoom.unassigned)
+      : selectedRoom?.occupied ?? 0
+  ));
 
   const remaining = isSingleVenue || !selectedRoom
     ? Math.max(centerCapacity - centerAssigned, 0)
-    : (selectedRoom?.available ?? Math.max(roomCapacity - roomAssigned, 0));
+    : Math.max(roomCapacity - roomAssigned, 0);
 
   const targetCapacity = isSingleVenue || !selectedRoom ? centerCapacity : roomCapacity;
   const isTargetFull = targetCapacity <= 0 || remaining <= 0;
@@ -1473,33 +1524,162 @@ export function AssignFamilyModal({ open = false, selectedCenter, selectedRoom, 
     ? 'Assign Household to ' + (selectedCenter?.name || 'the center')
     : 'Assign Household to ' + formatRoomLabel(selectedRoom?.room_number);
   const subtitle = selectedCenter?.name || '';
+  const targetName = isSingleVenue || !selectedRoom
+    ? selectedCenter?.name || 'Evacuation center'
+    : formatRoomLabel(selectedRoom?.room_number);
+  const targetIcon = isSingleVenue || !selectedRoom ? faBuildingColumns : faDoorOpen;
+  const capacityPercent = targetCapacity > 0
+    ? Math.min(100, Math.round(((targetCapacity - remaining) / targetCapacity) * 100))
+    : 0;
 
   return (
-    <ModalShell open={open} title={title} subtitle={subtitle} onClose={onClose} onPrimary={onConfirm} loading={assigningFamily} primaryLabel={assigningFamily ? 'Assigning...' : 'Confirm Assignment'} primaryDisabled={!selectedFamilyIdToAssign || assigningFamily || isOverCapacity || isTargetFull}>
-      <p className="intro">Select an unassigned registered household. EvacWay verifies capacity before allocating.</p>
-      <div className="form-group"><label htmlFor="assign-household">Select Unassigned Household</label><select id="assign-household" className="form-select" value={selectedFamilyIdToAssign} onChange={(e) => onFamilyChange(e.target.value)} disabled={loadingAvailableFamilies || isTargetFull}><option value="">{loadingAvailableFamilies ? 'Loading unassigned households...' : availableFamilies.length === 0 ? 'No unassigned households available' : 'Choose household...'}</option>{availableFamilies.map((f) => (<option key={f.id} value={f.id}>{displayEntityName(f.household_head_name || f.head_name)} ({f.family_code}) · {f.member_count || f.family_members || 1} members · {f.barangay || 'No barangay'}</option>))}</select></div>
-      {isSingleVenue || !selectedRoom ? (
-        <div className="form-group"><label>Evacuation Center</label><p className="room-value">{selectedCenter?.name}</p></div>
-      ) : (
-        <div className="form-group"><label>Room</label><p className="room-value">{formatRoomLabel(selectedRoom?.room_number)}</p></div>
-      )}
-      <div className="capacity-summary">
+    <ModalShell
+      open={open}
+      title={title}
+      subtitle={subtitle}
+      onClose={onClose}
+      onPrimary={onConfirm}
+      loading={assigningFamily}
+      primaryLabel={assigningFamily ? 'Assigning...' : 'Confirm Assignment'}
+      primaryDisabled={!selectedFamilyIdToAssign || assigningFamily || isOverCapacity || isTargetFull}
+      dialogClassName="afm-dialog"
+    >
+      <div className="afm-content">
+        <p className="afm-intro">Choose an unassigned household. Capacity is checked against its number of members.</p>
+
+        <div className="afm-picker" ref={householdPickerRef}>
+          <label className="afm-label" htmlFor="assign-household-search">Unassigned household</label>
+          <div className={`afm-picker-control ${householdPickerOpen ? 'is-open' : ''}`}>
+            <FontAwesomeIcon icon={faSearch} aria-hidden="true" />
+            <input
+              id="assign-household-search"
+              type="text"
+              role="combobox"
+              aria-autocomplete="list"
+              aria-expanded={householdPickerOpen}
+              aria-controls="assign-household-options"
+              autoComplete="off"
+              value={householdPickerOpen ? householdSearch : selectedFamilyName}
+              placeholder={loadingAvailableFamilies ? 'Loading households…' : availableFamilies.length ? 'Search by name, code, or barangay' : 'No unassigned households available'}
+              disabled={loadingAvailableFamilies || availableFamilies.length === 0 || isTargetFull}
+              onFocus={() => setHouseholdPickerOpen(true)}
+              onClick={() => setHouseholdPickerOpen(true)}
+              onKeyDown={(event) => {
+                if (event.key === 'Escape') setHouseholdPickerOpen(false);
+                if (event.key === 'ArrowDown') setHouseholdPickerOpen(true);
+              }}
+              onChange={(event) => {
+                setHouseholdSearch(event.target.value);
+                if (selectedFamilyIdToAssign) onFamilyChange('');
+                setHouseholdPickerOpen(true);
+              }}
+            />
+            {selectedFamilyIdToAssign && !householdPickerOpen && (
+              <button
+                type="button"
+                className="afm-picker-clear"
+                aria-label="Clear selected household"
+                onClick={() => {
+                  onFamilyChange('');
+                  setHouseholdSearch('');
+                  setHouseholdPickerOpen(true);
+                }}
+              >
+                <FontAwesomeIcon icon={faXmark} />
+              </button>
+            )}
+          </div>
+
+          {householdPickerOpen && (
+            <div className="afm-picker-list" id="assign-household-options" role="listbox" aria-label="Unassigned households">
+              {loadingAvailableFamilies ? (
+                <div className="afm-picker-empty">Loading unassigned households…</div>
+              ) : householdOptions.length === 0 ? (
+                <div className="afm-picker-empty">No matching households. Try another name or code.</div>
+              ) : householdOptions.map((family) => {
+                const name = displayEntityName(family.household_head_name || family.head_name);
+                const memberCount = family.member_count || family.family_members || 1;
+                const isSelected = String(family.id) === String(selectedFamilyIdToAssign);
+                return (
+                  <button
+                    key={family.id}
+                    type="button"
+                    role="option"
+                    aria-selected={isSelected}
+                    className={`afm-household-option ${isSelected ? 'is-selected' : ''}`}
+                    onClick={() => {
+                      onFamilyChange(String(family.id));
+                      setHouseholdSearch('');
+                      setHouseholdPickerOpen(false);
+                    }}
+                  >
+                    <span className="afm-household-avatar" aria-hidden="true">
+                      {name.split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase() || 'H'}
+                    </span>
+                    <span className="afm-household-option-copy">
+                      <strong>{name}</strong>
+                      <span>{family.family_code || 'No household code'} · {family.barangay || 'No barangay'}</span>
+                    </span>
+                    <span className="afm-household-size">{memberCount} {memberCount === 1 ? 'member' : 'members'}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        <div className="afm-target-card">
+          <span className="afm-target-icon"><FontAwesomeIcon icon={targetIcon} /></span>
+          <span className="afm-target-copy">
+            <span>Assigning to</span>
+            <strong>{targetName}</strong>
+            <small>{isSingleVenue || !selectedRoom ? 'Evacuation center' : selectedRoom?.building_name || 'Room'}</small>
+          </span>
+        </div>
+
+        <div className="afm-capacity-card">
+          <div className="afm-capacity-heading">
+            <strong>People capacity</strong>
+            <span>{targetCapacity > 0 ? `${Math.round((targetCapacity - remaining) / targetCapacity * 100)}% used` : 'Full'}</span>
+          </div>
+          <div className="afm-capacity-track" aria-hidden="true">
+            <span style={{ width: `${capacityPercent}%` }} />
+          </div>
+          <div className="afm-capacity-rows">
         {isSingleVenue || !selectedRoom ? (
           <>
-            <div className="capacity-row"><span className="capacity-label">Center capacity</span><span className="capacity-value">{centerCapacity} people</span></div>
-            <div className="capacity-row"><span className="capacity-label">Currently assigned</span><span className="capacity-value">{centerAssigned} people</span></div>
-            <div className="capacity-row"><span className="capacity-label">Space left</span><span className="capacity-value" style={{ color: isOverCapacity || isTargetFull ? 'var(--ew-danger-text)' : 'var(--ew-safe-text)' }}>{remaining} spaces left</span></div>
+            <div className="afm-capacity-row"><span>Center limit</span><strong>{centerCapacity} people</strong></div>
+            <div className="afm-capacity-row"><span>Currently assigned</span><strong>{centerAssigned} people</strong></div>
           </>
         ) : (
           <>
-            <div className="capacity-row"><span className="capacity-label">Room capacity</span><span className="capacity-value">{roomCapacity} people</span></div>
-            <div className="capacity-row"><span className="capacity-label">Currently assigned</span><span className="capacity-value">{roomAssigned} people</span></div>
-            <div className="capacity-row"><span className="capacity-label">Space left</span><span className="capacity-value" style={{ color: isOverCapacity || isTargetFull ? 'var(--ew-danger-text)' : 'var(--ew-safe-text)' }}>{remaining} spaces left</span></div>
+            <div className="afm-capacity-row"><span>Room limit</span><strong>{roomCapacity} people</strong></div>
+            <div className="afm-capacity-row"><span>Currently assigned</span><strong>{roomAssigned} people</strong></div>
           </>
         )}
-        {selectedFamily && (<div className="capacity-row"><span className="capacity-label">Household to assign</span><span className="capacity-value">{memCount} members</span></div>)}
-        {isTargetFull && (<p className="capacity-warning"><FontAwesomeIcon icon={faTriangleExclamation} /> {isSingleVenue ? 'This center is at full capacity and cannot accept more households.' : 'This room is at full capacity and cannot accept more households.'}</p>)}
-        {!isTargetFull && isOverCapacity && selectedFamily && (<p className="capacity-warning"><FontAwesomeIcon icon={faTriangleExclamation} /> Cannot assign: this household has {memCount} members, but only {remaining} spaces left.</p>)}
+            <div className={`afm-capacity-row is-remaining ${isTargetFull || isOverCapacity ? 'is-warning' : ''}`}>
+              <span>Space remaining</span><strong>{remaining} {remaining === 1 ? 'person' : 'people'}</strong>
+            </div>
+            {selectedFamily && (
+              <div className="afm-selected-household-row">
+                <span>{selectedFamilyName} · {memCount} {memCount === 1 ? 'member' : 'members'}</span>
+                <strong>{isOverCapacity ? 'Over limit' : 'Fits'}</strong>
+              </div>
+            )}
+            {isTargetFull && (
+              <p className="afm-capacity-warning">
+                <FontAwesomeIcon icon={faTriangleExclamation} />
+                {isSingleVenue ? 'This center is full and cannot accept more households.' : 'This room is full and cannot accept more households.'}
+              </p>
+            )}
+            {!isTargetFull && isOverCapacity && selectedFamily && (
+              <p className="afm-capacity-warning">
+                <FontAwesomeIcon icon={faTriangleExclamation} />
+                This household has {memCount} members, but only {remaining} {remaining === 1 ? 'person' : 'people'} remain.
+              </p>
+            )}
+          </div>
+        </div>
       </div>
     </ModalShell>
   );

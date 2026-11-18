@@ -66,7 +66,10 @@ def get_rooms(center_id):
         room_data = room.to_dict()
         room_data["occupied"] = occupied
         room_data["assigned"] = assigned
-        room_data["available"] = max((room.capacity or 0) - occupied, 0)
+        # Capacity is consumed by assigned residents, whether or not they have
+        # checked in yet. Keep `occupied` as arrivals and expose remaining
+        # assignment capacity separately.
+        room_data["available"] = max((room.capacity or 0) - assigned, 0)
         room_data["unassigned"] = max((room.capacity or 0) - assigned, 0)
         is_assigned = assigned > 0
         room_data["is_assigned"] = is_assigned
@@ -376,7 +379,7 @@ def update_room(room_id):
     room_data = room.to_dict()
     room_data["occupied"] = current_occupied
     room_data["assigned"] = current_assigned
-    room_data["available"] = max(room.capacity - current_occupied, 0)
+    room_data["available"] = max(room.capacity - current_assigned, 0)
     room_data["unassigned"] = max(room.capacity - current_assigned, 0)
     room_data["is_assigned"] = is_assigned
     room_data["is_fully_assigned"] = bool(room.capacity > 0 and current_assigned >= room.capacity)
@@ -428,7 +431,7 @@ def update_room_location(room_id):
         room_data = room.to_dict()
         room_data["occupied"] = occupied
         room_data["assigned"] = assigned
-        room_data["available"] = max(room.capacity - occupied, 0)
+        room_data["available"] = max(room.capacity - assigned, 0)
         room_data["unassigned"] = max(room.capacity - assigned, 0)
         room_data["is_assigned"] = is_assigned
         room_data["is_fully_assigned"] = bool(room.capacity > 0 and assigned >= room.capacity)
@@ -476,7 +479,7 @@ def update_room_location(room_id):
     room_data = room.to_dict()
     room_data["occupied"] = occupied
     room_data["assigned"] = assigned
-    room_data["available"] = max(room.capacity - occupied, 0)
+    room_data["available"] = max(room.capacity - assigned, 0)
     room_data["unassigned"] = max(room.capacity - assigned, 0)
     room_data["is_assigned"] = is_assigned
     room_data["is_fully_assigned"] = bool(room.capacity > 0 and assigned >= room.capacity)
@@ -524,7 +527,7 @@ def toggle_room_active(room_id):
     room_data = room.to_dict()
     room_data["occupied"] = occupied
     room_data["assigned"] = assigned
-    room_data["available"] = max(room.capacity - occupied, 0)
+    room_data["available"] = max(room.capacity - assigned, 0)
     room_data["unassigned"] = max(room.capacity - assigned, 0)
     room_data["is_assigned"] = is_assigned
     room_data["is_fully_assigned"] = bool(room.capacity > 0 and assigned >= room.capacity)
@@ -544,34 +547,34 @@ def toggle_room_active(room_id):
 def delete_room(room_id):
     room = EvacuationCenterRoom.query.get_or_404(room_id)
 
-    # Check for active assignments
+    # Keep assigned households attached to their room. Once cleared, remove the
+    # room row instead of leaving an inactive record behind.
     active_assignments = EvacuationAssignment.query.filter_by(room_id=room.id).count()
     if active_assignments > 0:
         return jsonify({
             "error": f"Cannot delete room with {active_assignments} assigned resident(s). Please move or unassign families first."
         }), 400
 
-    # Soft delete to preserve historical references and unlink from building
     center = room.evacuation_center
-    room.is_active = False
-    room.building_id = None
-    db.session.commit()
+    center_id = room.evacuation_center_id
+    room_number = room.room_number
+    db.session.delete(room)
+    db.session.flush()
 
-    # Automatically keep center.capacity in sync with active rooms
+    # Keep center capacity in sync with the remaining active rooms.
     active_rooms = EvacuationCenterRoom.query.filter_by(
-        evacuation_center_id=room.evacuation_center_id, is_active=True
+        evacuation_center_id=center_id, is_active=True
     ).all()
     if center:
         center.capacity = sum(r.capacity or 0 for r in active_rooms)
-    db.session.commit()
 
     user_id = get_jwt_identity()
-    db.session.add(SystemLog(user_id=user_id, action=f"Safely deactivated/deleted room: {room.room_number} (ID: {room.id})"))
+    db.session.add(SystemLog(user_id=user_id, action=f"Deleted room: {room_number} (ID: {room_id})"))
     db.session.commit()
 
     return jsonify({
-        "message": f"Room '{room.room_number}' deleted safely.",
-        "room_id": room.id
+        "message": f"Room '{room_number}' deleted.",
+        "room_id": room_id
     }), 200
 
 
@@ -754,7 +757,7 @@ def get_room_families(room_id):
         "capacity": room.capacity,
         "occupied": total_occupied,
         "assigned": total_assigned,
-        "available": max((room.capacity or 0) - total_occupied, 0),
+        "available": max((room.capacity or 0) - total_assigned, 0),
         "unassigned": max((room.capacity or 0) - total_assigned, 0),
         "is_active": room.is_active,
         "is_assigned": is_assigned,
@@ -996,7 +999,7 @@ def assign_families(room_id):
         "room_occupied": current_checked_in,
         "room_assigned": new_assigned,
         "room_capacity": room.capacity,
-        "room_available": max(room.capacity - current_checked_in, 0),
+        "room_available": max(room.capacity - new_assigned, 0),
         "room_unassigned": max(room.capacity - new_assigned, 0),
         "is_assigned": is_assigned,
         "is_fully_assigned": bool(room.capacity > 0 and new_assigned >= room.capacity),
@@ -1089,7 +1092,7 @@ def remove_family_from_room(room_id, resident_or_family_id):
         "message": f"Family '{household_name}' unassigned from room successfully",
         "room_occupied": current_occupied,
         "room_assigned": current_assigned,
-        "room_available": max(room.capacity - current_occupied, 0),
+        "room_available": max(room.capacity - current_assigned, 0),
         "room_unassigned": max(room.capacity - current_assigned, 0),
         "is_assigned": is_assigned,
         "is_fully_assigned": bool(room.capacity > 0 and current_assigned >= room.capacity),

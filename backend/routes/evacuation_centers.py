@@ -115,6 +115,38 @@ def _center_metrics(center):
     total_assigned = int((totals_row.assigned if totals_row else 0) or 0)
     total_occupied = int((totals_row.occupied if totals_row else 0) or 0)
 
+    total_assigned_households = (
+        db.session.query(func.count(func.distinct(Family.id)))
+        .select_from(EvacuationAssignment)
+        .join(
+            Resident,
+            Resident.id == EvacuationAssignment.resident_id
+        )
+        .join(
+            Family,
+            Family.id == Resident.family_id
+        )
+        .filter(center_filter)
+        .scalar() or 0
+    )
+    total_arrived_households = (
+        db.session.query(func.count(func.distinct(Family.id)))
+        .select_from(EvacuationAssignment)
+        .join(
+            Resident,
+            Resident.id == EvacuationAssignment.resident_id
+        )
+        .join(
+            Family,
+            Family.id == Resident.family_id
+        )
+        .filter(
+            center_filter,
+            EvacuationAssignment.checked_in_at.isnot(None),
+        )
+        .scalar() or 0
+    )
+
     assignment_rows = (
         db.session.query(
             Family.barangay_id,
@@ -194,6 +226,22 @@ def _center_metrics(center):
     center_available = max(effective_capacity - total_occupied, 0)
     center_unassigned = max(effective_capacity - total_assigned, 0)
 
+    average_household_size = (
+        total_assigned / total_assigned_households
+        if total_assigned_households > 0
+        else None
+    )
+    household_capacity = (
+        int(effective_capacity // average_household_size)
+        if effective_capacity > 0 and average_household_size is not None
+        else None
+    )
+    household_space_left = (
+        max(household_capacity - total_assigned_households, 0)
+        if household_capacity is not None
+        else None
+    )
+
     breakdown = []
     for barangay in linked_barangays:
         barangay_id = barangay["id"]
@@ -254,6 +302,10 @@ def _center_metrics(center):
         "total_assigned": total_assigned,
         "available": center_available,
         "unassigned": center_unassigned,
+        "household_capacity": household_capacity,
+        "household_assigned": total_assigned_households,
+        "household_arrived": total_arrived_households,
+        "household_space_left": household_space_left,
         "is_fully_assigned": bool(effective_capacity > 0 and total_assigned >= effective_capacity),
         "building_count": building_count,
         "buildings": [
@@ -1009,7 +1061,7 @@ def get_evacuation_center_details(center_id):
         room_dict = room.to_dict()
         room_dict["occupied"] = occupied
         room_dict["assigned"] = assigned
-        room_dict["available"] = max((room.capacity or 0) - occupied, 0)
+        room_dict["available"] = max((room.capacity or 0) - assigned, 0)
         room_dict["unassigned"] = max((room.capacity or 0) - assigned, 0)
         room_dict["is_assigned"] = is_assigned
         room_dict["is_fully_assigned"] = bool((room.capacity or 0) > 0 and assigned >= (room.capacity or 0))
@@ -1589,9 +1641,23 @@ def delete_evacuation_center(center_id):
         ))
         .scalar() or 0
     )
+    building_count = EvacuationCenterBuilding.query.filter_by(
+        evacuation_center_id=center.id
+    ).count()
+    blockers = []
     if active_assignments > 0:
+        blockers.append(
+            f"{active_assignments} household assignment(s); move or unassign them first"
+        )
+    if building_count > 0:
+        blockers.append(
+            f"{building_count} building(s); delete the buildings first"
+        )
+    if blockers:
         return jsonify({
-            "error": f"Cannot delete evacuation center with {active_assignments} assigned resident(s). Please move or unassign families first."
+            "error": "Cannot delete evacuation center until " + " and ".join(blockers) + ".",
+            "assigned_count": active_assignments,
+            "building_count": building_count,
         }), 400
 
     # Soft delete to preserve historical data

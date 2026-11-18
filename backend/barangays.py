@@ -358,7 +358,7 @@ def _barangay_center_rows(barangay, include_inactive):
             "assigned_count": assigned,
             "assigned": assigned,
             "occupied": occupied,
-            "available": max((room.capacity or 0) - occupied, 0),
+            "available": max((room.capacity or 0) - assigned, 0),
             "unassigned": max((room.capacity or 0) - assigned, 0),
             "is_fully_assigned": bool((room.capacity or 0) > 0 and assigned >= (room.capacity or 0)),
             "families": room_families
