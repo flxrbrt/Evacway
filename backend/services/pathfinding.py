@@ -36,9 +36,9 @@ def invalidate_road_network_cache():
 def get_road_network():
     """
     Builds and caches the road network graph and spatial index for fast edge snapping.
-    Closed segments are completely excluded from the graph.
-    Any intersection node that touches a closed segment is made impassable (removed
-    from the graph) so that routes cannot cross a closed road at an intersection crossing.
+    Closed segments are completely excluded from the graph. Open segments that meet
+    a closed segment at an intersection remain connected, so traffic can continue
+    through the intersection without entering the closed road stretch.
     Automatically detects if closed road segments changed in the database and rebuilds.
     """
     global _cached_network
@@ -61,8 +61,8 @@ def get_road_network():
 
     segments = RoadSegment.query.all()
 
-    # 1. Collect all nodes touching closed segments
-    impassable_nodes = set()
+    # 1. Keep only open segments. Excluding the closed edge is sufficient; removing
+    # its endpoints would also block every open cross street sharing the junction.
     open_segments = []
 
     for seg in segments:
@@ -74,11 +74,7 @@ def get_road_network():
             logger.warning(f"Failed to parse geometry for road segment {seg.id}: {e}")
             continue
 
-        if seg.is_closed:
-            coords = list(line.coords)
-            for lng, lat in coords:
-                impassable_nodes.add((round(lat, 6), round(lng, 6)))
-        else:
+        if not seg.is_closed:
             open_segments.append((seg, line))
 
     # 2. Build graph and spatial index exclusively from open segments
@@ -118,11 +114,6 @@ def get_road_network():
                 }
             )
 
-    # 3. Any intersection node touching a closed segment is made impassable
-    for node in impassable_nodes:
-        if G.has_node(node):
-            G.remove_node(node)
-
     spatial_tree = STRtree(sub_lines) if sub_lines else None
 
     # Identify the largest connected component for connectivity validation
@@ -139,12 +130,11 @@ def get_road_network():
         "spatial_tree": spatial_tree,
         "largest_cc": largest_cc,
         "closed_ids": closed_ids,
-        "impassable_nodes": impassable_nodes,
     }
     return _cached_network
 
 
-def snap_point_to_road(lat, lng):
+def snap_point_to_road(lat, lng, snap_to_intersection=True):
     """
     Projects an arbitrary (lat, lng) point onto the nearest road segment.
     Returns:
@@ -181,7 +171,7 @@ def snap_point_to_road(lat, lng):
     # segments meet, lock directly to the exact intersection node vertex so reports/pins
     # sit dead-center in the intersection instead of drifting down a single road branch.
     G = net.get("graph")
-    if G is not None:
+    if snap_to_intersection and G is not None:
         d_u = haversine(snap_lat, snap_lng, u[0], u[1]) * 1000.0
         d_v = haversine(snap_lat, snap_lng, v[0], v[1]) * 1000.0
         if d_u <= 15.0 and d_u <= d_v and G.has_node(u) and G.degree(u) > 1:
@@ -205,7 +195,6 @@ def calculate_route_with_edge_snapping(start_lat, start_lng, target_lat, target_
     """
     net = get_road_network()
     G_base = net["graph"]
-    impassable_nodes = net.get("impassable_nodes", set())
     if G_base.number_of_nodes() == 0:
         return None
 
@@ -216,10 +205,6 @@ def calculate_route_with_edge_snapping(start_lat, start_lng, target_lat, target_
         logger.warning(
             f"Point disconnected from main road network: start_connected={u_connected}, target_connected={t_connected}"
         )
-
-    # If snap points themselves fall on impassable nodes, routing is blocked
-    if u_snap in impassable_nodes or t_snap in impassable_nodes:
-        return None
 
     # Work on a copy of the graph to insert temporary split nodes
     G = G_base.copy()
@@ -240,7 +225,7 @@ def calculate_route_with_edge_snapping(start_lat, start_lng, target_lat, target_
 
         def add_split_edge(n1, n2):
             if n1 != n2:
-                # Never reconnect to nodes that are impassable / absent in G_base
+                # Never reconnect to absent graph nodes.
                 if n1 in (u_node, v_node) and not G_base.has_node(n1):
                     return
                 if n2 in (u_node, v_node) and not G_base.has_node(n2):

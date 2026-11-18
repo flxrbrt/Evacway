@@ -9,6 +9,8 @@ import HazardReportModal from "../../components/HazardReportModal/HazardReportMo
 import RescueAlertModal from "../../components/RescueAlertModal/RescueAlertModal";
 import { MapLegend } from "../../components/DashboardMap/MapOverlays";
 import { getCenterCoordinates } from "../../utils/mapCenterCoordinates";
+import { resolveRoomBuilding } from "../../utils/resolveRoomBuilding";
+import { needsLocationConfirmation } from "../../utils/locationConfirmation";
 import { createReportPopup } from "../../components/mapReports/mapReports";
 import {
   setOrUpdateSelectedLocationMarker,
@@ -916,13 +918,26 @@ function isPointInGeoPolygon(point, coordinates) {
   return false;
 }
 
+function isInsideSogodBoundary(point, boundary) {
+  if (!boundary || !point) return false;
+  const features = boundary.type === "FeatureCollection" ? boundary.features : [boundary];
+  return features.some((feature) => {
+    const geometry = feature?.type === "Feature" ? feature.geometry : feature;
+    return geometry?.type === "Polygon" || geometry?.type === "MultiPolygon"
+      ? isPointInGeoPolygon(point, geometry.coordinates)
+      : false;
+  });
+}
+
 // --------------------------------------------------
 // Project point [lng, lat] onto LineString or MultiLineString geometry
 // --------------------------------------------------
 
-function projectPointToLineStringGeometry(point, geometry) {
+function projectPointToLineStringGeometry(point, geometry, projectCoordinate) {
   if (!point || !geometry || !geometry.coordinates) return point;
   const [lng, lat] = point;
+  const project = projectCoordinate || ((coordinate) => ({ x: coordinate[0], y: coordinate[1] }));
+  const projectedPoint = project(point);
 
   let coordinateRings = [];
   if (geometry.type === "LineString") {
@@ -943,19 +958,24 @@ function projectPointToLineStringGeometry(point, geometry) {
       const p2 = coords[i + 1];
       if (!Array.isArray(p1) || !Array.isArray(p2)) continue;
 
-      const dx = p2[0] - p1[0];
-      const dy = p2[1] - p1[1];
+      const coordinateDx = p2[0] - p1[0];
+      const coordinateDy = p2[1] - p1[1];
+      const projectedP1 = project(p1);
+      const projectedP2 = project(p2);
+      const dx = projectedP2.x - projectedP1.x;
+      const dy = projectedP2.y - projectedP1.y;
       const lenSq = dx * dx + dy * dy;
 
       let proj;
       if (lenSq === 0) {
         proj = p1;
       } else {
-        const t = Math.max(0, Math.min(1, ((lng - p1[0]) * dx + (lat - p1[1]) * dy) / lenSq));
-        proj = [p1[0] + t * dx, p1[1] + t * dy];
+        const t = Math.max(0, Math.min(1, ((projectedPoint.x - projectedP1.x) * dx + (projectedPoint.y - projectedP1.y) * dy) / lenSq));
+        proj = [p1[0] + t * coordinateDx, p1[1] + t * coordinateDy];
       }
 
-      const distSq = (lng - proj[0]) ** 2 + (lat - proj[1]) ** 2;
+      const projectedProj = project(proj);
+      const distSq = (projectedPoint.x - projectedProj.x) ** 2 + (projectedPoint.y - projectedProj.y) ** 2;
       if (distSq < minDistSq) {
         minDistSq = distSq;
         bestPoint = proj;
@@ -1386,6 +1406,10 @@ const ResidentHome = () => {
   );
   const roads = roadSegmentsQuery.data ?? null;
   const sogodBoundary = sogodBoundaryQuery.data ?? null;
+  const sogodBoundaryRef = useRef(null);
+  useEffect(() => {
+    sogodBoundaryRef.current = sogodBoundary;
+  }, [sogodBoundary]);
 
   // --------------------------------------------------
   // Use Custom Hooks for Logic
@@ -1507,7 +1531,8 @@ const ResidentHome = () => {
   const arrowAnimRef = useRef(null);
   const activeEntranceRef = useRef(null);
   const navigationRemainingMetersRef = useRef(null);
-  const [approximatePromptOpen, setApproximatePromptOpen] = useState(false);
+  const [navigationLocationConfirmation, setNavigationLocationConfirmation] = useState(null);
+  const [assistanceLocationConfirmation, setAssistanceLocationConfirmation] = useState(null);
   const [lostSignal, setLostSignal] = useState(false);
   const lastGoodReadingTimeRef = useRef(0);
   const lastBatteryThrottleRef = useRef(null);
@@ -1528,11 +1553,6 @@ const ResidentHome = () => {
     };
   }, []);
 
-  const approximatePromptOpenRef = useRef(false);
-  useEffect(() => {
-    approximatePromptOpenRef.current = approximatePromptOpen;
-  }, [approximatePromptOpen]);
-
   // --------------------------------------------------
   // "My evacuation center" (name verification)
   // --------------------------------------------------
@@ -1552,6 +1572,8 @@ const ResidentHome = () => {
   const [findSomeoneResults, setFindSomeoneResults] = useState([]);
   const [findSomeoneHint, setFindSomeoneHint] = useState("");
   const [findSomeoneSearched, setFindSomeoneSearched] = useState(false);
+  const [foundPersonLocation, setFoundPersonLocation] = useState(null);
+  const [findSomeoneMapNotice, setFindSomeoneMapNotice] = useState("");
 
   // Autosuggest for "Find someone"
   const [findSomeoneAutosuggestList, setFindSomeoneAutosuggestList] = useState([]);
@@ -1566,6 +1588,7 @@ const ResidentHome = () => {
   const [buildingModalOpen, setBuildingModalOpen] = useState(false);
   const [selectedBuildingId, setSelectedBuildingId] = useState(null);
   const [selectedBuildingData, setSelectedBuildingData] = useState(null);
+  const [privateBuildingView, setPrivateBuildingView] = useState(false);
 
   // Autosuggest for "My evacuation center" lookup
   const [autosuggestList, setAutosuggestList] = useState([]);
@@ -1592,6 +1615,37 @@ const ResidentHome = () => {
 
   const [selectedCenter, setSelectedCenter] = useState(null);
   const [centerPanelScrolled, setCenterPanelScrolled] = useState(false);
+
+  const clearFoundPersonLocation = useCallback(() => {
+    const foundId = mapRef.current?.__foundPersonBuildingId;
+    setUserBuilding(mapRef.current, null, "found");
+    setFoundPersonLocation(null);
+    if (foundId != null) {
+      setSelectedBuildingId((id) => String(id) === String(foundId) ? null : id);
+      setSelectedBuilding(mapRef.current, null);
+    }
+  }, []);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!mapLoaded || !map || !foundPersonLocation) return;
+    const dismissOnMapClick = (event) => {
+      if (pickingLocationRef.current) return;
+      const layer = "evacway-buildings-fill";
+      const features = map.getLayer(layer) ? map.queryRenderedFeatures(event.point, { layers: [layer] }) : [];
+      const onFoundBuilding = features.some((feature) =>
+        String(feature.properties?.id ?? feature.id) === String(foundPersonLocation.buildingId));
+      if (!onFoundBuilding) clearFoundPersonLocation();
+    };
+    map.on("click", dismissOnMapClick);
+    return () => map.off("click", dismissOnMapClick);
+  }, [mapLoaded, foundPersonLocation, clearFoundPersonLocation]);
+
+  useEffect(() => {
+    if (!findSomeoneMapNotice) return;
+    const timeout = setTimeout(() => setFindSomeoneMapNotice(""), 4000);
+    return () => clearTimeout(timeout);
+  }, [findSomeoneMapNotice]);
 
   // --------------------------------------------------
   // Keep pickingLocationRef in sync with pickingLocation
@@ -1665,12 +1719,15 @@ const ResidentHome = () => {
         setHelpOpen(false);
         setMoreMenuOpen(false);
         setShowSearchResults(false);
-        if (selectedCenter) setSelectedCenter(null);
+        if (selectedCenter) {
+          clearFoundPersonLocation();
+          setSelectedCenter(null);
+        }
       }
     }
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [selectedCenter]);
+  }, [selectedCenter, clearFoundPersonLocation]);
 
   // --------------------------------------------------
   // Load remaining data
@@ -2359,25 +2416,19 @@ const ResidentHome = () => {
       console.error("Mapbox error:", event);
     });
 
-    // Clicking the map while reporting a hazard or requesting rescue, or correcting approximate location.
+    // Clicking the map while reporting a hazard or requesting rescue.
     map.on("click", async (e) => {
-      if (approximatePromptOpenRef.current) {
-        const manualLoc = {
-          lat: e.lngLat.lat,
-          lng: e.lngLat.lng,
-          is_manual_pin: true,
-          location_source: "manual",
-        };
-        setMyLocation(manualLoc);
-        if (mapRef.current) {
-          removeAccuracyCircle(mapRef.current);
-        }
-        return;
-      }
-
       if (!pickingLocationRef.current) {
         return;
       }
+
+      if (!isInsideSogodBoundary([e.lngLat.lng, e.lngLat.lat], sogodBoundaryRef.current)) {
+        setRouteError(sogodBoundaryRef.current
+          ? "Choose a pin location inside the Sogod boundary."
+          : "Sogod boundary is still loading. Please try again.");
+        return;
+      }
+      setRouteError("");
 
       const loc = {
         lat: e.lngLat.lat,
@@ -2425,45 +2476,25 @@ const ResidentHome = () => {
           return;
         }
 
-        // Check if click is near an intersection node (vertex where segments meet or endpoint within ~15m)
         let bestTarget = null;
-        let minVertexDist = Infinity;
+        let minProjDist = Infinity;
         for (const rf of roadFeatures) {
-          const coords = rf.geometry?.coordinates;
-          if (Array.isArray(coords)) {
-            const pts = rf.geometry.type === "LineString" ? coords : coords.flat();
-            for (const pt of pts) {
-              if (Array.isArray(pt) && pt.length >= 2) {
-                const d = Math.hypot(pt[0] - loc.lng, pt[1] - loc.lat);
-                if (d < 0.00018 && d < minVertexDist) {
-                  minVertexDist = d;
-                  const rProps = rf.properties || {};
-                  bestTarget = {
-                    lng: Number(pt[0].toFixed(6)),
-                    lat: Number(pt[1].toFixed(6)),
-                    road_name: rProps.road_name || rProps.name || "Road",
-                  };
-                }
-              }
-            }
-          }
-        }
-
-        // If not snapping to an intersection vertex, project to the closest road segment among clicked features
-        if (!bestTarget) {
-          let minProjDist = Infinity;
-          for (const rf of roadFeatures) {
-            const proj = projectPointToLineStringGeometry([loc.lng, loc.lat], rf.geometry);
-            const d = Math.hypot(proj[0] - loc.lng, proj[1] - loc.lat);
-            if (d < minProjDist) {
-              minProjDist = d;
-              const rProps = rf.properties || {};
-              bestTarget = {
-                lng: Number(proj[0].toFixed(6)),
-                lat: Number(proj[1].toFixed(6)),
-                road_name: rProps.road_name || rProps.name || "Road",
-              };
-            }
+          const projectCoordinate = (coordinate) => map.project(coordinate);
+          const proj = projectPointToLineStringGeometry(
+            [loc.lng, loc.lat],
+            rf.geometry,
+            projectCoordinate
+          );
+          const projected = projectCoordinate(proj);
+          const d = Math.hypot(projected.x - e.point.x, projected.y - e.point.y);
+          if (d < minProjDist) {
+            minProjDist = d;
+            const rProps = rf.properties || {};
+            bestTarget = {
+              lng: Number(proj[0].toFixed(6)),
+              lat: Number(proj[1].toFixed(6)),
+              road_name: rProps.road_name || rProps.name || "Road",
+            };
           }
         }
 
@@ -2479,7 +2510,7 @@ const ResidentHome = () => {
         setOrUpdateSelectedLocationMarker(map, selectedLocationMarkerRef, targetLoc, async (updatedLoc) => {
           let reSnapped = updatedLoc;
           try {
-            const snapRes = await api.snapCoordinate(updatedLoc.lat, updatedLoc.lng);
+            const snapRes = await api.snapCoordinate(updatedLoc.lat, updatedLoc.lng, { snapToIntersection: false });
             if (snapRes && Number.isFinite(snapRes.snapped_lat) && Number.isFinite(snapRes.snapped_lng)) {
               reSnapped = {
                 lat: snapRes.snapped_lat,
@@ -2646,6 +2677,68 @@ const ResidentHome = () => {
     const layerId = "roads-layer";
 
     const data = roads || EMPTY_FEATURE_COLLECTION;
+    const closureDisplayData = {
+      type: "FeatureCollection",
+      features: (data.features || []).flatMap((feature) => {
+        if (!feature.properties?.is_closed) return [];
+
+        const trimLine = (coordinates) => {
+          if (!Array.isArray(coordinates) || coordinates.length < 2) return null;
+          const points = coordinates.map((point) => [...point]);
+          const segmentLengthMeters = (a, b) => {
+            const latitude = ((a[1] + b[1]) / 2) * Math.PI / 180;
+            const dx = (b[0] - a[0]) * 111320 * Math.cos(latitude);
+            const dy = (b[1] - a[1]) * 111320;
+            return Math.hypot(dx, dy);
+          };
+          const trimEnd = (fromStart) => {
+            let remaining = 3;
+            while (points.length > 1 && remaining > 0) {
+              const firstIndex = fromStart ? 0 : points.length - 1;
+              const secondIndex = fromStart ? 1 : points.length - 2;
+              const first = points[firstIndex];
+              const second = points[secondIndex];
+              const length = segmentLengthMeters(first, second);
+              if (length <= remaining) {
+                remaining -= length;
+                points.splice(firstIndex, 1);
+              } else {
+                const fraction = remaining / length;
+                const trimmed = [
+                  first[0] + (second[0] - first[0]) * fraction,
+                  first[1] + (second[1] - first[1]) * fraction,
+                  ...first.slice(2),
+                ];
+                points[firstIndex] = trimmed;
+                remaining = 0;
+              }
+            }
+          };
+
+          trimEnd(true);
+          trimEnd(false);
+          return points.length > 1 ? points : null;
+        };
+
+        const geometry = feature.geometry;
+        if (geometry?.type === "LineString") {
+          const coordinates = trimLine(geometry.coordinates);
+          return coordinates ? [{ ...feature, geometry: { ...geometry, coordinates } }] : [];
+        }
+        if (geometry?.type === "MultiLineString") {
+          const coordinates = geometry.coordinates.map(trimLine).filter(Boolean);
+          return coordinates.length
+            ? [{ ...feature, geometry: { ...geometry, coordinates } }]
+            : [];
+        }
+        return [];
+      }),
+    };
+    const beforeId = map.getLayer("resident-hazard-reports-layer-compact")
+      ? "resident-hazard-reports-layer-compact"
+      : map.getLayer("resident-hazard-reports-layer")
+        ? "resident-hazard-reports-layer"
+        : undefined;
 
     try {
       if (map.getLayer("roads-closed-stripes")) {
@@ -2661,12 +2754,6 @@ const ResidentHome = () => {
           data,
         });
 
-        const beforeId = map.getLayer("resident-hazard-reports-layer-compact")
-          ? "resident-hazard-reports-layer-compact"
-          : map.getLayer("resident-hazard-reports-layer")
-            ? "resident-hazard-reports-layer"
-            : undefined;
-
         map.addLayer({
           id: layerId,
           type: "line",
@@ -2676,23 +2763,54 @@ const ResidentHome = () => {
             "line-join": "round",
           },
           paint: {
-            "line-color": [
-              "case",
-              ["==", ["get", "is_closed"], true],
-              "#dc2626",
-              "#94a3b8",
-            ],
+            "line-color": "#94a3b8",
 
             "line-width": [
               "interpolate",
               ["linear"],
               ["zoom"],
-              10, ["case", ["==", ["get", "is_closed"], true], 3.5, 1],
-              14, ["case", ["==", ["get", "is_closed"], true], 4.5, 2],
-              18, ["case", ["==", ["get", "is_closed"], true], 6, 3],
+              10, 1,
+              14, 2,
+              18, 3,
             ],
 
-            "line-opacity": ["case", ["==", ["get", "is_closed"], true], 1.0, 0.5],
+            "line-opacity": 0.5,
+          },
+        }, beforeId);
+      }
+
+      const closedRoadsSourceId = "roads-closed-display";
+      const closedRoadsSource = map.getSource(closedRoadsSourceId);
+      if (closedRoadsSource) {
+        closedRoadsSource.setData(closureDisplayData);
+      } else {
+        map.addSource(closedRoadsSourceId, {
+          type: "geojson",
+          data: closureDisplayData,
+        });
+      }
+
+      const closedRoadsLayerId = "roads-closed-display-layer";
+      if (!map.getLayer(closedRoadsLayerId)) {
+        map.addLayer({
+          id: closedRoadsLayerId,
+          type: "line",
+          source: closedRoadsSourceId,
+          layout: {
+            "line-cap": "round",
+            "line-join": "round",
+          },
+          paint: {
+            "line-color": "#dc2626",
+            "line-width": [
+              "interpolate",
+              ["linear"],
+              ["zoom"],
+              10, 3.5,
+              14, 4.5,
+              18, 6,
+            ],
+            "line-opacity": 1,
           },
         }, beforeId);
       }
@@ -3067,6 +3185,7 @@ const ResidentHome = () => {
         return;
       }
 
+      clearFoundPersonLocation();
       setSelectedCenter(feature);
     };
 
@@ -3089,7 +3208,7 @@ const ResidentHome = () => {
         map.off("mouseleave", lineLayerId, handleMouseLeave);
       } catch (e) { }
     };
-  }, [evacCenters, mapLoaded, mapStyle, styleVersion]);
+  }, [evacCenters, mapLoaded, mapStyle, styleVersion, clearFoundPersonLocation]);
 
   // --------------------------------------------------
   // Native Mapbox Entrance Markers (no DOM drift)
@@ -3308,6 +3427,7 @@ const ResidentHome = () => {
         element.addEventListener("click", (event) => {
           if (pickingLocationRef.current) return;
           event.stopPropagation();
+          clearFoundPersonLocation();
           setSelectedCenter(center);
         });
 
@@ -3371,7 +3491,7 @@ const ResidentHome = () => {
 
       removeCenterMarkers();
     };
-  }, [evacCenters, mapLoaded, myCenter, buildingsGeoJSON, selectedCenter, isMobileMap]);
+  }, [evacCenters, mapLoaded, myCenter, buildingsGeoJSON, selectedCenter, isMobileMap, clearFoundPersonLocation]);
 
   // --------------------------------------------------
   // Native Mapbox Building Layers (clickable buildings instead of room pills)
@@ -3387,6 +3507,10 @@ const ResidentHome = () => {
       const bFeature = buildingsGeoJSON?.features?.find(
         (f) => String(f.id) === String(bId) || String(f.properties?.id) === String(bId)
       );
+      if (String(bId) !== String(map.__foundPersonBuildingId)) {
+        clearFoundPersonLocation();
+        setPrivateBuildingView(false);
+      }
       setSelectedBuildingId(bId);
       setSelectedBuildingData(bFeature?.properties || { id: bId });
       setBuildingModalOpen(true);
@@ -3398,6 +3522,10 @@ const ResidentHome = () => {
         if (pickingLocationRef.current) return;
         const bProps = buildingFeature.properties || {};
         const bId = bProps.id ?? buildingFeature.id;
+        if (String(bId) !== String(map.__foundPersonBuildingId)) {
+          clearFoundPersonLocation();
+          setPrivateBuildingView(false);
+        }
         setSelectedBuildingId(bId);
         setSelectedBuildingData(bProps);
         setBuildingModalOpen(true);
@@ -3408,43 +3536,9 @@ const ResidentHome = () => {
     setBuildingsGeoJSON(map, buildingsGeoJSON);
     setSelectedBuilding(map, selectedBuildingId);
 
-    let userBldgId = null;
-    if (myCenter?.room) {
-      if (myCenter.room.building_id != null) {
-        userBldgId = Number(myCenter.room.building_id);
-      }
-      if (!userBldgId && myCenter.room.building_name && buildingsGeoJSON?.features) {
-        const targetName = myCenter.room.building_name.trim().toLowerCase();
-        const bFeat = buildingsGeoJSON.features.find(
-          (f) => f.properties?.name && f.properties.name.trim().toLowerCase() === targetName
-        );
-        if (bFeat) {
-          userBldgId = Number(bFeat.properties?.id ?? bFeat.id);
-        }
-      }
-      if (!userBldgId && buildingsGeoJSON?.features) {
-        const myRoomNum = String(myCenter.room.room_number || "").replace(/^Room\s*/i, "").trim();
-        const myRoomId = myCenter.room.id != null ? String(myCenter.room.id) : null;
-        const bFeat = buildingsGeoJSON.features.find((f) => {
-          const rList = f.properties?.rooms;
-          if (!Array.isArray(rList)) return false;
-          return rList.some((r) => {
-            const rNum = String(r.room_number || "").replace(/^Room\s*/i, "").trim();
-            const rId = r.id != null ? String(r.id) : null;
-            return (myRoomId && rId === myRoomId) || (myRoomNum && rNum === myRoomNum);
-          });
-        });
-        if (bFeat) {
-          userBldgId = Number(bFeat.properties?.id ?? bFeat.id);
-        }
-      }
-    }
-
-    if (userBldgId != null) {
-      setUserBuilding(map, userBldgId);
-    } else {
-      setUserBuilding(map, null);
-    }
+    const ownBuilding = resolveRoomBuilding(myCenter?.room, buildingsGeoJSON, myCenter?.evacuation_center?.id);
+    setUserBuilding(map, ownBuilding?.id ?? null);
+    setUserBuilding(map, foundPersonLocation?.buildingId ?? null, "found");
 
     // Completely remove the "Your room" pin marker from the map (only highlight the building)
     if (userRoomMarkerRef.current) {
@@ -3455,7 +3549,7 @@ const ResidentHome = () => {
     return () => {
       removeBuildingTooltip(map);
     };
-  }, [mapLoaded, buildingsGeoJSON, mapStyle, styleVersion, selectedBuildingId, myCenter]);
+  }, [mapLoaded, buildingsGeoJSON, mapStyle, styleVersion, selectedBuildingId, myCenter, foundPersonLocation, clearFoundPersonLocation]);
 
   // --------------------------------------------------
   // Add user's current location
@@ -3986,6 +4080,8 @@ const ResidentHome = () => {
   // --------------------------------------------------
 
   function handleFindRoute(targetCenterId = null) {
+    setNavigationLocationConfirmation(null);
+    setAssistanceLocationConfirmation(null);
     setRouteError("");
     setRoute(null);
     routeDataRef.current = null;
@@ -4004,9 +4100,13 @@ const ResidentHome = () => {
 
     setFindingRoute(true);
 
-    navigator.geolocation.getCurrentPosition(
+    const requestOrigin = myLocation?.is_manual_pin
+      ? (onSuccess) => onSuccess({ coords: { latitude: myLocation.lat, longitude: myLocation.lng, accuracy: myLocation.accuracy ?? 0 } })
+      : navigator.geolocation.getCurrentPosition.bind(navigator.geolocation);
+    requestOrigin(
       async (pos) => {
         const loc = {
+          ...(myLocation?.is_manual_pin ? myLocation : {}),
           lat: pos.coords.latitude,
           lng: pos.coords.longitude,
           accuracy: pos.coords.accuracy,
@@ -4015,7 +4115,6 @@ const ResidentHome = () => {
         setMyLocation(loc);
         setLocationPermission("granted");
         accuracyCircleStateRef.current = loc;
-
         try {
           const result =
             assignedCenterId != null
@@ -4106,6 +4205,7 @@ const ResidentHome = () => {
 
           const routeToDisplay = {
             ...result,
+            _requestedOrigin: loc,
             route: result.route, // ALWAYS keep the backend route geometry
             walking_steps: walkingSteps,
             final_leg: result.final_leg,
@@ -4270,6 +4370,18 @@ const ResidentHome = () => {
       setRouteError("This route has no evacuation-center destination.");
       return;
     }
+
+    if (myLocation?.is_manual_pin && currentRoute._requestedOrigin &&
+      (myLocation.lat !== currentRoute._requestedOrigin.lat || myLocation.lng !== currentRoute._requestedOrigin.lng)) {
+      handleFindRoute(destination.id);
+      return;
+    }
+    if (needsLocationConfirmation(myLocation) &&
+      (navigationLocationConfirmation?.location !== myLocation || navigationLocationConfirmation?.route !== currentRoute)) {
+      setNavigationLocationConfirmation({ location: myLocation, route: currentRoute });
+      return;
+    }
+    setNavigationLocationConfirmation(null);
 
     if (navigationWatchIdRef.current != null) {
       navigator.geolocation.clearWatch(navigationWatchIdRef.current);
@@ -4618,6 +4730,8 @@ const ResidentHome = () => {
   // --------------------------------------------------
 
   function handleClearRoute() {
+    setNavigationLocationConfirmation(null);
+    setAssistanceLocationConfirmation(null);
     stopWalkingNavigation("");
     setRoute(null);
     routeDataRef.current = null;
@@ -4680,22 +4794,8 @@ const ResidentHome = () => {
   // Locate user
   // --------------------------------------------------
 
-  function handleConfirmApproximateLocation() {
-    setApproximatePromptOpen(false);
-    setMyLocation((prev) =>
-      prev
-        ? {
-            ...prev,
-            is_manual_pin: true,
-            location_source: "manual",
-          }
-        : prev
-    );
-  }
-
   function handleLocateMe() {
     setRouteError("");
-    setApproximatePromptOpen(false);
 
     if (!navigator.geolocation) {
       setRouteError("Your browser doesn't support location access.");
@@ -4704,7 +4804,7 @@ const ResidentHome = () => {
 
     setLocating(true);
 
-    const applyLocationFix = (pos, isFinal = false) => {
+    const applyLocationFix = (pos) => {
       const acc = pos.coords.accuracy ?? null;
       const isApprox = acc != null && acc > 100;
       const loc = {
@@ -4732,21 +4832,18 @@ const ResidentHome = () => {
         setOrUpdateAccuracyCircle(map, loc.lng, loc.lat, loc.accuracy || 30);
       }
 
-      if (isFinal && isApprox) {
-        setApproximatePromptOpen(true);
-      }
     };
 
     refineGeolocation({
       onFirstFix: (pos) => {
-        applyLocationFix(pos, false);
+        applyLocationFix(pos);
       },
       onImprovement: (pos) => {
-        applyLocationFix(pos, false);
+        applyLocationFix(pos);
       },
     })
       .then((bestPos) => {
-        applyLocationFix(bestPos, true);
+        applyLocationFix(bestPos);
       })
       .catch((err) => {
         setRouteError(err.message || "Couldn't get your location. Pin on the map instead.");
@@ -4781,6 +4878,13 @@ const ResidentHome = () => {
       async (pos) => {
         const rawLat = pos.coords.latitude;
         const rawLng = pos.coords.longitude;
+        if (!isInsideSogodBoundary([rawLng, rawLat], sogodBoundaryRef.current)) {
+          setQuickLocating(false);
+          setRouteError(sogodBoundaryRef.current
+            ? "Your current location is outside Sogod. Choose a location inside the boundary."
+            : "Sogod boundary is still loading. Please try again.");
+          return;
+        }
         try {
           const snapData = await api.snapCoordinate(rawLat, rawLng);
           setQuickLocating(false);
@@ -4790,6 +4894,10 @@ const ResidentHome = () => {
             road_name: snapData.nearest_road,
             accuracy: pos.coords.accuracy,
           };
+          if (!isInsideSogodBoundary([targetLoc.lng, targetLoc.lat], sogodBoundaryRef.current)) {
+            setRouteError("Your nearest road is outside Sogod. Choose a location inside the boundary.");
+            return;
+          }
           const sugg = {
             road_name: snapData.nearest_road || "Unnamed road",
             distance_meters: snapData.snap_distance_meters,
@@ -4816,6 +4924,15 @@ const ResidentHome = () => {
   }
 
   function handleReportLocationChange(newLoc) {
+    if (!isInsideSogodBoundary([newLoc.lng, newLoc.lat], sogodBoundaryRef.current)) {
+      selectedLocationMarkerRef.current?.setLngLat([
+        pendingReportLocation.lng,
+        pendingReportLocation.lat,
+      ]);
+      setRouteError("Hazard report pins must stay inside the Sogod boundary.");
+      return;
+    }
+    setRouteError("");
     setPendingReportLocation(newLoc);
     accuracyCircleStateRef.current = newLoc;
     const map = mapRef.current;
@@ -4830,13 +4947,18 @@ const ResidentHome = () => {
       setOrUpdateSelectedLocationMarker(map, selectedLocationMarkerRef, newLoc, async (updatedLoc) => {
         let reSnapped = updatedLoc;
         try {
-          const snapRes = await api.snapCoordinate(updatedLoc.lat, updatedLoc.lng);
+          const snapRes = await api.snapCoordinate(updatedLoc.lat, updatedLoc.lng, { snapToIntersection: false });
           if (snapRes && Number.isFinite(snapRes.snapped_lat) && Number.isFinite(snapRes.snapped_lng)) {
             reSnapped = {
               lat: snapRes.snapped_lat,
               lng: snapRes.snapped_lng,
               road_name: snapRes.nearest_road,
             };
+            if (!isInsideSogodBoundary([reSnapped.lng, reSnapped.lat], sogodBoundaryRef.current)) {
+              selectedLocationMarkerRef.current?.setLngLat([newLoc.lng, newLoc.lat]);
+              setRouteError("The nearest road is outside Sogod. Choose a location inside the boundary.");
+              return;
+            }
             if (selectedLocationMarkerRef.current) {
               selectedLocationMarkerRef.current.setLngLat([reSnapped.lng, reSnapped.lat]);
             }
@@ -4904,6 +5026,10 @@ const ResidentHome = () => {
     if (requestingAssistance) return;
     if (!user) {
       openLoginDialog("Please log in to send a rescue request to EvacWay response staff.");
+      return;
+    }
+    if (needsLocationConfirmation(myLocation) && assistanceLocationConfirmation !== myLocation) {
+      setAssistanceLocationConfirmation(myLocation);
       return;
     }
     setRequestingAssistance(true);
@@ -5386,6 +5512,7 @@ const ResidentHome = () => {
   }, [findSomeoneAutosuggestOpen]);
 
   const handleSelectFindSomeoneSuggestion = async (item) => {
+    clearFoundPersonLocation();
     selectingFindSomeoneRef.current = true;
     const name = item.name;
     setFindSomeoneName(name);
@@ -5458,6 +5585,7 @@ const ResidentHome = () => {
 
   const handleFindSomeoneSubmit = async (e) => {
     e.preventDefault();
+    clearFoundPersonLocation();
     setFindSomeoneAutosuggestOpen(false);
     const query = findSomeoneName.trim();
     const words = query.split(/\s+/).filter(Boolean);
@@ -5484,6 +5612,8 @@ const ResidentHome = () => {
   };
 
   const handleViewPersonCenterOnMap = (person) => {
+    clearFoundPersonLocation();
+    setFindSomeoneMapNotice("");
     setFindSomeoneOpen(false);
     const centerInfo = person?.evacuation_center;
     if (!centerInfo) return;
@@ -5506,23 +5636,38 @@ const ResidentHome = () => {
     }
 
     const map = mapRef.current;
-    let coords = null;
-    if (feature?.geometry?.coordinates) {
-      coords = feature.geometry.coordinates;
-    } else if (centerInfo.longitude && centerInfo.latitude) {
-      coords = [Number(centerInfo.longitude), Number(centerInfo.latitude)];
+    const centerFeature = feature || { type: "Feature", properties: centerInfo, geometry: null };
+    const centerId = centerFeature.properties?.id ?? centerFeature.id;
+    const building = centerInfo.center_type === "single_venue" ? null :
+      resolveRoomBuilding(person.room, buildingsGeoJSON, centerId);
+    // Ignore absent coordinates rather than interpreting null latitude/longitude as 0.
+    const centerProps = centerFeature.properties;
+    const mappedCenter = (centerFeature.geometry?.coordinates ||
+      (centerProps.longitude != null && centerProps.latitude != null)) ? centerFeature : null;
+    const coords = (building?.feature?.geometry && getCenterCoordinates(building.feature)) ||
+      getCenterCoordinates(mappedCenter, buildingsGeoJSON);
+    if (!coords) {
+      setFindSomeoneMapNotice("This center isn’t on the map yet.");
+      return;
     }
-
-    if (feature) {
-      setSelectedCenter(feature);
+    setSelectedCenter(centerFeature);
+    const room = person.room ? { id: person.room.id, room_number: person.room.room_number } : null;
+    setFoundPersonLocation({ centerId, buildingId: building?.id ?? null, room });
+    if (building) {
+      setPrivateBuildingView(true);
+      setSelectedBuildingId(building.id);
+      setSelectedBuildingData(building.feature?.properties || { id: building.id, name: building.name });
+      setBuildingModalOpen(true);
+      setUserBuilding(map, building.id, "found");
+      pulseBuilding(map, building.id, "found");
     }
-
-    if (map && coords) {
+    const target = getCenterCoordinates(building?.feature) || coords;
+    if (map) {
       map.flyTo({
-        center: coords,
-        zoom: 16.5,
+        center: [target.longitude, target.latitude],
+        zoom: building?.feature ? 18 : 16.5,
         duration: 1200,
-        essential: true,
+        essential: false,
       });
     }
   };
@@ -5614,6 +5759,7 @@ const ResidentHome = () => {
     searchMoveRestoreTimeoutRef.current = setTimeout(restoreRoomBar, 1200);
 
     if (result.type === "evacuation_center") {
+      clearFoundPersonLocation();
       const feature = result.feature;
 
       if (feature.geometry) {
@@ -5666,6 +5812,7 @@ const ResidentHome = () => {
   // --------------------------------------------------
 
   function closeCenterDetails() {
+    clearFoundPersonLocation();
     setSelectedCenter(null);
     setCenterPanelScrolled(false);
   }
@@ -5752,13 +5899,10 @@ const ResidentHome = () => {
     const map = mapRef.current;
     if (!map) return;
 
-    const bId =
-      myCenter?.room?.building_id ||
-      (myCenter?.room?.building_name === "South Wing" ? 2 : 2);
-
-    const bFeature = buildingsGeoJSON?.features?.find(
-      (f) => String(f.id) === String(bId) || String(f.properties?.id) === String(bId)
-    );
+    clearFoundPersonLocation();
+    const building = resolveRoomBuilding(myCenter?.room, buildingsGeoJSON, myCenter?.evacuation_center?.id);
+    const bId = building?.id;
+    const bFeature = building?.feature;
 
     let target = null;
     if (bFeature?.geometry?.coordinates?.[0]?.length > 0) {
@@ -5798,7 +5942,6 @@ const ResidentHome = () => {
   };
 
   const handleStartWalkingToMyRoom = () => {
-    setRoomCardExpanded(false);
     if (!myCenter?.evacuation_center?.id) return;
     handleFindRoute(myCenter.evacuation_center.id);
   };
@@ -5940,7 +6083,7 @@ const ResidentHome = () => {
 
   const hasAssigned = Boolean(myCenter && (myCenter.room || myCenter.evacuation_center));
   const isRoomCardVisible = Boolean(
-    hasAssigned && !navigationActive && !hideRoomBarForSearch && !(isMobile && isHazardPopupOpen)
+    hasAssigned && !route && !navigationActive && !hideRoomBarForSearch && !(isMobile && isHazardPopupOpen)
   );
 
   const isRoomCardExpanded = Boolean(
@@ -5968,6 +6111,9 @@ const ResidentHome = () => {
   const roomSubtitle = hasBuilding
     ? `${myCenter.room.building_name} · ${centerDisplayName}`
     : centerDisplayName;
+  const roomSubtitleContent = isMobile && hasBuilding
+    ? <><span>{myCenter.room.building_name}</span><span>{centerDisplayName}</span></>
+    : roomSubtitle;
   const roomLabel = `${roomTitle} · ${roomSubtitle}`;
   const fullCenterRoomLabel = roomLabel;
 
@@ -5983,48 +6129,20 @@ const ResidentHome = () => {
       }
       return;
     }
-    let bId = myCenter?.room?.building_id != null ? Number(myCenter.room.building_id) : null;
-    let bFeature = null;
-
-    if (bId != null && buildingsGeoJSON?.features) {
-      bFeature = buildingsGeoJSON.features.find(
-        (f) => Number(f.id ?? f.properties?.id) === bId
-      );
-    }
-    if (!bFeature && myCenter?.room?.building_name && buildingsGeoJSON?.features) {
-      const targetName = myCenter.room.building_name.trim().toLowerCase();
-      bFeature = buildingsGeoJSON.features.find(
-        (f) => f.properties?.name && f.properties.name.trim().toLowerCase() === targetName
-      );
-      if (bFeature) {
-        bId = Number(bFeature.properties?.id ?? bFeature.id);
-      }
-    }
-    if (!bFeature && buildingsGeoJSON?.features) {
-      const myRoomNum = String(myCenter?.room?.room_number || "").replace(/^Room\s*/i, "").trim();
-      const myRoomId = myCenter?.room?.id != null ? String(myCenter.room.id) : null;
-      bFeature = buildingsGeoJSON.features.find((f) => {
-        const rList = f.properties?.rooms;
-        if (!Array.isArray(rList)) return false;
-        return rList.some((r) => {
-          const rNum = String(r.room_number || "").replace(/^Room\s*/i, "").trim();
-          const rId = r.id != null ? String(r.id) : null;
-          return (myRoomId && rId === myRoomId) || (myRoomNum && rNum === myRoomNum);
-        });
-      });
-      if (bFeature) {
-        bId = Number(bFeature.properties?.id ?? bFeature.id);
-      }
-    }
+    clearFoundPersonLocation();
+    const building = resolveRoomBuilding(myCenter?.room, buildingsGeoJSON, myCenter?.evacuation_center?.id);
+    const bId = building?.id;
+    const bFeature = building?.feature;
 
     if (bId != null) {
+      setPrivateBuildingView(false);
       setSelectedBuildingId(bId);
       setSelectedBuildingData(
         bFeature?.properties || { id: bId, name: myCenter?.room?.building_name }
       );
       setBuildingModalOpen(true);
     }
-  }, [myCenter, buildingsGeoJSON]);
+  }, [myCenter, buildingsGeoJSON, clearFoundPersonLocation]);
 
   const handleSheetTouchStart = (e) => {
     touchStartYRef.current = e.touches[0].clientY;
@@ -6250,8 +6368,9 @@ const ResidentHome = () => {
       )}
 
       {/* "Your room" / "Your shelter" card: collapsed bar by default; expanded under search on desktop, bottom sheet on mobile */}
-      {isRoomCardVisible && (
-        !isRoomCardExpanded ? (
+      <div className="assigned-room-overlay" hidden={!isRoomCardVisible}>
+      {hasAssigned && (
+        !(roomCardExpanded && !selectedCenter) ? (
           <div
             className={`pinned-your-room-card is-collapsed ${isMobile ? "mobile" : "desktop"}`}
             role="region"
@@ -6282,7 +6401,9 @@ const ResidentHome = () => {
                 </span>
                 <div className="your-room-text-stack">
                   <div className="your-room-main-title">{roomTitle}</div>
-                  <div className="your-room-sub-title">{roomSubtitle}</div>
+                  <div className="your-room-sub-title">
+                    {roomSubtitleContent}
+                  </div>
                 </div>
               </div>
               <div className="your-room-collapsed-right">
@@ -6331,7 +6452,7 @@ const ResidentHome = () => {
                   </span>
                   <div className="your-room-text-stack">
                     <div className="your-room-main-title">{roomTitle}</div>
-                    <div className="your-room-sub-title">{roomSubtitle}</div>
+                    <div className="your-room-sub-title">{roomSubtitleContent}</div>
                   </div>
                 </div>
                 <button
@@ -6393,7 +6514,7 @@ const ResidentHome = () => {
                 </span>
                 <div className="your-room-text-stack">
                   <div className="your-room-main-title">{roomTitle}</div>
-                  <div className="your-room-sub-title">{roomSubtitle}</div>
+                  <div className="your-room-sub-title">{roomSubtitleContent}</div>
                 </div>
               </div>
               <button
@@ -6443,8 +6564,7 @@ const ResidentHome = () => {
           </div>
         )
       )}
-
-
+      </div>
 
       {/* Right control stack: "My location", "Street / Satellite", and "Help" */}
       <div
@@ -6644,6 +6764,11 @@ const ResidentHome = () => {
             )}
 
             {/* Primary Action Button: Navigate to this Center */}
+            {foundPersonLocation?.room && foundPersonLocation.buildingId == null && (
+              <div className="cd-your-room found-person-room-text">
+                Assigned room: {foundPersonLocation.room.room_number || "Room assigned"}
+              </div>
+            )}
             <div className="center-card-actions">
               <button
                 type="button"
@@ -6783,6 +6908,7 @@ const ResidentHome = () => {
                             className={`center-building-card ${isUserBuilding ? "is-user-building" : ""
                               }`}
                             onClick={() => {
+                              setPrivateBuildingView(false);
                               setSelectedBuildingId(b.id);
                               setSelectedBuildingData(b);
                               setBuildingModalOpen(true);
@@ -7037,7 +7163,10 @@ const ResidentHome = () => {
 
         <button
           type="button"
-          onClick={() => setFindSomeoneOpen(true)}
+          onClick={() => {
+            clearFoundPersonLocation();
+            setFindSomeoneOpen(true);
+          }}
           className="action-btn-circle action-btn-secondary"
           aria-label="Find someone"
         >
@@ -7264,14 +7393,13 @@ const ResidentHome = () => {
         )
       )}
 
-      {/* Route preview: desktop card (top) or mobile bottom sheet (above bottom dock) */}
+      {/* Route preview stays below the header, clear of the map controls and bottom dock. */}
       {route && !navigationActive && (
         <div
-          className={`route-preview-card ${isMobile ? "mobile-bottom-sheet" : ""} ${route.no_roads_available ? "route-blocked-card" : ""}`}
+          className={`route-preview-card ${isMobile ? "mobile-top-card" : ""} ${route.no_roads_available ? "route-blocked-card" : ""}`}
           role="region"
           aria-label={route.no_roads_available ? "Roads blocked notice" : "Route preview"}
         >
-          {isMobile && <div className="sheet-handle" aria-hidden="true" />}
           {route.no_roads_available ? (
             <div className="route-blocked-content">
               <div className="route-blocked-header">
@@ -7310,6 +7438,10 @@ const ResidentHome = () => {
                   </div>
                 </div>
               ) : (
+                <>
+                {assistanceLocationConfirmation === myLocation && needsLocationConfirmation(myLocation) && (
+                  <p className="route-location-confirmation" role="status">Check your location on the map, then confirm to send help.</p>
+                )}
                 <button
                   type="button"
                   className="route-request-assistance-btn"
@@ -7320,8 +7452,9 @@ const ResidentHome = () => {
                     icon={requestingAssistance ? faSpinner : faTriangleExclamation}
                     spin={requestingAssistance}
                   />
-                  <span>{requestingAssistance ? "Sending request..." : "Request assistance"}</span>
+                  <span>{requestingAssistance ? "Sending request..." : assistanceLocationConfirmation === myLocation && needsLocationConfirmation(myLocation) ? "Confirm and send" : "Request assistance"}</span>
                 </button>
+                </>
               )}
             </div>
           ) : (
@@ -7364,48 +7497,19 @@ const ResidentHome = () => {
                   <FontAwesomeIcon icon={faXmark} />
                 </button>
               </div>
+              {navigationLocationConfirmation?.location === myLocation && navigationLocationConfirmation?.route === route && needsLocationConfirmation(myLocation) && (
+                <p className="route-location-confirmation" role="status">Check your starting point on the map, then confirm to start.</p>
+              )}
               <button
                 type="button"
                 className="route-preview-start-btn"
                 onClick={handleStartWalkingNavigation}
               >
                 <FontAwesomeIcon icon={faPersonWalking} />
-                <span>Start walking navigation</span>
+                <span>{navigationLocationConfirmation?.location === myLocation && navigationLocationConfirmation?.route === route && needsLocationConfirmation(myLocation) ? "Confirm and start" : "Start walking navigation"}</span>
               </button>
             </>
           )}
-        </div>
-      )}
-
-      {/* Approximate Location Notice & Confirmation */}
-      {approximatePromptOpen && (
-        <div className="approximate-location-card" role="region" aria-label="Approximate location confirmation">
-          <div className="approximate-location-header">
-            <span className="approximate-location-badge">
-              <span className="approximate-badge-dot" />
-              Approximate Location
-            </span>
-            <button
-              type="button"
-              className="approximate-dismiss-btn"
-              onClick={() => setApproximatePromptOpen(false)}
-              aria-label="Dismiss approximate location prompt"
-            >
-              <FontAwesomeIcon icon={faXmark} />
-            </button>
-          </div>
-          <p className="approximate-location-text">
-            We could only find your approximate location.
-          </p>
-          <div className="approximate-location-actions">
-            <button
-              type="button"
-              className="approximate-confirm-btn"
-              onClick={handleConfirmApproximateLocation}
-            >
-              Confirm location
-            </button>
-          </div>
         </div>
       )}
 
@@ -7432,6 +7536,7 @@ const ResidentHome = () => {
 
       {/* Error */}
       {routeError && <div className="toast-error">{routeError}</div>}
+      {findSomeoneMapNotice && <div className="toast-error" role="status">{findSomeoneMapNotice}</div>}
 
       {/* Success */}
       {reportConfirmation && (
@@ -7877,9 +7982,9 @@ const ResidentHome = () => {
                           <div className="find-someone-name">
                             {item.household_head_name || item.name || "Resident"}
                           </div>
-                          {(item.barangay || item.address) && (
+                          {item.barangay && (
                             <div className="find-someone-meta">
-                              <span>Barangay:</span> {item.barangay || item.address}
+                              <span>Barangay:</span> {item.barangay}
                             </div>
                           )}
                           <div className="find-someone-meta">
@@ -7888,6 +7993,11 @@ const ResidentHome = () => {
                               {item.evacuation_center?.name || item.center_name || "Assigned Center"}
                             </strong>
                           </div>
+                          {(item.room?.building_name || item.room?.room_number) && (
+                            <div className="find-someone-meta find-someone-room-location">
+                              {[item.room.building_name, item.room.room_number && `Room ${String(item.room.room_number).replace(/^room\s*/i, "")}`].filter(Boolean).join(" · ")}
+                            </div>
+                          )}
                         </div>
                         <button
                           type="button"
@@ -7919,6 +8029,10 @@ const ResidentHome = () => {
           initialCoordinates={rescueCoordinates || myLocation}
           onPinOnMap={handlePinRescueOnMap}
           onLocationCaptured={handleRescueLocationCaptured}
+          isLocationAllowed={(location) => isInsideSogodBoundary([
+            Number(location.lng ?? location.longitude),
+            Number(location.lat ?? location.latitude),
+          ], sogodBoundaryRef.current)}
           onOpenLogin={openLoginDialog}
           onOpenSignUp={openSignUpDialog}
         />
@@ -7933,6 +8047,7 @@ const ResidentHome = () => {
           onSubmitted={handleReportSubmitted}
           onLocationChange={handleReportLocationChange}
           onAdjustOnMap={handleAdjustHazardOnMap}
+          isLocationAllowed={(location) => isInsideSogodBoundary([location.lng, location.lat], sogodBoundaryRef.current)}
         />
       )}
 
@@ -7942,8 +8057,14 @@ const ResidentHome = () => {
         isOpen={buildingModalOpen}
         buildingId={selectedBuildingId}
         initialBuildingData={selectedBuildingData}
-        onClose={() => setBuildingModalOpen(false)}
-        userHousehold={myCenter}
+        onClose={() => {
+          setBuildingModalOpen(false);
+          clearFoundPersonLocation();
+          setPrivateBuildingView(false);
+        }}
+        userHousehold={foundPersonLocation?.buildingId != null ? null : myCenter}
+        highlightedRoom={foundPersonLocation?.buildingId != null ? foundPersonLocation.room : null}
+        hideHouseholds={privateBuildingView}
         isStaff={false}
       />
 

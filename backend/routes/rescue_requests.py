@@ -8,6 +8,7 @@ from flask_jwt_extended import get_jwt, get_jwt_identity, jwt_required
 from werkzeug.utils import secure_filename
 
 from models import RescueRequest, SystemLog, db, ResidentAccount, User
+from services.sogod_boundary import is_inside_sogod
 from services.notifications import (
     create_staff_notifications,
     send_staff_push_notifications,
@@ -162,6 +163,15 @@ def submit_rescue_request():
 
     if latitude is None and not location_description:
         return jsonify({'error': 'Provide a GPS location or describe where help is needed.'}), 400
+
+    if latitude is None:
+        return jsonify({'error': 'Share a GPS location inside Sogod so responders can locate you.'}), 400
+    try:
+        if not is_inside_sogod(latitude, longitude):
+            return jsonify({'error': 'Rescue requests can only be submitted for locations inside Sogod.'}), 400
+    except (FileNotFoundError, ValueError, OSError):
+        current_app.logger.exception("Could not validate rescue request against the Sogod boundary")
+        return jsonify({'error': 'Location validation is temporarily unavailable. Please try again later.'}), 503
 
     # Optional accuracy and location source
     raw_accuracy = data.get('accuracy')

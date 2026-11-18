@@ -175,6 +175,8 @@ export function initBuildingLayers(map, onBuildingClick = null, options = {}) {
       paint: {
         "line-color": [
           "case",
+          ["boolean", ["feature-state", "found_person"], false],
+          "#d97706",
           ["boolean", ["feature-state", "user_building"], false],
           "#2563eb", // thick blue outline for resident's building
           ["boolean", ["feature-state", "selected"], false],
@@ -183,6 +185,10 @@ export function initBuildingLayers(map, onBuildingClick = null, options = {}) {
         ],
         "line-width": [
           "case",
+          ["boolean", ["feature-state", "building_pulse"], false],
+          6.0,
+          ["boolean", ["feature-state", "found_person"], false],
+          4.5,
           ["boolean", ["feature-state", "user_building"], false],
           4.5, // visually thicker blue outline for user building
           ["boolean", ["feature-state", "selected"], false],
@@ -446,29 +452,34 @@ export function setSelectedBuilding(map, selectedBuildingId) {
 /**
  * Synchronize the user's assigned building feature-state (thick blue outline)
  */
-export function setUserBuilding(map, userBuildingId) {
+export function setUserBuilding(map, userBuildingId, kind = "resident") {
   if (!map || !map.getStyle() || !map.getSource(BUILDINGS_SOURCE_ID)) return;
 
-  const prevId = map.__currentUserBuildingId;
+  const idKey = kind === "found" ? "__foundPersonBuildingId" : "__currentUserBuildingId";
+  const stateKey = kind === "found" ? "found_person" : "user_building";
+  const prevId = map[idKey];
+  const numId = userBuildingId !== undefined && userBuildingId !== null
+    ? Number(userBuildingId)
+    : null;
+  if (prevId !== numId) {
+    clearInterval(map.__buildingPulseTimers?.[kind]);
+  }
   if (prevId !== undefined && prevId !== null) {
     try {
       map.setFeatureState(
         { source: BUILDINGS_SOURCE_ID, id: Number(prevId) },
-        { user_building: false }
+        { [stateKey]: false, building_pulse: false }
       );
     } catch (e) {}
   }
 
-  const numId = userBuildingId !== undefined && userBuildingId !== null
-    ? Number(userBuildingId)
-    : null;
-  map.__currentUserBuildingId = numId;
+  map[idKey] = numId;
 
   if (numId !== null && !isNaN(numId)) {
     try {
       map.setFeatureState(
         { source: BUILDINGS_SOURCE_ID, id: numId },
-        { user_building: true }
+        { [stateKey]: true }
       );
     } catch (e) {}
   }
@@ -477,28 +488,31 @@ export function setUserBuilding(map, userBuildingId) {
 /**
  * Animate a pulsing highlight around a building outline
  */
-export function pulseBuilding(map, buildingId) {
+export function pulseBuilding(map, buildingId, kind = "resident") {
   if (!map || !buildingId) return;
   setSelectedBuilding(map, buildingId);
-  setUserBuilding(map, buildingId);
+  setUserBuilding(map, buildingId, kind);
+  map.__buildingPulseTimers ??= {};
+  clearInterval(map.__buildingPulseTimers[kind]);
+  if (typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
 
   let step = 0;
   const maxSteps = 6;
-  const interval = setInterval(() => {
+  map.__buildingPulseTimers[kind] = setInterval(() => {
     step++;
     const isSelected = step % 2 === 0;
     try {
       map.setFeatureState(
         { source: BUILDINGS_SOURCE_ID, id: Number(buildingId) },
-        { selected: isSelected, user_building: true }
+        { building_pulse: !isSelected }
       );
     } catch (e) {}
     if (step >= maxSteps) {
-      clearInterval(interval);
+      clearInterval(map.__buildingPulseTimers[kind]);
       try {
         map.setFeatureState(
           { source: BUILDINGS_SOURCE_ID, id: Number(buildingId) },
-          { selected: true, user_building: true }
+          { building_pulse: false }
         );
       } catch (e) {}
     }

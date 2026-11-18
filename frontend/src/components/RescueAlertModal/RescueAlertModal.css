@@ -796,3 +796,11 @@
     flex: 1;
   }
 }
+.rescue-location-confirmation {
+  margin: 0;
+  padding: 10px 20px;
+  background: #fffbeb;
+  color: #b45309;
+  font-size: 12px;
+  line-height: 1.4;
+}

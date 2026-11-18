@@ -31,6 +31,7 @@ services:
       APP_URL_LOCAL: ${APP_URL_LOCAL-http://localhost:8080}
     volumes:
       - uploads:/app/static/uploads
+      - ./frontend/public/sogod_boundary.geojson:/app/data/sogod_boundary.geojson:ro
     depends_on:
       db:
         condition: service_healthy

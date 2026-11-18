@@ -2192,6 +2192,12 @@
   font-weight: 600;
 }
 
+.find-someone-room-location {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .find-someone-view-btn {
   flex-shrink: 0;
   height: 34px;
@@ -3936,7 +3942,7 @@
   justify-content: center;
   gap: 8px;
   width: 100%;
-  height: 40px;
+  height: 44px;
   border-radius: 10px;
   border: none;
   background: #2563eb;
@@ -4147,22 +4153,14 @@
 /* --------------------------------------------------
    Approximate Location Notice & Confirmation
 -------------------------------------------------- */
-.approximate-location-card {
-  position: absolute;
-  top: calc(72px + 16px);
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: var(--z-map-controls, 400);
-  width: min(440px, calc(100vw - 32px));
-  background: #ffffff;
-  border: 1px solid #e2e8f0;
-  border-radius: 12px;
-  padding: 16px;
-  box-shadow: 0 4px 16px rgba(15, 23, 42, 0.08);
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  box-sizing: border-box;
+.route-location-confirmation {
+  margin: 8px 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #fffbeb;
+  color: #b45309;
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 .approximate-location-header {
@@ -4229,25 +4227,6 @@
 .approximate-confirm-btn:focus-visible {
   outline: 2px solid #2563eb;
   outline-offset: 2px;
-}
-
-.approximate-dismiss-btn {
-  width: 32px;
-  height: 32px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: none;
-  background: transparent;
-  color: #64748b;
-  border-radius: 6px;
-  cursor: pointer;
-  transition: background-color 0.15s ease, color 0.15s ease;
-}
-
-.approximate-dismiss-btn:hover {
-  background: #f1f5f9;
-  color: #0f172a;
 }
 
 /* --------------------------------------------------
@@ -4423,28 +4402,21 @@
     text-overflow: clip;
   }
 
-  .approximate-location-card {
-    top: calc(58px + 12px + env(safe-area-inset-top, 0px));
-    padding: 16px;
-  }
-
-  /* Route preview as bottom sheet anchored above dock */
-  .route-preview-card.mobile-bottom-sheet {
+  /* Leave the right-hand controls and bottom actions unobstructed. */
+  .route-preview-card.mobile-top-card {
     position: absolute;
-    top: auto;
-    bottom: calc(var(--dock-h, 56px) + env(safe-area-inset-bottom, 0px));
-    left: 0;
-    right: 0;
-    width: 100%;
-    max-width: 100%;
+    top: calc(var(--top-h, 52px) + 12px);
+    bottom: auto;
+    left: 12px;
+    right: auto;
+    width: calc(100% - 72px);
+    max-width: none;
     transform: none;
-    border-radius: 20px 20px 0 0;
-    border-bottom: none;
-    max-height: 35vh;
-    max-height: 35dvh;
-    box-shadow: 0 -4px 20px rgba(15, 23, 42, 0.15);
+    border-radius: 14px;
+    max-height: calc(100dvh - var(--top-h, 52px) - var(--dock-h, 60px) - 36px);
+    box-shadow: 0 4px 16px rgba(15, 23, 42, 0.12);
     z-index: var(--z-bottom-sheet, 600);
-    padding: 8px 16px 14px;
+    padding: 12px;
     box-sizing: border-box;
     overflow-y: auto;
   }
@@ -4855,11 +4827,11 @@
   position: absolute;
   top: calc(var(--top-h, 52px) + 8px);
   bottom: auto;
-  left: 50%;
+  left: 12px;
   right: auto;
-  transform: translateX(-50%);
-  width: calc(100% - 144px);
-  max-width: 320px;
+  transform: none;
+  width: calc(100% - 72px);
+  max-width: 360px;
   margin: 0;
   padding: 8px 10px;
   z-index: 350;
@@ -5261,11 +5233,7 @@
     font-size: 13px;
   }
 
-  /* Room card on mobile (768px and below):
-     Narrower, centered horizontally below search bar with gap intact,
-     width: calc(100% - 96px), max-width: 360px, so right-side map controls
-     (locate-me, 3D/layer, help) are never covered and stay fully visible & tappable.
-     z-index: 350 stays below map controls (400), above map (1), and below modals (1200). */
+  /* Left-aligned room card leaves 60px free for the map controls. */
   .resident-home.has-hazard-popup .pinned-your-room-card {
     display: none !important;
   }
@@ -5279,11 +5247,11 @@
     position: absolute !important;
     top: calc(var(--top-h, 52px) + 8px) !important;
     bottom: auto !important;
-    left: 50% !important;
+    left: 12px !important;
     right: auto !important;
-    transform: translateX(-50%) !important;
-    width: calc(100% - 144px) !important;
-    max-width: 320px !important;
+    transform: none !important;
+    width: calc(100% - 72px) !important;
+    max-width: 360px !important;
     margin: 0 !important;
     padding: 8px 10px !important;
     z-index: 350 !important;
@@ -5306,48 +5274,64 @@
     font-size: 15px;
   }
 
-  .pinned-your-room-card.is-collapsed .your-room-main-title {
-    font-size: 13.5px;
+  .pinned-your-room-card .your-room-main-title {
+    font-size: 14px;
+    font-weight: 600;
     line-height: 1.25;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    overflow-wrap: normal;
+    word-break: normal;
   }
 
-  .pinned-your-room-card.is-collapsed .your-room-sub-title {
-    font-size: 11.5px;
+  .pinned-your-room-card .your-room-sub-title {
+    font-size: 12px;
     line-height: 1.3;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
+    overflow-wrap: normal;
+    word-break: normal;
+  }
+
+  .pinned-your-room-card .your-room-sub-title span {
+    display: block;
   }
 
   .pinned-your-room-card.is-collapsed .your-room-collapsed-right {
-    gap: 4px;
+    gap: 6px;
   }
 
   .pinned-your-room-card.is-collapsed .your-room-collapsed-nav-btn {
-    width: 40px;
-    height: 40px;
-    min-width: 40px;
-    min-height: 40px;
+    width: 36px;
+    height: 36px;
+    min-width: 36px;
+    min-height: 36px;
     font-size: 15px;
   }
 
   .pinned-your-room-card.is-collapsed .your-room-collapsed-expand-btn {
-    width: 34px;
-    height: 34px;
-    min-width: 34px;
-    min-height: 34px;
+    width: 36px;
+    height: 36px;
+    min-width: 36px;
+    min-height: 36px;
     font-size: 13px;
   }
 
-  /* When expanded, keep it centered at the same width, grow downward,
+  /* When expanded, keep the same left alignment and width, grow downward,
      and set max-height: 50vh with internal scrolling so it never reaches the bottom action buttons. */
   .pinned-your-room-card.is-expanded.mobile-sheet,
   .pinned-your-room-card.is-expanded {
     position: absolute !important;
     top: calc(var(--top-h, 52px) + 8px) !important;
     bottom: auto !important;
-    left: 50% !important;
+    left: 12px !important;
     right: auto !important;
-    transform: translateX(-50%) !important;
-    width: calc(100% - 144px) !important;
-    max-width: 320px !important;
+    transform: none !important;
+    width: calc(100% - 72px) !important;
+    max-width: 360px !important;
     margin: 0 !important;
     max-height: 50vh !important;
     max-height: 50dvh !important;

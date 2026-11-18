@@ -64,7 +64,10 @@ def snap_coordinate():
     except (TypeError, ValueError):
         return jsonify({"error": "lat and lng query params are required"}), 400
 
-    snap_pt, dist_m, sub_info, is_conn = snap_point_to_road(lat, lng)
+    snap_to_intersection = request.args.get("snap_intersection", "true").lower() not in {"0", "false", "no"}
+    snap_pt, dist_m, sub_info, is_conn = snap_point_to_road(
+        lat, lng, snap_to_intersection=snap_to_intersection
+    )
     return jsonify(
         {
             "snapped_lat": snap_pt[0],

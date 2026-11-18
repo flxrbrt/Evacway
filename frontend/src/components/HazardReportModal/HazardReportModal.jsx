@@ -34,6 +34,7 @@ function HazardReportModal({
   onSubmitted,
   onLocationChange,
   onAdjustOnMap,
+  isLocationAllowed,
   initialSuggestedRoad = null,
 }) {
   const queryClient = useQueryClient();
@@ -218,8 +219,13 @@ function HazardReportModal({
       async (pos) => {
         const rawLat = pos.coords.latitude;
         const rawLng = pos.coords.longitude;
+        if (isLocationAllowed && !isLocationAllowed({ lat: rawLat, lng: rawLng })) {
+          setLocating(false);
+          setError("Your current location is outside Sogod. Choose a location inside the boundary.");
+          return;
+        }
         try {
-          const snapData = await api.snapCoordinate(rawLat, rawLng);
+          const snapData = await api.snapCoordinate(rawLat, rawLng, { snapToIntersection: false });
           setLocating(false);
           const newLoc = {
             lat: snapData.snapped_lat,
@@ -227,6 +233,10 @@ function HazardReportModal({
             accuracy: pos.coords.accuracy,
             road_name: snapData.nearest_road,
           };
+          if (isLocationAllowed && !isLocationAllowed(newLoc)) {
+            setError("The nearest road is outside Sogod. Choose a location inside the boundary.");
+            return;
+          }
           const sugg = {
             road_name: snapData.nearest_road || "Unnamed road",
             distance_meters: snapData.snap_distance_meters,
@@ -255,6 +265,10 @@ function HazardReportModal({
 
   async function handleSubmit(e) {
     e.preventDefault();
+    if (isLocationAllowed && !isLocationAllowed(location)) {
+      setError("Hazard reports can only use a location inside Sogod. Choose a location inside the boundary.");
+      return;
+    }
     if (suggestedRoad && !isRoadConfirmed) {
       setError("Please check if the suggested nearest road is correct and click 'Yes, this is correct' before submitting.");
       return;

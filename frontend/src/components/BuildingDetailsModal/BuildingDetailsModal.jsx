@@ -15,6 +15,7 @@ import {
   faLinkSlash,
 } from "@fortawesome/free-solid-svg-icons";
 import { api } from "../../services/api";
+import { findAssignedRoom } from "../../utils/resolveRoomBuilding";
 import "./BuildingDetailsModal.css";
 
 export default function BuildingDetailsModal({
@@ -25,10 +26,13 @@ export default function BuildingDetailsModal({
   userHousehold = null,
   isStaff = false,
   onViewRoomAdmin = null,
+  highlightedRoom = null,
+  hideHouseholds = false,
 }) {
   const modalRef = useRef(null);
   const closeBtnRef = useRef(null);
   const lastActiveElementRef = useRef(null);
+  const assignedRoomRef = useRef(null);
 
   const queryClient = useQueryClient();
   const [loading, setLoading] = useState(false);
@@ -146,7 +150,8 @@ export default function BuildingDetailsModal({
                     String(r.room_number).replace(/^Room\s*/i, "").trim())
             );
           }
-          setSelectedRoomId(myRoom ? myRoom.id : null);
+          const foundRoom = findAssignedRoom(res.rooms, highlightedRoom);
+          setSelectedRoomId(foundRoom?.id ?? myRoom?.id ?? null);
         } else {
           setSelectedRoomId(null);
         }
@@ -160,7 +165,15 @@ export default function BuildingDetailsModal({
     return () => {
       isMounted = false;
     };
-  }, [isOpen, buildingId, userHousehold]);
+  }, [isOpen, buildingId, userHousehold, highlightedRoom]);
+
+  useEffect(() => {
+    if (!isOpen || loading || !highlightedRoom || !data) return;
+    const frame = requestAnimationFrame(() => {
+      assignedRoomRef.current?.scrollIntoView({ block: "nearest", behavior: "instant" });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [isOpen, loading, data, highlightedRoom]);
 
   const building =
     data?.building || (data?.id ? data : null) || initialBuildingData || {};
@@ -427,6 +440,7 @@ export default function BuildingDetailsModal({
                 ) : (
                   sortedRooms.map((r) => {
                     const isExpanded = selectedRoomId === r.id;
+                    const isFoundRoom = findAssignedRoom(rooms, highlightedRoom)?.id === r.id;
                     const rOcc = r.occupied || 0;
                     const rAssigned = r.assigned ?? 0;
                     const rCap = r.capacity || 0;
@@ -496,9 +510,10 @@ export default function BuildingDetailsModal({
                     return (
                       <div
                         key={r.id}
+                        ref={isFoundRoom ? assignedRoomRef : null}
                         className={`bldg-room-card ${
                           isExpanded ? "is-expanded" : ""
-                        } ${isMine ? "is-my-room" : ""}`}
+                        } ${isMine ? "is-my-room" : ""} ${isFoundRoom ? "is-found-room" : ""}`}
                         role="listitem"
                       >
                         {/* Clean white room card button */}
@@ -529,6 +544,7 @@ export default function BuildingDetailsModal({
                                     {myHouseholdStatusLabel}
                                   </span>
                                 )}
+                                {isFoundRoom && <span className="bldg-badge-assigned">Assigned</span>}
                               </div>
                               <div className="bldg-room-subline">
                                 {rOcc} of {rCap} here · {rAssigned} assigned
@@ -619,7 +635,7 @@ export default function BuildingDetailsModal({
                               )}
 
                               {/* Families assigned to this room */}
-                              {(() => {
+                              {!hideHouseholds && (() => {
                                 const roomFamilies = Array.isArray(r.families)
                                   ? r.families
                                   : [];

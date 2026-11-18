@@ -1,4 +1,18 @@
 const BASE_URL = import.meta.env.VITE_API_URL ?? "";
+
+function buildRequestUrl(path) {
+  const base = BASE_URL.replace(/\/+$/, "");
+  const requestPath = path.startsWith("/") ? path : `/${path}`;
+
+  // API paths already include /api. Avoid duplicating it when the configured
+  // base URL is the same-origin /api proxy used by Docker and Vite.
+  if (base.endsWith("/api") && requestPath.startsWith("/api/")) {
+    return `${base}${requestPath.slice(4)}`;
+  }
+
+  return `${base}${requestPath}`;
+}
+
 function getToken() {
   return localStorage.getItem("evacway_token");
 }
@@ -17,7 +31,7 @@ async function request(path, options = {}) {
 
   let res;
   try {
-    res = await fetch(`${BASE_URL}${path}`, {
+    res = await fetch(buildRequestUrl(path), {
       ...options,
       headers,
     });
@@ -45,7 +59,7 @@ async function requestFile(path) {
   if (token) headers.Authorization = `Bearer ${token}`;
   let response;
   try {
-    response = await fetch(`${BASE_URL}${path}`, { headers });
+    response = await fetch(buildRequestUrl(path), { headers });
   } catch (networkError) {
     throw new Error("Couldn't reach the server. Check your connection and try again.");
   }
@@ -196,8 +210,8 @@ export const api = {
   getRoadSegments: () =>
     request("/api/road-segments"),
 
-  snapCoordinate: (lat, lng) =>
-    request(`/api/routing/snap?lat=${encodeURIComponent(lat)}&lng=${encodeURIComponent(lng)}`),
+  snapCoordinate: (lat, lng, { snapToIntersection = true } = {}) =>
+    request(`/api/routing/snap?lat=${encodeURIComponent(lat)}&lng=${encodeURIComponent(lng)}&snap_intersection=${snapToIntersection}`),
 
 
   // -------------------------------------------------------

@@ -16,6 +16,7 @@ import { api } from "../../services/api";
 import { queryKeys } from "../../hooks/useEvacuationQueries";
 import { createSelectedLocationElement, refineGeolocation } from "../../utils/mapLocationIndicators";
 import { useAuth } from "../../context/AuthContext";
+import { needsLocationConfirmation } from "../../utils/locationConfirmation";
 import "./RescueAlertModal.css";
 
 const MAX_PHOTOS = 5;
@@ -40,6 +41,7 @@ export default function RescueAlertModal({
   initialCoordinates = null,
   onPinOnMap,
   onLocationCaptured,
+  isLocationAllowed,
   onOpenLogin,
   onOpenSignUp,
 }) {
@@ -64,6 +66,7 @@ export default function RescueAlertModal({
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [locating, setLocating] = useState(false);
+  const [locationConfirmation, setLocationConfirmation] = useState(null);
 
   const previewContainerRef = useRef(null);
   const previewMapRef = useRef(null);
@@ -233,63 +236,43 @@ export default function RescueAlertModal({
     }
 
     setLocating(true);
+    const applyCapturedPosition = (position, successMessage) => {
+      const acc = position.coords.accuracy ?? null;
+      const captured = {
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+        lat: position.coords.latitude,
+        lng: position.coords.longitude,
+        accuracy: acc,
+        is_manual_pin: false,
+        location_source: acc != null && acc > 100 ? "approximate" : "gps",
+      };
+      if (isLocationAllowed && !isLocationAllowed(captured)) {
+        setCoordinates(null);
+        setLocationConfirmation(null);
+        setLocationMessage("Your GPS location is outside Sogod. Pin a location inside the boundary to request rescue.");
+        return false;
+      }
+      setCoordinates(captured);
+      setLocationMessage(successMessage(acc));
+      onLocationCaptured?.(captured);
+      return true;
+    };
     refineGeolocation({
       onFirstFix: (position) => {
-        const acc = position.coords.accuracy ?? null;
-        const captured = {
-          latitude: position.coords.latitude,
-          longitude: position.coords.longitude,
-          lat: position.coords.latitude,
-          lng: position.coords.longitude,
-          accuracy: acc,
-          is_manual_pin: false,
-          location_source: acc != null && acc > 100 ? "approximate" : "gps",
-        };
-        setCoordinates(captured);
-        setLocationMessage(
-          acc != null && acc > 100
-            ? "Approximate location found. Refining signal..."
-            : "Current GPS coordinates captured."
-        );
-        if (onLocationCaptured) {
-          onLocationCaptured(captured);
-        }
+        applyCapturedPosition(position, (acc) => acc != null && acc > 100
+          ? "Approximate location found. Refining signal..."
+          : "Current GPS coordinates captured.");
       },
       onImprovement: (position) => {
-        const acc = position.coords.accuracy ?? null;
-        const captured = {
-          latitude: position.coords.latitude,
-          longitude: position.coords.longitude,
-          lat: position.coords.latitude,
-          lng: position.coords.longitude,
-          accuracy: acc,
-          is_manual_pin: false,
-          location_source: acc != null && acc > 100 ? "approximate" : "gps",
-        };
-        setCoordinates(captured);
-        setLocationMessage("GPS accuracy improved.");
-        if (onLocationCaptured) {
-          onLocationCaptured(captured);
-        }
+        applyCapturedPosition(position, () => "GPS accuracy improved.");
       },
     })
       .then((bestPos) => {
         const acc = bestPos.coords.accuracy ?? null;
-        const captured = {
-          latitude: bestPos.coords.latitude,
-          longitude: bestPos.coords.longitude,
-          lat: bestPos.coords.latitude,
-          lng: bestPos.coords.longitude,
-          accuracy: acc,
-          is_manual_pin: false,
-          location_source: acc != null && acc > 100 ? "approximate" : "gps",
-        };
-        setCoordinates(captured);
-        setLocationMessage(
-          acc != null && acc > 100
-            ? "Approximate location captured. Please provide landmark details or pin on the map."
-            : "GPS coordinates locked."
-        );
+        applyCapturedPosition(bestPos, (accuracy) => accuracy != null && accuracy > 100
+          ? "Approximate location captured. Please provide landmark details or pin on the map."
+          : "GPS coordinates locked.");
       })
       .catch((err) => {
         setCoordinates(null);
@@ -325,6 +308,7 @@ export default function RescueAlertModal({
 
   async function handleSubmit(event) {
     event.preventDefault();
+    if (submitting || locating) return;
     const finalName = (loggedInName || user?.email || "Resident").trim();
     if (!finalName) {
       setError("Please provide your name.");
@@ -339,7 +323,15 @@ export default function RescueAlertModal({
       setError("Share your GPS location or describe where help is needed.");
       return;
     }
+    if (coordinates && isLocationAllowed && !isLocationAllowed(coordinates)) {
+      setError("Rescue requests can only use a location inside Sogod. Pin a location inside the boundary.");
+      return;
+    }
 
+    if (needsLocationConfirmation(coordinates) && locationConfirmation !== coordinates) {
+      setLocationConfirmation(coordinates);
+      return;
+    }
     setSubmitting(true);
     setError("");
     try {
@@ -721,6 +713,9 @@ export default function RescueAlertModal({
             </div>
           </div>
 
+          {needsLocationConfirmation(coordinates) && locationConfirmation === coordinates && (
+            <p className="rescue-location-confirmation" role="status">Location may be inaccurate. Check the pin, then confirm to send.</p>
+          )}
           <footer className="rescue-actions">
             <button type="button" className="rescue-cancel" onClick={onClose}>
               Cancel
@@ -730,7 +725,7 @@ export default function RescueAlertModal({
               className="rescue-submit"
               disabled={submitting || locating}
             >
-              {submitting ? "Sending request…" : "Send rescue alert"}
+              {submitting ? "Sending request…" : needsLocationConfirmation(coordinates) && locationConfirmation === coordinates ? "Confirm and send" : "Send rescue alert"}
             </button>
           </footer>
         </form>

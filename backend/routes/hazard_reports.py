@@ -30,6 +30,7 @@ from services.pathfinding import (
     invalidate_road_network_cache,
     haversine,
 )
+from services.sogod_boundary import is_inside_sogod
 
 
 reports_bp = Blueprint('reports', __name__)
@@ -140,14 +141,10 @@ def get_blockage_stretch_segments(report, all_segments=None):
     """
     Finds the road segment(s) affected by a hazard report (all hazard types):
     1. Uses the report's stored point (PostGIS geom, SRID 4326).
-    2. Finds the nearest road node: if the point is within ~15 m of a node where
-       3 or more segment endpoints meet, treats it as an intersection report.
-       Otherwise treats it as a mid-block report.
-    3. Intersection report: closes ALL segments whose endpoint is at that node
-       (every arm), and for each arm extends along the same road_name to the
-       next intersection node, stopping there.
-    4. Mid-block report: finds the nearest segment, then extends along the same
-       road in both directions to the first intersection node on each side.
+    2. Finds the nearest road segment to the reported point.
+    3. If the report is at an intersection, closes each connected road arm to
+       its next intersection. Otherwise, closes the road stretch between the
+       first intersection on either side.
     """
     if not report or getattr(report, 'geom', None) is None:
         return []
@@ -180,97 +177,87 @@ def get_blockage_stretch_segments(report, all_segments=None):
     pt = to_shape(report.geom)  # Point(lng, lat)
     report_lng, report_lat = pt.x, pt.y
 
-    # Check if within ~15m of a node where 3 or more segment endpoints meet
-    nearest_inter_node = None
-    min_inter_dist = float('inf')
-
-    for node, segs in node_to_segs.items():
-        if len(segs) >= 3:
-            d_meters = haversine(report_lat, report_lng, node[1], node[0]) * 1000.0
-            if d_meters < min_inter_dist:
-                min_inter_dist = d_meters
-                nearest_inter_node = node
-
     closed_segs = set()
+    # A report centered on an intersection closes each connected arm up to
+    # its next intersection. Away from an intersection, close only the
+    # affected road corridor.
+    intersection_nodes = [
+        node for node in node_to_segs if is_intersection_node(node)
+    ]
+    nearby_intersections = [
+        (haversine(report_lat, report_lng, node[1], node[0]) * 1000.0, node)
+        for node in intersection_nodes
+    ]
+    # haversine returns kilometers. Compare in meters so a road-side pin does
+    # not get mistaken for an intersection report and close every connected arm.
+    nearby_intersections = [item for item in nearby_intersections if item[0] <= 3]
 
-    if nearest_inter_node is not None and min_inter_dist <= 15.0:
-        # -------------------------------------------------------------
-        # Intersection report:
-        # Close ALL segments whose endpoint is at that node (every arm).
-        # For each arm extend along the same road_name to the next intersection node, stopping there.
-        # -------------------------------------------------------------
-        inter_node = nearest_inter_node
-        arms = list(node_to_segs.get(inter_node, []))
+    if nearby_intersections:
+        _, intersection_node = min(nearby_intersections, key=lambda item: item[0])
 
-        for arm in arms:
-            closed_segs.add(arm)
-            arm_road_name = arm.road_name
+        def close_arm(first_seg):
+            closed_segs.add(first_seg)
+            target_road_name = first_seg.road_name
+            u, v = seg_endpoints[first_seg.id]
+            curr_node = v if u == intersection_node else u
+            curr_seg = first_seg
 
-            u, v = seg_endpoints[arm.id]
-            curr_node = v if u == inter_node else u
-            curr_seg = arm
-
-            while True:
-                if is_intersection_node(curr_node, arm_road_name):
-                    break
+            while not is_intersection_node(curr_node, target_road_name):
                 next_candidates = [
-                    s for s in node_to_segs[curr_node]
-                    if s.id != curr_seg.id and s.road_name == arm_road_name
+                    seg for seg in node_to_segs[curr_node]
+                    if seg.id != curr_seg.id and seg.road_name == target_road_name
                 ]
                 if not next_candidates:
                     break
-                nxt = next_candidates[0]
-                if nxt in closed_segs:
+                next_seg = next_candidates[0]
+                if next_seg in closed_segs:
                     break
-                closed_segs.add(nxt)
-                u_nxt, v_nxt = seg_endpoints[nxt.id]
-                other_node = v_nxt if u_nxt == curr_node else u_nxt
-                curr_seg = nxt
-                curr_node = other_node
-    else:
-        # -------------------------------------------------------------
-        # Mid-block report:
-        # Find nearest segment, then extend along the same road in both
-        # directions to the first intersection node on each side.
-        # -------------------------------------------------------------
-        best_seg = None
-        min_dist = float('inf')
+                closed_segs.add(next_seg)
+                u_next, v_next = seg_endpoints[next_seg.id]
+                curr_node = v_next if u_next == curr_node else u_next
+                curr_seg = next_seg
 
-        for s in all_segments:
-            line = to_shape(s.geom)
-            d = line.distance(pt)
-            if d < min_dist:
-                min_dist = d
-                best_seg = s
+        for arm in node_to_segs[intersection_node]:
+            close_arm(arm)
 
-        if not best_seg:
-            return []
+        return list(closed_segs)
 
-        target_road_name = best_seg.road_name
-        closed_segs.add(best_seg)
+    best_seg = None
+    min_dist = float('inf')
 
-        for start_node in seg_endpoints[best_seg.id]:
-            curr_node = start_node
-            curr_seg = best_seg
-            while True:
-                if is_intersection_node(curr_node, target_road_name):
-                    break
-                next_candidates = [
-                    s for s in node_to_segs[curr_node]
-                    if s.id != curr_seg.id and s.road_name == target_road_name
-                ]
-                if not next_candidates:
-                    break
-                nxt = next_candidates[0]
-                if nxt in closed_segs:
-                    break
-                closed_segs.add(nxt)
-                u_nxt, v_nxt = seg_endpoints[nxt.id]
-                other_node = v_nxt if u_nxt == curr_node else u_nxt
-                curr_seg = nxt
-                curr_node = other_node
+    for s in all_segments:
+        line = to_shape(s.geom)
+        d = line.distance(pt)
+        if d < min_dist:
+            min_dist = d
+            best_seg = s
 
-    return list(closed_segs)
+    if not best_seg:
+        return []
+
+    target_road_name = best_seg.road_name
+    closed_segs.add(best_seg)
+
+    for start_node in seg_endpoints[best_seg.id]:
+        curr_node = start_node
+        curr_seg = best_seg
+        while True:
+            if is_intersection_node(curr_node, target_road_name):
+                break
+            next_candidates = [
+                s for s in node_to_segs[curr_node]
+                if s.id != curr_seg.id and s.road_name == target_road_name
+            ]
+            if not next_candidates:
+                break
+            nxt = next_candidates[0]
+            if nxt in closed_segs:
+                break
+            closed_segs.add(nxt)
+            u_nxt, v_nxt = seg_endpoints[nxt.id]
+            other_node = v_nxt if u_nxt == curr_node else u_nxt
+            curr_seg = nxt
+            curr_node = other_node
 
     return list(closed_segs)
 
@@ -414,6 +401,15 @@ def submit_hazard_report():
     if not all([description, latitude, longitude]):
         return jsonify({"error": "description, latitude, and longitude are required"}), 400
 
+    try:
+        report_latitude = float(latitude)
+        report_longitude = float(longitude)
+        if not is_inside_sogod(report_latitude, report_longitude):
+            return jsonify({"error": "Hazard reports can only be submitted for locations inside Sogod."}), 400
+    except (FileNotFoundError, ValueError, OSError):
+        current_app.logger.exception("Could not validate hazard report against the Sogod boundary")
+        return jsonify({"error": "Location validation is temporarily unavailable. Please try again later."}), 503
+
     uploader_folder = secure_filename(str(reporter_display_name or '').strip()) or 'user'
     upload_folder = os.path.join(
         current_app.root_path, 'static', 'uploads', 'hazard', uploader_folder
@@ -431,7 +427,18 @@ def submit_hazard_report():
             saved_file_paths.append(file_path)
             saved_photo_urls.append(f"/static/uploads/hazard/{uploader_folder}/{unique_name}")
 
-        snap_pt, _, _, _ = snap_point_to_road(float(latitude), float(longitude))
+        snap_pt, _, _, _ = snap_point_to_road(
+            report_latitude,
+            report_longitude,
+            snap_to_intersection=False,
+        )
+        if not is_inside_sogod(snap_pt[0], snap_pt[1]):
+            for saved_path in saved_file_paths:
+                try:
+                    os.remove(saved_path)
+                except OSError:
+                    current_app.logger.warning("Could not remove rejected hazard report photo: %s", saved_path)
+            return jsonify({"error": "The nearest reportable road is outside Sogod. Choose a location inside the boundary."}), 400
         point = Point(snap_pt[1], snap_pt[0])
 
         first_photo_url = saved_photo_urls[0] if saved_photo_urls else ''
