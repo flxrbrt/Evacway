@@ -638,7 +638,7 @@ export default function RescueRequestManager({ initialRequestId, onOpenMap }) {
 
       {/* 2. STAT CARDS */}
       <section
-        className="stat-card-grid cols-4"
+        className="stat-card-grid cols-4 rescue-summary-grid"
         aria-label="Rescue alert summary and filters"
       >
         {statCards.map((card) => {

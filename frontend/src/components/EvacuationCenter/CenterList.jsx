@@ -538,7 +538,7 @@ export default function CenterList({
       </header>
 
       {/* 3 filter cards: All, Mapped, Unmapped */}
-      <div className="stat-card-grid cols-3" role="group" aria-label="Center filters">
+      <div className="stat-card-grid cols-3 ec-center-filter-grid" role="group" aria-label="Center filters">
         {FILTER_CARDS.map((card) => {
           const count = counts[card.key]
           const active = quickFilter === card.key

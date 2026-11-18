@@ -316,14 +316,14 @@ function CenterArrivalList({ centers = [], onSelectCenter, onManageFacilities })
   if (!centers || centers.length === 0) {
     return (
       <section
-        className="bg-white border border-slate-200 rounded-2xl p-5 shadow-2xs w-full"
+        className="dashboard-center-arrival-card bg-white border border-slate-200 rounded-2xl p-5 shadow-2xs w-full"
         aria-label="Center Arrival & Capacity Matrix"
       >
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 mb-4 border-b border-slate-100">
-          <div className="flex items-center gap-2.5 flex-wrap">
+        <div className="dashboard-center-arrival-header flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 mb-4 border-b border-slate-100">
+          <div className="dashboard-center-arrival-title-group flex items-center gap-2.5 flex-wrap">
             <div className="flex items-center gap-2">
               <FontAwesomeIcon icon={faHouseFlag} className="text-blue-600 text-sm" />
-              <h2 className="dashboard-heading text-lg font-black text-slate-900 tracking-tight">
+              <h2 className="dashboard-heading dashboard-center-arrival-title text-lg font-black text-slate-900 tracking-tight">
                 Center Arrival & Capacity Matrix
               </h2>
             </div>
@@ -376,15 +376,15 @@ function CenterArrivalList({ centers = [], onSelectCenter, onManageFacilities })
 
   return (
     <section
-      className="bg-white border border-slate-200 rounded-2xl p-5 shadow-2xs w-full"
+    className="dashboard-center-arrival-card bg-white border border-slate-200 rounded-2xl p-5 shadow-2xs w-full"
       aria-label="Center Arrival & Capacity Matrix"
     >
       {/* Card Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 mb-4 border-b border-slate-100">
-        <div className="flex items-center gap-2.5 flex-wrap">
+    <div className="dashboard-center-arrival-header flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 mb-4 border-b border-slate-100">
+      <div className="dashboard-center-arrival-title-group flex items-center gap-2.5 flex-wrap">
           <div className="flex items-center gap-2">
             <FontAwesomeIcon icon={faHouseFlag} className="text-blue-600 text-sm" />
-            <h2 className="dashboard-heading text-lg font-black text-slate-900 tracking-tight">
+          <h2 className="dashboard-heading dashboard-center-arrival-title text-lg font-black text-slate-900 tracking-tight">
               Center Arrival & Capacity Matrix
             </h2>
           </div>
@@ -414,7 +414,7 @@ function CenterArrivalList({ centers = [], onSelectCenter, onManageFacilities })
         tabIndex={0}
         aria-label="Evacuation centers list"
         onScroll={handleHideTooltip}
-        className="overflow-y-auto max-h-[400px] sm:max-h-[440px] dashboard-scrollbar rounded-xl border border-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+        className="dashboard-center-arrival-list overflow-y-auto max-h-[400px] sm:max-h-[440px] dashboard-scrollbar rounded-xl border border-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
       >
         {filteredCenters.length === 0 ? (
           <div className="py-12 text-center text-slate-500 text-sm font-medium">
@@ -441,7 +441,7 @@ function CenterArrivalList({ centers = [], onSelectCenter, onManageFacilities })
                   onMouseLeave={handleHideTooltip}
                   onFocus={(e) => handleShowTooltip(center, e.currentTarget)}
                   onBlur={handleHideTooltip}
-                  className="py-3.5 px-3.5 cursor-pointer hover:bg-blue-50/50 focus:bg-blue-50/50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-inset rounded-xl transition-colors block w-full text-left"
+                  className="dashboard-center-arrival-row py-3.5 px-3.5 cursor-pointer hover:bg-blue-50/50 focus:bg-blue-50/50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-inset rounded-xl transition-colors block w-full text-left"
                 >
                   {/* Line 1: Center name on left (medium weight, wrapping to 2 lines if needed, never cut off), percentage assigned at right end in small muted text with dot if near-full/full */}
                   <div className="flex items-start justify-between gap-3">
@@ -766,32 +766,32 @@ function IncidentTrendsCard({
 
   return (
     <section
-      className="bg-white border border-slate-200 rounded-2xl p-5 shadow-2xs w-full flex flex-col justify-between"
+      className="dashboard-chart-card bg-white border border-slate-200 rounded-2xl p-5 shadow-2xs w-full flex flex-col justify-between"
       aria-label={title}
     >
       {/* 2-Row Header */}
-      <div className="mb-4 pb-3 border-b border-slate-100 space-y-2.5">
-        {/* Row 1: Icon & Title on left (single line, nowrap, never wrapping), Month Switcher on right */}
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2 min-w-0">
+      <div className="dashboard-chart-header mb-4 pb-3 border-b border-slate-100 space-y-2.5">
+        {/* Row 1: Wrapping title with the month switcher aligned on the right */}
+        <div className="dashboard-chart-heading-row flex items-center justify-between gap-3">
+          <div className="dashboard-chart-title-group flex items-center gap-2 min-w-0">
             <FontAwesomeIcon icon={icon} className={`${iconColor} text-sm shrink-0`} />
-            <h2 className="dashboard-heading text-lg font-black text-slate-900 tracking-tight whitespace-nowrap overflow-hidden text-ellipsis">
+            <h2 className="dashboard-chart-title dashboard-heading text-lg font-black text-slate-900 tracking-tight">
               {title}
             </h2>
           </div>
 
           {/* Month Switcher */}
-          <div className="flex items-center gap-1 bg-slate-50 border border-slate-200/80 rounded-xl p-0.5 text-xs shrink-0">
+          <div className="dashboard-chart-month-switcher flex items-center gap-1 bg-slate-50 border border-slate-200/80 rounded-xl p-0.5 text-xs shrink-0">
             <button
               type="button"
               onClick={onPrevMonth}
               aria-label="Previous month"
-              className="size-7 flex items-center justify-center rounded-lg text-slate-500 hover:text-slate-800 hover:bg-white transition cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="dashboard-chart-month-button size-7 flex items-center justify-center rounded-lg text-slate-500 hover:text-slate-800 hover:bg-white transition cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
               <FontAwesomeIcon icon={faChevronLeft} className="text-[10px]" />
             </button>
 
-            <span className="font-bold text-slate-700 dashboard-mono px-2 select-none whitespace-nowrap text-xs">
+            <span className="dashboard-chart-month-label font-bold text-slate-700 dashboard-mono px-2 select-none whitespace-nowrap text-xs">
               {monthLabel}
             </span>
 
@@ -800,7 +800,7 @@ function IncidentTrendsCard({
               onClick={onNextMonth}
               disabled={isCurrentMonth}
               aria-label="Next month"
-              className={`size-7 flex items-center justify-center rounded-lg transition ${isCurrentMonth
+              className={`dashboard-chart-month-button size-7 flex items-center justify-center rounded-lg transition ${isCurrentMonth
                 ? "text-slate-300 cursor-not-allowed"
                 : "text-slate-500 hover:text-slate-800 hover:bg-white cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500"
                 }`}
@@ -810,8 +810,8 @@ function IncidentTrendsCard({
           </div>
         </div>
 
-        {/* Row 2: Legend, left-aligned, in one line, wrapping only on very small screens */}
-        <div className="flex items-center gap-2 flex-wrap">
+        {/* Row 2: Legend, left-aligned and wrapping as needed */}
+        <div className="dashboard-chart-legend flex items-center gap-2 flex-wrap">
           {seriesConfig.map((s) => (
             <button
               key={s.key}
@@ -836,7 +836,7 @@ function IncidentTrendsCard({
 
       {/* Chart Body or Empty State */}
       {monthItems.length === 0 ? (
-        <div className="flex flex-col items-center justify-center h-[240px] text-center select-none my-auto">
+        <div className="dashboard-chart-empty-state flex flex-col items-center justify-center text-center select-none my-auto">
           <div className="size-11 rounded-2xl bg-slate-100 text-slate-400 flex items-center justify-center mb-2.5">
             <FontAwesomeIcon icon={icon} className="text-lg" />
           </div>
@@ -845,7 +845,7 @@ function IncidentTrendsCard({
       ) : (
         <div
           ref={containerRef}
-          className="relative w-full h-[240px] select-none"
+          className="dashboard-chart-container relative w-full select-none"
           onMouseLeave={() => setHoveredIndex(null)}
         >
           <svg
@@ -1046,6 +1046,7 @@ function Dashboard() {
 
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [barangayMetric, setBarangayMetric] = useState("households");
+  const [barangaySearch, setBarangaySearch] = useState("");
   const [activeBarangayPopover, setActiveBarangayPopover] = useState(null);
 
   // Month Switcher State for Incident Trends (shared across Hazard Reports & Rescue Requests)
@@ -1434,6 +1435,13 @@ function Dashboard() {
     return Math.max(...allBarangays.map((b) => b.val || 0), 1);
   }, [allBarangays]);
 
+  const visibleBarangays = useMemo(() => {
+    const query = barangaySearch.trim().toLocaleLowerCase();
+    return query
+      ? allBarangays.filter((barangay) => String(barangay.name || "").toLocaleLowerCase().includes(query))
+      : allBarangays;
+  }, [allBarangays, barangaySearch]);
+
   return (
     <div className="dashboard-layout">
       <Sidebar
@@ -1499,50 +1507,54 @@ function Dashboard() {
           )}
 
           {/* 1. EXECUTIVE COMMAND HEADER */}
-          <header className="dashboard-card p-5 sm:p-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-slate-500">
-                <FontAwesomeIcon icon={faClock} className="text-slate-400 text-[11px]" />
-                <span>{todayFormatted}</span>
-                <span className="text-slate-300">•</span>
-                <span className="text-blue-600 font-bold">Sogod Command Center</span>
-              </div>
-              <h1 className="dashboard-heading mt-1 text-2xl font-black text-slate-900 sm:text-3xl tracking-tight">
-                Welcome back, {user?.name || "Officer"}
-              </h1>
+          <header className="dashboard-card dashboard-welcome-header p-4 sm:p-6">
+            <div className="dashboard-welcome-meta flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-slate-500">
+              <FontAwesomeIcon icon={faClock} className="text-slate-400 text-[11px] shrink-0" />
+              <span>{todayFormatted}</span>
+              <span className="text-slate-300">•</span>
+              <span className="text-blue-600 font-bold">Sogod Command Center</span>
             </div>
+            <h1 className="dashboard-welcome-title dashboard-heading text-2xl font-black text-slate-900 sm:text-3xl tracking-tight">
+              Welcome back, {user?.name || "Officer"}
+            </h1>
 
-            <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 sm:gap-2.5 shrink-0">
+            <div className="dashboard-welcome-actions">
               <button
                 type="button"
                 onClick={() => handleSectionChange("checkin")}
                 className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-3.5 py-2 text-xs font-bold text-white hover:bg-emerald-700 shadow-xs transition shrink-0"
+                aria-label="Evacuee Arrival Desk"
+                title="Evacuee Arrival Desk"
               >
-                <FontAwesomeIcon icon={faUserCheck} />
-                <span>Evacuee Check-In Desk</span>
+                <FontAwesomeIcon icon={faUserCheck} aria-hidden="true" />
+                <span className="dashboard-action-label">Evacuee Arrival Desk</span>
               </button>
 
               <button
                 type="button"
                 onClick={() => handleSectionChange("map")}
                 className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-3.5 py-2 text-xs font-bold text-white hover:bg-blue-700 shadow-xs transition shrink-0"
+                aria-label="Map Operations"
+                title="Map Operations"
               >
-                <FontAwesomeIcon icon={faMapLocationDot} />
-                <span>Map Operations</span>
+                <FontAwesomeIcon icon={faMapLocationDot} aria-hidden="true" />
+                <span className="dashboard-action-label">Map Operations</span>
               </button>
 
               <button
                 type="button"
                 onClick={handleRefreshAll}
                 disabled={isRefreshing}
-                title="Sync all metrics now"
+                aria-label="Sync"
+                title="Sync"
                 className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100 transition shadow-2xs min-w-[96px] shrink-0"
               >
                 <FontAwesomeIcon
                   icon={faArrowsRotate}
                   className={`text-slate-500 ${isRefreshing || isFetching ? "fa-spin text-blue-600" : ""}`}
+                  aria-hidden="true"
                 />
-                <span>{isRefreshing || isFetching ? "Syncing..." : "Sync"}</span>
+                <span className="dashboard-action-label">Sync</span>
               </button>
             </div>
           </header>
@@ -1574,7 +1586,7 @@ function Dashboard() {
           {stats ? (
             <>
               {/* 2. EVACUEE ARRIVAL & SHELTERING COMMAND HERO */}
-              <section className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-2xs space-y-4" aria-label="Evacuation arrival and sheltering status">
+              <section className="dashboard-arrival-card bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-2xs space-y-4" aria-label="Evacuation arrival and sheltering status">
                 <div>
                   <h2 className="dashboard-heading text-lg sm:text-xl font-black text-slate-900 tracking-tight">
                     Evacuee &amp; Shelter Arrival Status
@@ -1605,7 +1617,7 @@ function Dashboard() {
                       title={`Pending: ${formatCount(pendingArrivalFamilies)} families`}
                     />
                   </div>
-                  <div className="flex items-center justify-between text-xs text-slate-500 font-medium">
+                  <div className="dashboard-arrival-progress-labels flex items-center justify-between text-xs text-slate-500 font-medium">
                     <span>{formatCount(totalArrivedFamilies)} arrived</span>
                     <span>{formatCount(pendingArrivalFamilies)} pending</span>
                   </div>
@@ -1613,7 +1625,7 @@ function Dashboard() {
               </section>
 
               {/* 3. EXECUTIVE KPI METRICS (4 Actionable Command Tiles) */}
-              <section className="stat-card-grid cols-4" aria-label="Executive KPI tiles">
+              <section className="stat-card-grid cols-4 dashboard-kpi-grid" aria-label="Executive KPI tiles">
                 {/* 1. Emergency Alerts & Incidents */}
                 <button
                   type="button"
@@ -1703,7 +1715,7 @@ function Dashboard() {
               />
 
               {/* 5. HAZARD REPORTS & RESCUE REQUESTS TRENDS (Side by Side) */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-5 w-full">
+              <div className="dashboard-trends-grid">
                 <IncidentTrendsCard
                   title="Hazard Reports"
                   icon={faTriangleExclamation}
@@ -1750,20 +1762,30 @@ function Dashboard() {
               </div>
 
               {/* 6. DEMOGRAPHICS BY BARANGAY COMPARATIVE ANALYTICS (ALL BARANGAYS) */}
-              <section className="dashboard-card p-5 sm:p-6" aria-label="Demographic distribution">
-                <div className="mb-5 flex flex-col items-start gap-3 border-b border-slate-100 pb-4 min-[769px]:flex-row min-[769px]:items-center min-[769px]:justify-between">
-                  <div className="min-w-0">
+              <section className="dashboard-card dashboard-demographics-card p-5 sm:p-6" aria-label="Demographic distribution">
+                <div className="dashboard-demographics-header mb-5 flex flex-col items-start gap-3 border-b border-slate-100 pb-4 min-[769px]:flex-row min-[769px]:items-center min-[769px]:justify-between">
+                  <div className="dashboard-demographics-title min-w-0">
                     <div className="flex items-center gap-2">
                       <FontAwesomeIcon icon={faLocationDot} className="text-blue-600 text-sm" />
-                      <h2 className="dashboard-heading text-lg font-black text-slate-900 tracking-tight">
+                      <h2 className="dashboard-heading dashboard-demographics-heading text-lg font-black text-slate-900 tracking-tight">
                         Demographics & Evacuee Density by Barangay
                       </h2>
                     </div>
                   </div>
 
-                  <div className="flex items-center min-[769px]:ml-auto min-[769px]:shrink-0">
+                  <div className="dashboard-demographics-controls flex items-center min-[769px]:ml-auto min-[769px]:shrink-0">
+                    <label className="dashboard-demographics-search">
+                      <FontAwesomeIcon icon={faMagnifyingGlass} aria-hidden="true" />
+                      <input
+                        type="search"
+                        value={barangaySearch}
+                        onChange={(event) => setBarangaySearch(event.target.value)}
+                        placeholder="Search barangays"
+                        aria-label="Search barangays"
+                      />
+                    </label>
                     {/* Metric Switch */}
-                    <div className="flex items-center p-1 rounded-xl bg-slate-100 border border-slate-200/60 text-xs font-bold">
+                    <div className="dashboard-demographics-toggle flex items-center p-1 rounded-xl bg-slate-100 border border-slate-200/60 text-xs font-bold">
                       <button
                         type="button"
                         onClick={() => setBarangayMetric("households")}
@@ -1788,10 +1810,10 @@ function Dashboard() {
                   </div>
                 </div>
 
-                {allBarangays.length > 0 ? (
+                {visibleBarangays.length > 0 ? (
                   <div className="dashboard-scrollbar max-h-[520px] overflow-y-auto pr-1">
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                      {allBarangays.map((barangay) => {
+                      {visibleBarangays.map((barangay) => {
                         const barWidth = Math.round((barangay.val / maxBarangayVal) * 100);
 
                         return (
@@ -1817,16 +1839,16 @@ function Dashboard() {
                                 handleOpenPopover(barangay, e.currentTarget);
                               }
                             }}
-                            className="p-3 rounded-xl border border-slate-100 bg-slate-50/50 hover:bg-slate-50/90 hover:border-blue-200 focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-300 transition cursor-pointer"
+                            className="dashboard-demographic-item p-3 rounded-xl border border-slate-100 bg-slate-50/50 hover:bg-slate-50/90 hover:border-blue-200 focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-300 transition cursor-pointer"
                           >
-                            <div className="flex items-center justify-between text-xs font-bold text-slate-800">
-                              <span className="flex items-center gap-2 truncate">
+                            <div className="dashboard-demographic-item-header flex items-center justify-between text-xs font-bold text-slate-800">
+                              <span className="dashboard-demographic-item-name flex items-center gap-2">
                                 <span className="dashboard-mono size-5 rounded-md bg-white border border-slate-200 grid place-items-center text-[10px] text-slate-600 font-black shrink-0">
                                   #{barangay.rank}
                                 </span>
-                                <span className="truncate" title={barangay.name}>{barangay.name}</span>
+                                <span className="dashboard-demographic-name" title={barangay.name}>{barangay.name}</span>
                               </span>
-                              <span className="dashboard-mono text-slate-900 shrink-0 font-extrabold ml-1">
+                              <span className="dashboard-demographic-metric dashboard-mono text-slate-900 font-extrabold ml-1">
                                 {formatCount(barangay.val)}{" "}
                                 <span className="font-normal text-[10px] text-slate-400">
                                   {barangayMetric === "residents" ? "residents" : "households"}
@@ -1847,7 +1869,9 @@ function Dashboard() {
                   </div>
                 ) : (
                   <p className="rounded-xl bg-slate-50 px-4 py-8 text-center text-xs text-slate-500 font-medium">
-                    No barangay census records registered yet.
+                    {barangaySearch.trim()
+                      ? "No barangays match your search."
+                      : "No barangay census records registered yet."}
                   </p>
                 )}
 

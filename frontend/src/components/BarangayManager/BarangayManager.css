@@ -5731,3 +5731,45 @@ label.bm-form-field > textarea:focus {
     white-space: nowrap;
   }
 }
+
+@media (max-width: 768px) {
+  .barangay-page .bm-landing .stat-card-grid.cols-4.bm-landing-summary-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .barangay-page .bm-landing-summary-grid .stat-card {
+    align-items: center;
+    justify-content: center;
+    gap: 0;
+    min-width: 0;
+    min-height: 0;
+    padding: 8px 4px;
+    border-radius: 10px;
+    box-shadow: none;
+    text-align: center;
+  }
+
+  .barangay-page .bm-landing-summary-grid .stat-card-content {
+    align-items: center;
+    flex: 0 1 auto;
+    gap: 2px;
+  }
+
+  .barangay-page .bm-landing-summary-grid .stat-card-label {
+    font-size: 10px;
+    line-height: 1.15;
+    overflow-wrap: anywhere;
+  }
+
+  .barangay-page .bm-landing-summary-grid .stat-card-value {
+    order: -1;
+    font-size: 17px;
+    line-height: 1.15;
+  }
+
+  .barangay-page .bm-landing-summary-grid .stat-card-hint,
+  .barangay-page .bm-landing-summary-grid .stat-card-icon {
+    display: none;
+  }
+}

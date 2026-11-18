@@ -2052,7 +2052,7 @@ function BarangayManager() {
            ========================================================= */
         <div className="bm-landing">
           {/* Elevated Summary Metric Cards */}
-          <div className="stat-card-grid cols-4">
+          <div className="stat-card-grid cols-4 bm-landing-summary-grid">
             <div className="stat-card is-plain">
               <div className="stat-card-content">
                 <span className="stat-card-label">Barangays</span>

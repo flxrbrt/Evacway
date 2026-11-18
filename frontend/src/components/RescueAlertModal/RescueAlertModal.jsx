@@ -524,7 +524,7 @@ export default function RescueAlertModal({
               <label className="rescue-field" style={{ margin: 0 }}>
                 <span className="rescue-field-label">
                   <FontAwesomeIcon icon={faPhone} className="rescue-label-icon" />
-                  Enter Contact Number
+                  Enter Contact Number (Optional)
                 </span>
                 <input
                   type="tel"

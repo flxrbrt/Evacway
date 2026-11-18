@@ -9,6 +9,7 @@ import {
   faEllipsisVertical,
   faEnvelope,
   faInfoCircle,
+  faLayerGroup,
   faMagnifyingGlass,
   faTriangleExclamation,
   faUserPlus,
@@ -21,6 +22,13 @@ import CreateResidentAccountModal from "./CreateResidentAccountModal";
 import "./ResidentRegistrations.css";
 
 const STATUS_CARDS = [
+  {
+    id: "all",
+    label: "All",
+    sub: "Every registration",
+    icon: faLayerGroup,
+    variant: "neutral",
+  },
   {
     id: "pending",
     label: "Pending",
@@ -174,11 +182,11 @@ function getResidentStatusPillClass(status) {
 
 export default function ResidentRegistrations({ focusRegistrationId = null }) {
   const queryClient = useQueryClient();
-  const [activeStatus, setActiveStatus] = useState("pending");
+  const [activeStatus, setActiveStatus] = useState("all");
   const [search, setSearch] = useState("");
   const [requests, setRequests] = useState([]);
   const [allRequests, setAllRequests] = useState([]);
-  const [counts, setCounts] = useState({ pending: 0, approved: 0, rejected: 0 });
+  const [counts, setCounts] = useState({ all: 0, pending: 0, approved: 0, rejected: 0 });
   const handledFocusIdRef = useRef(null);
   const [listLoading, setListLoading] = useState(true);
   const [listError, setListError] = useState("");
@@ -240,8 +248,9 @@ export default function ResidentRegistrations({ focusRegistrationId = null }) {
       if (requestNumber !== listRequestRef.current) return;
       setRequests(filtered.requests || []);
       setAllRequests(all.requests || []);
-      const nextCounts = { pending: 0, approved: 0, rejected: 0 };
+      const nextCounts = { all: 0, pending: 0, approved: 0, rejected: 0 };
       (all.requests || []).forEach((item) => {
+        nextCounts.all += 1;
         if (Object.hasOwn(nextCounts, item.status)) nextCounts[item.status] += 1;
       });
       setCounts(nextCounts);
@@ -812,7 +821,7 @@ export default function ResidentRegistrations({ focusRegistrationId = null }) {
       </header>
 
       {/* Status Filter Stat Cards */}
-      <section className="stat-card-grid cols-3" aria-label="Registration status filters">
+      <section className="stat-card-grid cols-4" aria-label="Registration status filters">
         {STATUS_CARDS.map((card) => {
           const isSelected = activeStatus === card.id;
           return (
@@ -892,7 +901,11 @@ export default function ResidentRegistrations({ focusRegistrationId = null }) {
               <div className="resident-empty-icon">
                 <FontAwesomeIcon icon={faEnvelope} />
               </div>
-              <strong>No {activeStatus} registrations</strong>
+              <strong>
+                {activeStatus === "all"
+                  ? "No resident registrations"
+                  : `No ${activeStatus} registrations`}
+              </strong>
               <span>
                 {search ? "Try a different search query." : "New resident requests will appear here."}
               </span>

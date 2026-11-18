@@ -501,7 +501,7 @@ function UserManagement() {
         )}
 
         {/* 1. STAT CARDS: CLICKABLE FILTERS */}
-        <section className="stat-card-grid cols-4" aria-label="User account filters">
+        <section className="stat-card-grid cols-4 um-summary-grid" aria-label="User account filters">
           <button
             type="button"
             className={`stat-card is-clickable is-neutral ${selectedStatCard === "total" ? "is-selected" : ""}`}

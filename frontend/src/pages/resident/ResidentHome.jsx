@@ -6020,20 +6020,8 @@ const ResidentHome = () => {
         <span>Safe evacuation center where your family can stay.</span>
       </div>
       <div className="legend-item">
-        <div className="legend-icon-wrapper place-building">
-          <FontAwesomeIcon icon={faBuilding} />
-        </div>
-        <span>Building inside an evacuation center when you zoom in.</span>
-      </div>
-      <div className="legend-item">
-        <div className="legend-icon-wrapper hazard-report">
-          <FontAwesomeIcon icon={faTriangleExclamation} />
-        </div>
-        <span>Danger reported nearby by a resident or staff.</span>
-      </div>
-      <div className="legend-item">
         <div className="legend-icon-wrapper road-blocked">
-          <FontAwesomeIcon icon={faBan} />
+          <FontAwesomeIcon icon={faTriangleExclamation} />
         </div>
         <span>Road that is blocked or closed and cannot be passed.</span>
       </div>
