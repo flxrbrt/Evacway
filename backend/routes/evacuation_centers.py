@@ -208,11 +208,16 @@ def _center_metrics(center):
 
     linked_barangays = _center_barangays(center)
     structure_mode = getattr(center, 'structure_mode', None) or 'buildings_and_rooms'
-    total_room_capacity = sum(room.capacity or 0 for room in rooms)
+    room_usage_by_id = {room.id: room.capacity_usage() for room in rooms}
+    total_room_family_slots = sum(int(room.family_slots or 0) for room in rooms)
+    total_room_people_spaces = sum(int(room.people_spaces or 0) for room in rooms)
+    total_room_used_slots = sum(usage['used_slots'] for usage in room_usage_by_id.values())
+    total_room_used_spaces = sum(usage['used_spaces'] for usage in room_usage_by_id.values())
+    full_room_count = sum(1 for usage in room_usage_by_id.values() if usage['is_full'])
     if structure_mode == 'open_area':
         total_capacity = center.capacity if center.capacity is not None else 0
     elif len(rooms) > 0:
-        total_capacity = total_room_capacity
+        total_capacity = total_room_people_spaces
         if center.capacity != total_capacity:
             center.capacity = total_capacity
             try:
@@ -257,7 +262,7 @@ def _center_metrics(center):
         barangay_id = barangay["id"]
         used_room_ids = rooms_by_barangay.get(barangay_id, set())
         used_room_capacity = sum(
-            rooms_by_id[rid].capacity or 0
+            rooms_by_id[rid].people_spaces or 0
             for rid in used_room_ids
             if rid in rooms_by_id
         )
@@ -306,6 +311,14 @@ def _center_metrics(center):
         "barangay_id": linked_barangays[0]["id"] if linked_barangays else None,
         "barangay_breakdown": breakdown,
         "capacity": total_capacity,
+        "family_slots": total_room_family_slots if rooms else None,
+        "people_spaces": total_room_people_spaces if rooms else total_capacity,
+        "used_slots": total_room_used_slots if rooms else total_assigned_households,
+        "used_spaces": total_room_used_spaces if rooms else total_assigned,
+        "available_slots": max(total_room_family_slots - total_room_used_slots, 0) if rooms else None,
+        "available_spaces": max(total_room_people_spaces - total_room_used_spaces, 0) if rooms else max(total_capacity - total_assigned, 0),
+        "full_room_count": full_room_count,
+        "available_room_count": max(len(rooms) - full_room_count, 0),
         "occupied": total_occupied,
         "current_occupancy": total_occupied,
         "assigned": total_assigned,
@@ -316,7 +329,10 @@ def _center_metrics(center):
         "household_assigned": total_assigned_households,
         "household_arrived": total_arrived_households,
         "household_space_left": household_space_left,
-        "is_fully_assigned": bool(effective_capacity > 0 and total_assigned >= effective_capacity),
+        "is_fully_assigned": bool(
+            (rooms and (total_room_used_slots >= total_room_family_slots or total_room_used_spaces >= total_room_people_spaces))
+            or (not rooms and effective_capacity > 0 and total_assigned >= effective_capacity)
+        ),
         "building_count": building_count,
         "buildings": [
             {
@@ -416,24 +432,28 @@ def validate_center_type_change(center, new_type, current_type=None):
         if target_structure == 'buildings_and_rooms':
             if venue_assigned_families > 0:
                 reason = (
-                    f"Cannot change to Buildings and rooms: {venue_assigned_families} household(s) "
+                    f"Cannot change to Buildings and rooms: {venue_assigned_families} "
+                    f"{'family' if venue_assigned_families == 1 else 'families'} "
                     "are assigned directly to the center without a room and would lose a valid room assignment. "
                     "Move or unassign them first."
                 )
             elif building_count == 0 and (room_count > 0 or room_assigned_families > 0):
                 warning = (
-                    f"This center has {room_count} room(s) and {room_assigned_families} assigned household(s). "
+                    f"This center has {room_count} room(s) and {room_assigned_families} assigned "
+                    f"{'family' if room_assigned_families == 1 else 'families'}. "
                     "Existing rooms and assignments will remain intact, and you can add buildings and link rooms to them."
                 )
             elif building_count > 0 or room_count > 0 or room_assigned_families > 0:
                 warning = (
                     f"This center has {building_count} building(s), {room_count} room(s), and "
-                    f"{room_assigned_families} assigned household(s). Existing structure and assignments will stay intact."
+                    f"{room_assigned_families} assigned "
+                    f"{'family' if room_assigned_families == 1 else 'families'}. Existing structure and assignments will stay intact."
                 )
         elif target_structure == 'rooms_only':
             if venue_assigned_families > 0:
                 reason = (
-                    f"Cannot change to Rooms only: {venue_assigned_families} household(s) "
+                    f"Cannot change to Rooms only: {venue_assigned_families} "
+                    f"{'family' if venue_assigned_families == 1 else 'families'} "
                     "are assigned directly to the center without a room and would lose a valid room assignment. "
                     "Move or unassign them first."
                 )
@@ -444,13 +464,15 @@ def validate_center_type_change(center, new_type, current_type=None):
                 )
             elif room_count > 0 or room_assigned_families > 0:
                 warning = (
-                    f"This center has {room_count} room(s) and {room_assigned_families} assigned household(s). "
+                    f"This center has {room_count} room(s) and {room_assigned_families} assigned "
+                    f"{'family' if room_assigned_families == 1 else 'families'}. "
                     "Existing rooms and assignments will remain intact, and capacity will follow room totals."
                 )
         elif target_structure == 'open_area':
             if room_assigned_families > 0:
                 reason = (
-                    f"Cannot change to Open area: {room_assigned_families} household(s) "
+                    f"Cannot change to Open area: {room_assigned_families} "
+                    f"{'family' if room_assigned_families == 1 else 'families'} "
                     "are assigned to rooms and would be left without a valid assignment. Move or unassign them first."
                 )
             elif room_count > 0:
@@ -459,7 +481,8 @@ def validate_center_type_change(center, new_type, current_type=None):
                 reason = f"This center still has {building_count} building(s). Remove all buildings before changing to Open area."
             elif venue_assigned_families > 0:
                 warning = (
-                    f"This center has {venue_assigned_families} directly assigned household(s). "
+                    f"This center has {venue_assigned_families} directly assigned "
+                    f"{'family' if venue_assigned_families == 1 else 'families'}. "
                     "Direct center assignments will remain intact, and total capacity stays editable."
                 )
 
@@ -1068,13 +1091,18 @@ def get_evacuation_center_details(center_id):
             EvacuationAssignment.checked_in_at.isnot(None)
         ).count()
         is_assigned = assigned > 0
+        room_usage = room.capacity_usage()
         room_dict = room.to_dict()
         room_dict["occupied"] = occupied
         room_dict["assigned"] = assigned
-        room_dict["available"] = max((room.capacity or 0) - assigned, 0)
-        room_dict["unassigned"] = max((room.capacity or 0) - assigned, 0)
+        room_dict.update(room_usage)
+        room_dict["family_slots"] = room.family_slots
+        room_dict["people_spaces"] = room.people_spaces
+        room_dict["capacity"] = room.people_spaces
+        room_dict["available"] = room_usage['available_spaces']
+        room_dict["unassigned"] = room_usage['available_spaces']
         room_dict["is_assigned"] = is_assigned
-        room_dict["is_fully_assigned"] = bool((room.capacity or 0) > 0 and assigned >= (room.capacity or 0))
+        room_dict["is_fully_assigned"] = room_usage['is_full']
         room_dict["assignment_status"] = "Assigned" if is_assigned else "Unassigned"
         assigned_bid = (
             db.session.query(Family.barangay_id)
@@ -1660,7 +1688,9 @@ def delete_evacuation_center(center_id):
     blockers = []
     if active_assignments > 0:
         blockers.append(
-            f"{active_assignments} household assignment(s); move or unassign them first"
+                f"{active_assignments} "
+                f"{'family assignment' if active_assignments == 1 else 'family assignments'}; "
+                "move or unassign them first"
         )
     if building_count > 0:
         blockers.append(
@@ -2553,7 +2583,7 @@ def _get_checkin_dataset(center_id_param=None, search_query='', status_filter='a
         evacuees.append({
             "family_id": r.family_id,
             "family_code": r.family_code,
-            "head_name": r.head_name or "Unnamed Household",
+                "head_name": r.head_name or "Unnamed Family",
             "member_count": m_count,
             "contact_number": r.contact_number,
             "address": r.address,
@@ -3127,7 +3157,7 @@ def export_check_in_report():
     headers1 = [
         "#",
         "Family Code",
-        "Head of Household",
+                "Head of Family",
         "Member Full Name",
         "Relationship",
         "Arrival Status",

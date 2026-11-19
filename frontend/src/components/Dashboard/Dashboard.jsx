@@ -123,7 +123,7 @@ function getReadinessStatus({
       reasons.push(`${formatCount(pendingArrivalFamilies)} family arrival${pendingArrivalFamilies > 1 ? "s" : ""} pending`);
     }
     if (unassignedFamilies > 0) {
-      reasons.push(`${formatCount(unassignedFamilies)} unassigned household${unassignedFamilies > 1 ? "s" : ""}`);
+      reasons.push(`${formatCount(unassignedFamilies)} unassigned family${unassignedFamilies > 1 ? "s" : ""}`);
     }
     if (pendingHazardCount > 0) {
       reasons.push(`${pendingHazardCount} pending hazard report${pendingHazardCount > 1 ? "s" : ""}`);
@@ -1599,7 +1599,7 @@ function Dashboard() {
                     <span className="dashboard-mono font-medium text-slate-700">
                       {formatCount(assignedFamilies)}
                     </span>{" "}
-                    assigned households have verified safe arrival across evacuation centers
+                    assigned families have verified safe arrival across evacuation centers
                   </p>
                 </div>
 
@@ -1794,7 +1794,7 @@ function Dashboard() {
                           : "text-slate-600 hover:text-slate-900"
                           }`}
                       >
-                        Households
+                        Families
                       </button>
                       <button
                         type="button"
@@ -1851,7 +1851,7 @@ function Dashboard() {
                               <span className="dashboard-demographic-metric dashboard-mono text-slate-900 font-extrabold ml-1">
                                 {formatCount(barangay.val)}{" "}
                                 <span className="font-normal text-[10px] text-slate-400">
-                                  {barangayMetric === "residents" ? "residents" : "households"}
+                {barangayMetric === "residents" ? "residents" : "families"}
                                 </span>
                               </span>
                             </div>
@@ -1896,7 +1896,7 @@ function Dashboard() {
 
                     <div className="space-y-1.5">
                       <div className="flex items-center justify-between text-slate-600">
-                        <span>Total Households</span>
+                        <span>Total Families</span>
                         <span className="dashboard-mono font-bold text-slate-900">
                           {formatCount(activeBarangayPopover.demographics.households)}
                         </span>

@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useMemo, Fragment } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faBuilding,
@@ -18,7 +18,6 @@ import {
   faLocationDot,
   faArrowsRotate,
   faDrawPolygon,
-  faChevronDown,
   faChevronRight,
   faSearch,
   faDownload,
@@ -41,17 +40,12 @@ import {
 } from './utils'
 import { EmptyState } from './CenterList'
 import { FloatingMenuTrigger } from './FloatingMenu'
+import { familyTerm } from './utils'
 import MappingBanner from './MappingBanner'
 import ReadinessChecklist from './ReadinessChecklist'
 import './CenterDetail.css'
 
 const VALID_TABS = ['overview', 'structure', 'households', 'activity']
-
-function getTabFromHash() {
-  if (typeof window === 'undefined') return 'overview'
-  const hash = window.location.hash.replace(/^#/, '').toLowerCase().trim()
-  return VALID_TABS.includes(hash) ? hash : 'overview'
-}
 
 function ConfirmDialog({
   open = false,
@@ -130,7 +124,6 @@ function ConfirmDialog({
 
 export default function CenterDetail({
   center,
-  section,
   counts,
   rooms = [],
   buildings = [],
@@ -142,7 +135,6 @@ export default function CenterDetail({
   householdArrived,
   householdSpaceLeft,
   onBack,
-  onSectionChange,
   onAssignHousehold,
   onViewMap,
   onEditCenter,
@@ -179,73 +171,19 @@ export default function CenterDetail({
   )
   const visibleTabKeys = useMemo(() => visibleTabs.map((t) => t.key), [visibleTabs])
 
-  // URL hash sync for active tab (defaults to 'overview')
-  const [activeTab, setActiveTab] = useState(() => {
-    const fromHash = getTabFromHash()
-    if (fromHash !== 'overview' && (!isOpenArea || fromHash !== 'structure')) return fromHash
-    if (section && VALID_TABS.includes(section) && (!isOpenArea || section !== 'structure')) return section
-    return 'overview'
-  })
-
-  const effectiveActiveTab = isOpenArea && activeTab === 'structure' ? 'overview' : activeTab
-
-  // Listen for hash changes (browser back/forward or direct hash updates)
-  useEffect(() => {
-    function handleHashChange() {
-      const rawTab = getTabFromHash()
-      const nextTab = isOpenArea && rawTab === 'structure' ? 'overview' : rawTab
-      setActiveTab(nextTab)
-      onSectionChange?.(nextTab)
-    }
-    window.addEventListener('hashchange', handleHashChange)
-    return () => window.removeEventListener('hashchange', handleHashChange)
-  }, [onSectionChange, isOpenArea])
-
-  // Sync initial hash to parent on mount if not overview
-  useEffect(() => {
-    const initialTab = getTabFromHash()
-    if (initialTab && initialTab !== 'overview' && (!isOpenArea || initialTab !== 'structure') && onSectionChange) {
-      onSectionChange(initialTab)
-    }
-  }, [onSectionChange, isOpenArea])
-
-  // Sync section prop if changed by parent
-  useEffect(() => {
-    if (section && visibleTabKeys.includes(section) && section !== activeTab) {
-      setActiveTab(section)
-      const currentHash = window.location.hash.replace(/^#/, '').toLowerCase().trim()
-      if (currentHash !== section) {
-        window.location.hash = section === 'overview' ? 'overview' : section
-      }
-    }
-  }, [section, activeTab, visibleTabKeys])
+  const [searchParams, setSearchParams] = useSearchParams()
+  const activeTab = searchParams.get('tab') || 'overview'
+  const effectiveActiveTab = VALID_TABS.includes(activeTab) && visibleTabKeys.includes(activeTab)
+    ? activeTab
+    : 'overview'
 
   const handleSelectTab = useCallback(
     (tabKey) => {
       if (!visibleTabKeys.includes(tabKey)) return
-      setActiveTab(tabKey)
-      onSectionChange?.(tabKey)
-      const currentHash = window.location.hash.replace(/^#/, '').toLowerCase().trim()
-      if (currentHash !== tabKey) {
-        window.location.hash = tabKey === 'overview' ? 'overview' : tabKey
-      }
+      setSearchParams({ tab: tabKey }, { replace: true })
     },
-    [onSectionChange, visibleTabKeys]
+    [setSearchParams, visibleTabKeys]
   )
-
-  const handleBackWithHashClean = useCallback(() => {
-    try {
-      if (window.history?.replaceState) {
-        const urlWithoutHash = window.location.href.split('#')[0]
-        window.history.replaceState(null, '', urlWithoutHash)
-      } else {
-        window.location.hash = ''
-      }
-    } catch {
-      // ignore
-    }
-    onBack?.()
-  }, [onBack])
 
   return (
     <div className="ec-detail">
@@ -254,7 +192,7 @@ export default function CenterDetail({
         center={center}
         status={status}
         buildings={buildings}
-        onBack={handleBackWithHashClean}
+        onBack={onBack}
         onAssignHousehold={onAssignHousehold}
         onViewMap={onViewMap}
         onEditCenter={isAdmin ? onEditCenter : undefined}
@@ -362,6 +300,7 @@ function HeaderStatusPill({ status }) {
   const s = status || 'Available'
   let tone = 'available'
   if (s === 'Full') tone = 'full'
+  else if (s === 'Over capacity') tone = 'full'
   else if (s === 'Near Full') tone = 'near-full'
   else if (s === 'Inactive' || s === 'Closed') tone = 'inactive'
 
@@ -436,7 +375,7 @@ export function CenterHeader({
   }
 
   const confirmMessage = isActive
-    ? `Deactivating “${name}” will hide it from the active centers list. Assigned households keep their records.`
+    ? `Deactivating “${name}” will hide it from the active centers list. Assigned families keep their records.`
     : `Activating “${name}” will return it to the active centers list.`
 
   const maxBarangays = 3
@@ -513,7 +452,7 @@ export function CenterHeader({
               onClick={onAssignHousehold}
             >
               <FontAwesomeIcon icon={faPlus} />
-              <span>Assign Household</span>
+              <span>Assign Family</span>
             </button>
             {isMapped && onViewMap && (
               <button
@@ -570,13 +509,13 @@ export function KpiStrip({
     <div className="ec-kpi-strip">
       <div className="ec-kpi-card">
         <div className="ec-kpi-card-header">
-          <span className="ec-kpi-label">Household capacity</span>
+          <span className="ec-kpi-label">Family capacity</span>
           {isOpenArea && onEditCapacity ? (
             <button
               type="button"
               className="ec-info-edit-btn"
               onClick={onEditCapacity}
-              title="Edit the individual people limit used to estimate household capacity"
+              title="Edit the individual people limit used to estimate family capacity"
             >
               <FontAwesomeIcon icon={faPen} size="xs" />
               <span>Edit</span>
@@ -587,7 +526,7 @@ export function KpiStrip({
         </div>
         <div className="ec-kpi-val">{householdCap > 0 ? householdCap : '—'}</div>
         <div className="ec-kpi-helper">
-          Estimated from average household size in the served barangays
+          Estimated from average family size in the served barangays
         </div>
       </div>
 
@@ -600,7 +539,7 @@ export function KpiStrip({
         <div className="ec-kpi-progress-track">
           <div className="ec-kpi-progress-fill" style={{ width: `${pctAssigned}%` }} />
         </div>
-        <div className="ec-kpi-helper">{householdCap > 0 ? `${householdAsg} of ${householdCap} households assigned` : 'Total households assigned'}</div>
+        <div className="ec-kpi-helper">{householdCap > 0 ? `${householdAsg} of ${householdCap} families assigned` : 'Total families assigned'}</div>
       </div>
 
       <div className="ec-kpi-card">
@@ -609,7 +548,7 @@ export function KpiStrip({
           <FontAwesomeIcon icon={faDoorOpen} className="ec-kpi-icon-muted" />
         </div>
         <div className="ec-kpi-val">{householdLeft}</div>
-        <div className="ec-kpi-helper">Households it can still take</div>
+        <div className="ec-kpi-helper">Families it can still take</div>
       </div>
 
       <div className="ec-kpi-card">
@@ -621,7 +560,7 @@ export function KpiStrip({
         <div className="ec-kpi-progress-track">
           <div className="ec-kpi-progress-fill" style={{ width: `${pctArrived}%` }} />
         </div>
-        <div className="ec-kpi-helper">{householdAsg > 0 ? `${householdCheckIn} of ${householdAsg} households arrived` : 'No households assigned yet'}</div>
+        <div className="ec-kpi-helper">{householdAsg > 0 ? `${householdCheckIn} of ${householdAsg} families arrived` : 'No families assigned yet'}</div>
       </div>
     </div>
   )
@@ -862,16 +801,16 @@ function RoomCard({
   onOpenRoom,
   onEditRoom,
 }) {
-  const cap = room?.household_capacity != null
-    ? Number(room.household_capacity)
-    : averageHouseholdSize != null
-      ? Math.floor(Number(room?.capacity || 0) / averageHouseholdSize)
-      : null
   const asg = Number(householdAssigned ?? getRoomHouseholdCount(room, averageHouseholdSize))
   const occupied = Number(householdArrived ?? getRoomArrivedHouseholdCount(room))
-  const status = cap != null && cap > 0 && asg >= cap ? 'full' : asg === 0 ? 'empty' : 'available'
-  const isFull = status === 'full'
-  const pct = cap == null ? 0 : cap > 0 ? Math.min(100, Math.round((asg / cap) * 100)) : asg > 0 ? 100 : 0
+  const slots = Math.max(1, Number(room?.family_slots ?? 5))
+  const spaces = Math.max(1, Number(room?.people_spaces ?? room?.capacity ?? 25))
+  const usedSlots = Number(room?.used_slots ?? asg)
+  const usedSpaces = Number(room?.used_spaces ?? room?.assigned ?? room?.occupied ?? 0)
+  const isOverCapacity = Boolean(room?.is_over_capacity) || usedSlots > slots || usedSpaces > spaces
+  const isFull = Boolean(room?.is_full) || usedSlots >= slots || usedSpaces >= spaces
+  const status = isFull ? 'full' : usedSlots === 0 && usedSpaces === 0 ? 'empty' : 'available'
+  const pct = Math.min(100, Math.round(Math.max(usedSlots / slots, usedSpaces / spaces) * 100))
   const roomName = room?.room_number || `Room #${room?.id || ''}`
 
   return (
@@ -888,14 +827,14 @@ function RoomCard({
           else onEditRoom?.(room)
         }
       }}
-      title={`Open ${roomName} details - ${status} (${asg}/${cap ?? '—'} households assigned)`}
+      title={`Open ${roomName} details - ${status} (Slots ${usedSlots}/${slots} · Spaces ${usedSpaces}/${spaces})`}
     >
       <div className="ec-room-card-top">
         <div className={`ec-room-card-icon is-${status}`} aria-hidden="true">
           <FontAwesomeIcon icon={faDoorOpen} />
         </div>
         <span className={`ec-room-status-pill is-${status}`}>
-          {status === 'available' ? 'Available' : status === 'full' ? 'Full' : 'Empty'}
+          {isOverCapacity ? 'Over capacity' : status === 'available' ? 'Available' : status === 'full' ? 'Full' : 'Empty'}
         </span>
       </div>
 
@@ -912,11 +851,11 @@ function RoomCard({
       </div>
 
       <span className="ec-room-card-assigned">
-        {asg} / {cap ?? '—'} households assigned
+        Slots {usedSlots}/{slots} · Spaces {usedSpaces}/{spaces}
       </span>
 
       <div className="ec-room-card-footer">
-        <span className="ec-room-card-arrived">Households arrived: {occupied}</span>
+        <span className="ec-room-card-arrived">Families arrived: {occupied}</span>
 
         <div className="ec-room-card-actions" onClick={(e) => e.stopPropagation()}>
           {onEditRoom && (
@@ -962,26 +901,20 @@ export function RoomDetailPage({
   onRetry,
 }) {
   const [familyToView, setFamilyToView] = useState(null)
-  const assignedPeople = Number(center?.assigned ?? center?.total_assigned ?? 0)
-  const assignedHouseholds = Number(center?.household_assigned ?? families.length ?? 0)
-  const averageHouseholdSize = assignedHouseholds > 0
-    ? Math.max(1, assignedPeople / assignedHouseholds)
-    : null
-  const householdCapacity = room?.household_capacity != null
-    ? Number(room.household_capacity)
-    : averageHouseholdSize != null
-      ? Math.floor(Number(room?.capacity || 0) / averageHouseholdSize)
-      : null
   const householdAssigned = families.length
   const householdArrived = families.filter((family) => family?.is_checked_in).length
   const totalMembers = families.reduce(
     (total, family) => total + Number(family?.member_count || family?.family_members || family?.assigned_members || 1),
     0
   )
+  const familySlots = Math.max(1, Number(room?.family_slots ?? 5))
+  const peopleSpaces = Math.max(1, Number(room?.people_spaces ?? room?.capacity ?? 25))
+  const usedSlots = Number(room?.used_slots ?? householdAssigned)
+  const usedSpaces = Number(room?.used_spaces ?? (totalMembers || room?.assigned || 0))
+  const isOverCapacity = Boolean(room?.is_over_capacity) || usedSlots > familySlots || usedSpaces > peopleSpaces
+  const isFull = Boolean(room?.is_full) || usedSlots >= familySlots || usedSpaces >= peopleSpaces
   const roomTitle = formatRoomLabel(room?.room_number)
   const isInactive = room?.is_active === false
-  const isFull = householdCapacity > 0 && householdAssigned >= householdCapacity
-
   if (notFound) {
     return <main className="ec-room-detail-page"><div className="ec-room-households-state"><h1>Room not found</h1><p>This room may have been deleted or is unavailable.</p></div></main>
   }
@@ -1016,7 +949,7 @@ export function RoomDetailPage({
         <div className="ec-title-info">
           <div className="ec-title-line">
             <h1 id="ec-room-detail-title" className="ec-detail-title">{roomTitle}</h1>
-            <HeaderStatusPill status={isInactive ? 'Inactive' : isFull ? 'Full' : 'Available'} />
+            <HeaderStatusPill status={isInactive ? 'Inactive' : isOverCapacity ? 'Over capacity' : isFull ? 'Full' : 'Available'} />
           </div>
           <div className="ec-title-meta-line">
             <span>{[buildingName || 'Unassigned building', Number(buildingFloors ?? room?.building_floors ?? 1) > 1 ? formatFloorLabel(room?.floor) : ''].filter(Boolean).join(' · ')}</span>
@@ -1032,7 +965,7 @@ export function RoomDetailPage({
           {onAddHousehold && (
             <button type="button" className="ec-btn-primary-action" onClick={onAddHousehold}>
               <FontAwesomeIcon icon={faPlus} size="xs" />
-              <span>Add household</span>
+              <span>Add family</span>
             </button>
           )}
         </div>
@@ -1040,15 +973,17 @@ export function RoomDetailPage({
 
       <div className="ec-kpi-strip ec-room-detail-stats">
         <div className="ec-kpi-card">
-          <span className="ec-kpi-label">Estimated household capacity</span>
-          <span className="ec-kpi-val">{householdCapacity ?? '—'}</span>
+          <span className="ec-kpi-label">Family slots</span>
+          <span className="ec-kpi-val">{usedSlots} / {familySlots}</span>
+          <span className="ec-kpi-label">People spaces</span>
+          <span className="ec-kpi-val">{usedSpaces} / {peopleSpaces}</span>
         </div>
         <div className="ec-kpi-card">
-          <span className="ec-kpi-label">Assigned households</span>
+          <span className="ec-kpi-label">Assigned families</span>
           <span className="ec-kpi-val">{householdAssigned}</span>
         </div>
         <div className="ec-kpi-card">
-          <span className="ec-kpi-label">Households arrived</span>
+          <span className="ec-kpi-label">Families arrived</span>
           <span className="ec-kpi-val">{householdArrived}</span>
         </div>
         <div className="ec-kpi-card">
@@ -1057,31 +992,31 @@ export function RoomDetailPage({
         </div>
       </div>
 
-      <section className="ec-households-card ec-room-households" aria-labelledby="ec-room-households-title">
-        <div className="ec-households-card-header ec-room-households-header">
+      <section className="ec-families-card ec-room-families" aria-labelledby="ec-room-households-title">
+        <div className="ec-families-card-header ec-room-families-header">
           <div className="ec-households-title-line">
-            <h2 id="ec-room-households-title" className="ec-households-card-title">Households in this room</h2>
+            <h2 id="ec-room-households-title" className="ec-households-card-title">Families in this room</h2>
             <span className="ec-room-households-count">{families.length}</span>
           </div>
-          <p>Manage the households assigned to {roomTitle}.</p>
+          <p>Manage the families assigned to {roomTitle}.</p>
         </div>
 
         {loading ? (
-          <div className="ec-room-households-state" role="status">Loading assigned households…</div>
+          <div className="ec-room-households-state" role="status">Loading assigned families…</div>
         ) : error ? (
           <div className="ec-room-households-state" role="alert">
-            <span>Could not load this room’s households.</span>
+            <span>Could not load this room’s families.</span>
             {onRetry && <button type="button" className="ec-btn-secondary-action" onClick={onRetry}>Try again</button>}
           </div>
         ) : families.length === 0 ? (
           <div className="ec-room-households-empty">
             <FontAwesomeIcon icon={faPeopleGroup} aria-hidden="true" />
-            <h3>No households assigned yet</h3>
-            <p>Add a household to begin managing this room’s occupants.</p>
+            <h3>No families assigned yet</h3>
+            <p>Add a family to begin managing this room’s occupants.</p>
             {onAddHousehold && (
               <button type="button" className="ec-btn-primary-action" onClick={onAddHousehold}>
                 <FontAwesomeIcon icon={faPlus} size="xs" />
-                <span>Add household</span>
+                <span>Add family</span>
               </button>
             )}
           </div>
@@ -1089,7 +1024,7 @@ export function RoomDetailPage({
           <div className="ec-room-households-list">
             {families.map((family, index) => {
               const id = family.family_id ?? family.id ?? `household-${index}`
-              const name = family.household_head_name || family.head_name || 'Unnamed household'
+              const name = family.household_head_name || family.head_name || 'Unnamed family'
               const members = Number(family.member_count || family.family_members || family.assigned_members || 1)
               const arrived = Boolean(family.is_checked_in)
               return (
@@ -1145,7 +1080,7 @@ function HouseholdMembersModal({ family, onClose, onReassign, onUnassign }) {
   const familyQuery = useFamily(hasNumericId ? familyId : null, { enabled: hasNumericId })
   const details = familyQuery.data?.family || familyQuery.data || family
   const members = Array.isArray(details?.members) ? details.members : []
-  const householdName = family.household_head_name || family.head_name || 'Household'
+  const householdName = family.household_head_name || family.head_name || 'Family'
 
   useEffect(() => {
     const previousOverflow = document.body.style.overflow
@@ -1176,7 +1111,7 @@ function HouseholdMembersModal({ family, onClose, onReassign, onUnassign }) {
         <header className="ec-household-members-header">
           <div>
             <h2 id="ec-household-members-title">{householdName}</h2>
-            <p>Household members</p>
+            <p>Family members</p>
           </div>
           <button type="button" className="ec-household-modal-close" onClick={onClose} aria-label="Close members dialog">
             <FontAwesomeIcon icon={faXmark} />
@@ -1186,9 +1121,9 @@ function HouseholdMembersModal({ family, onClose, onReassign, onUnassign }) {
           {familyQuery.isLoading ? (
             <p className="ec-household-members-state" role="status">Loading members…</p>
           ) : familyQuery.isError ? (
-            <p className="ec-household-members-state" role="alert">Could not load this household’s members. Close and try again.</p>
+            <p className="ec-household-members-state" role="alert">Could not load this family’s members. Close and try again.</p>
           ) : members.length === 0 ? (
-            <p className="ec-household-members-state">No member details are available for this household.</p>
+            <p className="ec-household-members-state">No member details are available for this family.</p>
           ) : (
             <ul className="ec-household-members-list">
               {members.map((member, index) => {
@@ -1196,8 +1131,8 @@ function HouseholdMembersModal({ family, onClose, onReassign, onUnassign }) {
                   .filter(Boolean)
                   .join(' ') || member.name || `Member ${index + 1}`
                 const relationship = member.is_head_of_family
-                  ? 'Household head'
-                  : member.relationship_to_head || 'Household member'
+                  ? 'Family head'
+                  : familyTerm(member.relationship_to_head || 'Family member')
                 return (
                   <li className="ec-household-member-item" key={member.id ?? `${memberName}-${index}`}>
                     <span className="ec-household-member-avatar" aria-hidden="true">
@@ -1224,7 +1159,7 @@ function HouseholdMembersModal({ family, onClose, onReassign, onUnassign }) {
             )}
             {onUnassign && (
               <button type="button" className="ec-household-unassign-btn" onClick={onUnassign}>
-                Unassign household
+                Unassign family
               </button>
             )}
             <button type="button" className="ec-btn-secondary-action" onClick={onClose}>Close</button>
@@ -1257,7 +1192,6 @@ export function StructureTab({
   const [statusFilter, setStatusFilter] = useState('all') // 'all' | 'available' | 'full'
   const [buildingFilter, setBuildingFilter] = useState('all')
   const [floorFilter, setFloorFilter] = useState('all')
-  const [addMenuOpen, setAddMenuOpen] = useState(false)
 
   const setViewMode = useCallback((mode) => {
     setViewModeState(mode)
@@ -1281,11 +1215,20 @@ export function StructureTab({
   const averageHouseholdSize = assignedHouseholds > 0
     ? Math.max(1, centerAssigned / assignedHouseholds)
     : null
-  const roomHouseholdCapacity = (room) => {
-    if (room?.household_capacity != null) return Number(room.household_capacity)
-    return averageHouseholdSize != null
-      ? Math.floor(Number(room?.capacity || 0) / averageHouseholdSize)
-      : null
+  const roomCapacityUsage = (room) => {
+    const slots = Math.max(1, Number(room?.family_slots ?? 5))
+    const spaces = Math.max(1, Number(room?.people_spaces ?? room?.capacity ?? 25))
+    const usedSlots = Number(room?.used_slots ?? roomHouseholdAssigned(room))
+    const usedSpaces = Number(room?.used_spaces ?? room?.assigned ?? room?.occupied ?? 0)
+    return {
+      slots,
+      spaces,
+      usedSlots,
+      usedSpaces,
+      full: Boolean(room?.is_full) || usedSlots >= slots || usedSpaces >= spaces,
+      over: Boolean(room?.is_over_capacity) || usedSlots > slots || usedSpaces > spaces,
+      percent: Math.min(100, Math.round(Math.max(usedSlots / slots, usedSpaces / spaces) * 100)),
+    }
   }
   const familiesByRoom = useMemo(() => {
     const map = new Map()
@@ -1324,12 +1267,8 @@ export function StructureTab({
       if (floorFilter === 'unset' && room?.floor != null) return false
       if (floorFilter !== 'all' && floorFilter !== 'unset' && String(room?.floor ?? '') !== floorFilter) return false
       if (statusFilter !== 'all') {
-        const capacity = roomHouseholdCapacity(room)
-        const familyRecords = familiesByRoom.get(String(room?.id))
-        const assigned = familyRecords
-          ? familyRecords.size
-          : getRoomHouseholdCount(room, averageHouseholdSize)
-        const st = capacity > 0 && assigned >= capacity ? 'full' : assigned === 0 ? 'empty' : 'available'
+        const usage = roomCapacityUsage(room)
+        const st = usage.full ? 'full' : usage.usedSlots === 0 && usage.usedSpaces === 0 ? 'empty' : 'available'
         if (statusFilter === 'available' && st === 'full') return false
         if (statusFilter === 'full' && st !== 'full') return false
       }
@@ -1378,27 +1317,15 @@ export function StructureTab({
   const selectedRooms = (buildingFilter === 'all'
     ? rooms
     : filteredGroups.flatMap((group) => group.rooms)).filter((room) => floorFilter === 'all' || String(room.floor ?? '') === floorFilter)
-  const roomCapacityEstimates = selectedRooms.map(roomHouseholdCapacity)
-  const displayedCapacity = roomCapacityEstimates.some((capacity) => capacity == null)
-    ? null
-    : roomCapacityEstimates.reduce((sum, capacity) => sum + capacity, 0)
-  const displayedAssigned = selectedRooms.reduce((sum, room) => sum + roomHouseholdAssigned(room), 0)
-  const householdCapacityForView = buildingFilter === 'all' && center?.household_capacity != null
-    ? Number(center.household_capacity)
-    : displayedCapacity
-  const householdAssignedForView = buildingFilter === 'all' && center?.household_assigned != null
-    ? Number(center.household_assigned)
-    : displayedAssigned
-  const householdsAvailableForView = buildingFilter === 'all' && center?.household_space_left != null
-    ? Number(center.household_space_left)
-    : householdCapacityForView == null
-      ? null
-      : Math.max(0, householdCapacityForView - householdAssignedForView)
+  const displayedCapacity = selectedRooms.reduce((sum, room) => sum + roomCapacityUsage(room).slots, 0)
+  const displayedAssigned = selectedRooms.reduce((sum, room) => sum + roomCapacityUsage(room).usedSlots, 0)
+  const householdCapacityForView = displayedCapacity || (buildingFilter === 'all' ? Number(center?.family_slots || 0) : 0)
+  const householdAssignedForView = displayedAssigned || (buildingFilter === 'all' ? Number(center?.used_slots || 0) : 0)
+  const householdsAvailableForView = Math.max(0, householdCapacityForView - householdAssignedForView)
   const roomStatus = (room) => {
-    const capacity = roomHouseholdCapacity(room)
-    const assigned = roomHouseholdAssigned(room)
-    if (capacity > 0 && assigned >= capacity) return 'full'
-    return assigned === 0 ? 'empty' : 'available'
+    const usage = roomCapacityUsage(room)
+    if (usage.full) return 'full'
+    return usage.usedSlots === 0 && usage.usedSpaces === 0 ? 'empty' : 'available'
   }
   const availableCount = selectedRooms.filter((room) => roomStatus(room) !== 'full').length
   const fullCount = selectedRooms.filter((room) => roomStatus(room) === 'full').length
@@ -1419,7 +1346,7 @@ export function StructureTab({
             <div className="ec-single-venue-hero-text">
               <h4 className="ec-single-venue-name">{center?.name || 'Open Unified Facility'}</h4>
               <p className="ec-single-venue-desc">
-                This center is configured as a single open venue. No individual rooms or separate buildings are required. Households are assigned and managed directly to the center.
+                This center is configured as a single open venue. No individual rooms or separate buildings are required. Families are assigned and managed directly to the center.
               </p>
             </div>
           </div>
@@ -1443,7 +1370,7 @@ export function StructureTab({
             {onAssignHousehold && (
               <button type="button" className="ec-btn-primary" onClick={onAssignHousehold}>
                 <FontAwesomeIcon icon={faPlus} size="xs" />
-                <span>Assign Household</span>
+                <span>Assign Family</span>
               </button>
             )}
             {onEditCenter && (
@@ -1461,9 +1388,20 @@ export function StructureTab({
   return (
     <div className="ec-structure-card">
       <div className="ec-structure-header"><h3 className="ec-structure-title">Center Structure</h3>
-        <div className="ec-structure-actions">{((canAddBuilding && onAddBuilding) || (isPrivateProperty && onAddRoom)) && <div className="ec-add-menu-wrap"><button className="ec-btn-primary" type="button" onClick={() => setAddMenuOpen(!addMenuOpen)}><FontAwesomeIcon icon={faPlus} /> Add <FontAwesomeIcon icon={faChevronDown} /></button>{addMenuOpen && <div className="ec-add-menu" role="menu">{canAddBuilding && onAddBuilding && <button type="button" role="menuitem" onClick={() => { setAddMenuOpen(false); onAddBuilding() }}><FontAwesomeIcon icon={faBuilding} />Add building</button>}{isPrivateProperty && onAddRoom && <button type="button" role="menuitem" onClick={() => { setAddMenuOpen(false); onAddRoom() }}><FontAwesomeIcon icon={faDoorOpen} />Add room</button>}</div>}</div>}</div>
+        <div className="ec-structure-actions">
+          {canAddBuilding && onAddBuilding && (
+            <button className="ec-btn-primary" type="button" onClick={onAddBuilding}>
+              <FontAwesomeIcon icon={faPlus} /> Add building
+            </button>
+          )}
+          {isPrivateProperty && onAddRoom && (
+            <button className="ec-btn-primary" type="button" onClick={onAddRoom}>
+              <FontAwesomeIcon icon={faPlus} /> Add room
+            </button>
+          )}
+        </div>
       </div>
-      <div className="ec-structure-summary-strip"><div className="ec-ss-tile"><span className="ec-ss-label">Total rooms</span><span className="ec-ss-value">{selectedRooms.length}</span></div><div className="ec-ss-tile"><span className="ec-ss-label">Assigned households</span><span className="ec-ss-value">{householdAssignedForView}</span></div><div className="ec-ss-tile"><span className="ec-ss-label">Available households</span><span className="ec-ss-value is-available">{householdsAvailableForView ?? '—'}</span></div></div>
+      <div className="ec-structure-summary-strip"><div className="ec-ss-tile"><span className="ec-ss-label">Total rooms</span><span className="ec-ss-value">{selectedRooms.length}</span></div><div className="ec-ss-tile"><span className="ec-ss-label">Assigned families</span><span className="ec-ss-value">{householdAssignedForView}</span></div><div className="ec-ss-tile"><span className="ec-ss-label">Available families</span><span className="ec-ss-value is-available">{householdsAvailableForView ?? '—'}</span></div></div>
       <div className="ec-structure-toolbar ec-structure-toolbar-sticky">
         <div className="ec-toolbar-left"><div className="ec-search-box"><FontAwesomeIcon icon={faSearch} className="ec-search-icon" /><input className="ec-search-input" placeholder="Search rooms..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} aria-label="Search rooms" /></div>
           {buildings.length > 0 && <label className="ec-building-filter"><span>Building</span><select value={buildingFilter} onChange={(e) => { setBuildingFilter(e.target.value); setFloorFilter('all') }}><option value="all">All buildings</option>{buildings.map(b => <option key={b.id} value={String(b.id)}>{b.name}</option>)}{rooms.some(r=>r.building_id==null)&&<option value="unassigned">Unassigned rooms</option>}</select></label>}
@@ -1477,20 +1415,21 @@ export function StructureTab({
             {filteredGroups.filter(({ building }) => Boolean(building)).map(({ building, rooms: groupRooms }) => {
               const matching = groupRooms.filter(isRoomMatching)
               if (!matching.length && (searchQuery.trim() || statusFilter !== 'all' || floorFilter !== 'all')) return null
-              const assigned = matching.reduce((sum, room) => sum + roomHouseholdAssigned(room), 0)
-              const capacities = matching.map(roomHouseholdCapacity)
-              const capacity = capacities.some((value) => value == null) ? null : capacities.reduce((sum, value) => sum + value, 0)
+              const slots = matching.reduce((sum, room) => sum + roomCapacityUsage(room).slots, 0)
+              const spaces = matching.reduce((sum, room) => sum + roomCapacityUsage(room).spaces, 0)
+              const usedSlots = matching.reduce((sum, room) => sum + roomCapacityUsage(room).usedSlots, 0)
+              const usedSpaces = matching.reduce((sum, room) => sum + roomCapacityUsage(room).usedSpaces, 0)
               const availableRooms = matching.filter((room) => roomStatus(room) !== 'full').length
-              const progress = capacity > 0 ? Math.min(100, Math.round((assigned / capacity) * 100)) : 0
+              const progress = Math.min(100, Math.round(Math.max(usedSlots / Math.max(slots, 1), usedSpaces / Math.max(spaces, 1)) * 100))
               const status = building.status || 'open'
               const statusLabel = status === 'under_repair' ? 'Under repair' : status === 'closed' ? 'Closed' : 'Open'
               return (
                 <article className="ec-building-card" key={building.id}>
                   <button type="button" className="ec-building-card-main" onClick={() => onOpenBuilding?.(building)}>
                     <span className="ec-building-card-top"><strong className="ec-building-card-title">{building.name}</strong><span className={'ec-sb-status-pill is-' + status}><span className="ec-sb-status-dot" />{statusLabel}</span></span>
-                    <span className="ec-building-card-meta">{Number(building.floors || 1)} {Number(building.floors || 1) === 1 ? 'floor' : 'floors'} · {matching.length} {matching.length === 1 ? 'room' : 'rooms'} · {assigned} of {capacity ?? '—'} households</span>
+                    <span className="ec-building-card-meta">{Number(building.floors || 1)} {Number(building.floors || 1) === 1 ? 'floor' : 'floors'} · {matching.length} {matching.length === 1 ? 'room' : 'rooms'} · Slots {usedSlots}/{slots} · Spaces {usedSpaces}/{spaces}</span>
                     <span className="ec-building-card-progress"><span style={{ width: progress + '%' }} /></span>
-                    <span className="ec-building-card-footer"><span>{availableRooms} {availableRooms === 1 ? 'room' : 'rooms'} available</span><span>Capacity {capacity ?? '—'}</span></span>
+                    <span className="ec-building-card-footer"><span>{availableRooms} {availableRooms === 1 ? 'room' : 'rooms'} available</span><span>{matching.filter((room) => roomCapacityUsage(room).over).length} over capacity</span></span>
                   </button>
                 </article>
               )
@@ -1506,11 +1445,11 @@ export function StructureTab({
       ) : !selectedRooms.length ? <EmptyState icon={faDoorOpen} title="No rooms yet" text="Use Add to create the first room." /> : !totalMatchingRooms ? <EmptyState icon={faSearch} title="No rooms found" text="No rooms match your filters." /> : viewMode === 'grid' ? (
         <div className="ec-room-tile-grid">{selectedRooms.filter(isRoomMatching).sort((a, b) => Number(roomStatus(a) === 'full') - Number(roomStatus(b) === 'full')).map((room, index) => <RoomCard key={room.id} room={room} averageHouseholdSize={averageHouseholdSize} householdAssigned={roomHouseholdAssigned(room)} householdArrived={roomHouseholdArrived(room)} index={index} onEditRoom={onEditRoom} onOpenRoom={onOpenRoom} />)}</div>
       ) : (
-        <div className="ec-room-table-wrap"><table className="ec-structure-table ec-structure-table-occupancy"><thead><tr><th>Room</th><th title="Capacity and assigned households">Occupancy</th><th title="Households arrived">Arrived</th><th>Status</th></tr></thead><tbody>
+        <div className="ec-room-table-wrap"><table className="ec-structure-table ec-structure-table-occupancy"><thead><tr><th>Room</th><th title="Capacity and assigned families">Occupancy</th><th title="Families arrived">Arrived</th><th>Status</th></tr></thead><tbody>
           {selectedRooms.filter(isRoomMatching).sort((a, b) => Number(roomStatus(a) === 'full') - Number(roomStatus(b) === 'full')).map((room) => {
-            const capacity = roomHouseholdCapacity(room), assigned = roomHouseholdAssigned(room), state = roomStatus(room)
+            const usage = roomCapacityUsage(room), state = roomStatus(room)
             return <tr key={room.id} className="ec-room-row" tabIndex={0} role="button" onClick={() => (onOpenRoom || onEditRoom)?.(room)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); (onOpenRoom || onEditRoom)?.(room) } }}>
-              <td>{formatRoomLabel(room.room_number)}</td><td><span className="ec-table-occupancy"><span className="ec-room-occupancy"><span style={{ width: capacity > 0 ? Math.min(100, assigned / capacity * 100) + '%' : '0%' }} /></span><strong>{assigned} / {capacity ?? '—'}</strong></span></td><td title="Households arrived">{roomHouseholdArrived(room)}</td><td><span className={'ec-room-tile-status is-' + state}>{state === 'full' ? 'Full' : state === 'empty' ? 'Empty' : 'Available'}</span></td>
+              <td>{formatRoomLabel(room.room_number)}</td><td><span className="ec-table-occupancy"><span className="ec-room-occupancy"><span style={{ width: usage.percent + '%' }} /></span><strong>Slots {usage.usedSlots}/{usage.slots} · Spaces {usage.usedSpaces}/{usage.spaces}</strong></span></td><td title="Families arrived">{roomHouseholdArrived(room)}</td><td><span className={'ec-room-tile-status is-' + state}>{usage.over ? 'Over capacity' : state === 'full' ? 'Full' : state === 'empty' ? 'Empty' : 'Available'}</span></td>
             </tr>
           })}
         </tbody></table></div>
@@ -1573,9 +1512,9 @@ export function HouseholdsTab({
     <div className="ec-households-card">
       <div className="ec-households-card-header">
         <div className="ec-households-title-line">
-          <h2 className="ec-households-card-title">Households</h2>
+          <h2 className="ec-households-card-title">Families</h2>
           <span className="ec-households-meta-line">
-            {totalMembers} individuals · {centerFamilies.length} {centerFamilies.length === 1 ? 'household' : 'households'} · {arrivedCount} arrived
+            {totalMembers} individuals · {centerFamilies.length} {centerFamilies.length === 1 ? 'family' : 'families'} · {arrivedCount} arrived
           </span>
         </div>
 
@@ -1584,7 +1523,7 @@ export function HouseholdsTab({
           <input
             type="text"
             className="ec-search-input"
-            placeholder="Search household..."
+            placeholder="Search family..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
           />
@@ -1594,18 +1533,18 @@ export function HouseholdsTab({
       {filteredFamilies.length === 0 ? (
         <EmptyState
           icon={faPeopleGroup}
-          title={centerFamilies.length === 0 ? 'No households assigned' : 'No matching households'}
+          title={centerFamilies.length === 0 ? 'No families assigned' : 'No matching families'}
           text={
             centerFamilies.length === 0
-              ? 'Households assigned to this evacuation center will appear here.'
-              : 'Try searching with a different household head name.'
+              ? 'Families assigned to this evacuation center will appear here.'
+              : 'Try searching with a different family head name.'
           }
         />
       ) : (
         <table className="ec-modern-table">
           <thead>
             <tr>
-              <th scope="col" style={{ width: '30%' }}>HOUSEHOLD</th>
+              <th scope="col" style={{ width: '30%' }}>FAMILY</th>
               <th scope="col" style={{ width: '21%' }}>{isOpenArea ? 'CENTER' : 'ROOM'}</th>
               <th scope="col" style={{ width: '12%' }}>MEMBERS</th>
               <th scope="col" style={{ width: '14%' }}>STATUS</th>
@@ -1641,7 +1580,7 @@ export function HouseholdsTab({
               return (
                 <tr
                   key={famKey}
-                  className="ec-table-row ec-household-click-row"
+                  className="ec-table-row ec-family-click-row"
                   tabIndex={0}
                   aria-label={`View members of ${headName}`}
                   onClick={() => setFamilyToView(fam)}
@@ -1653,7 +1592,7 @@ export function HouseholdsTab({
                     }
                   }}
                 >
-                  <td data-label="HOUSEHOLD">
+                  <td data-label="FAMILY">
                     <button
                       type="button"
                       className="ec-household-view-btn"
@@ -1666,7 +1605,7 @@ export function HouseholdsTab({
                         </div>
                         <div className="ec-household-text">
                           <span className="ec-household-name">{headName}</span>
-                          <span className="ec-household-role">Household Head</span>
+                          <span className="ec-household-role">Family Head</span>
                         </div>
                       </div>
                     </button>
@@ -1724,7 +1663,7 @@ export function HouseholdsTab({
                         {onUnassign && (
                           <button
                             type="button"
-                            className="ec-household-action-btn is-danger"
+                            className="ec-family-action-btn is-danger"
                             onClick={(event) => {
                               event.stopPropagation()
                               onUnassign(fam)
@@ -2015,7 +1954,7 @@ export function ActivityTab({ center }) {
           <div className="ec-activity-empty">
             <h4 className="ec-activity-empty-title">No Activity Recorded Yet</h4>
             <p className="ec-activity-empty-text">
-              Household allocations, transfers, and detail updates for <strong>{center?.name || 'this center'}</strong> will appear here.
+              Family allocations, transfers, and detail updates for <strong>{center?.name || 'this center'}</strong> will appear here.
             </p>
           </div>
         ) : (

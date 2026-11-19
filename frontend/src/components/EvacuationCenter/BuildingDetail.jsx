@@ -54,19 +54,25 @@ export default function BuildingDetail({
     return map
   }, [families])
 
-  const people = Number(center?.assigned ?? center?.total_assigned ?? center?.occupied ?? 0)
-  const familyCount = Number(center?.household_assigned ?? families.length ?? 0)
-  const averageHouseholdSize = familyCount > 0 ? Math.max(1, people / familyCount) : null
-  const householdCapacity = (room) => room?.household_capacity != null
-    ? Number(room.household_capacity)
-    : averageHouseholdSize != null
-      ? Math.floor(Number(room?.capacity || 0) / averageHouseholdSize)
-      : null
   const assignedForRoom = (room) => roomHouseholdCount(room, familiesByRoom)
+  const capacityUsage = (room) => {
+    const familySlots = Math.max(1, Number(room?.family_slots ?? 5))
+    const peopleSpaces = Math.max(1, Number(room?.people_spaces ?? room?.capacity ?? 25))
+    const usedSlots = Number(room?.used_slots ?? assignedForRoom(room))
+    const usedSpaces = Number(room?.used_spaces ?? room?.assigned ?? room?.occupied ?? 0)
+    return {
+      familySlots,
+      peopleSpaces,
+      usedSlots,
+      usedSpaces,
+      full: Boolean(room?.is_full) || usedSlots >= familySlots || usedSpaces >= peopleSpaces,
+      over: Boolean(room?.is_over_capacity) || usedSlots > familySlots || usedSpaces > peopleSpaces,
+      percent: Math.min(100, Math.round(Math.max(usedSlots / familySlots, usedSpaces / peopleSpaces) * 100)),
+    }
+  }
   const statusForRoom = (room) => {
-    const cap = householdCapacity(room)
-    const assigned = assignedForRoom(room)
-    return cap > 0 && assigned >= cap ? 'full' : assigned === 0 ? 'empty' : 'available'
+    const usage = capacityUsage(room)
+    return usage.full ? 'full' : usage.usedSlots === 0 && usage.usedSpaces === 0 ? 'empty' : 'available'
   }
 
   const buildingRooms = rooms.filter((room) => String(room.building_id ?? '') === String(building?.id ?? ''))
@@ -79,11 +85,12 @@ export default function BuildingDetail({
     return true
   }).sort((a, b) => Number(statusForRoom(a) === 'full') - Number(statusForRoom(b) === 'full'))
 
-  const roomCapacities = buildingRooms.map(householdCapacity)
-  const capacity = roomCapacities.some((value) => value == null) ? null : roomCapacities.reduce((sum, value) => sum + value, 0)
-  const assigned = buildingRooms.reduce((sum, room) => sum + assignedForRoom(room), 0)
+  const totalSlots = buildingRooms.reduce((sum, room) => sum + capacityUsage(room).familySlots, 0)
+  const totalSpaces = buildingRooms.reduce((sum, room) => sum + capacityUsage(room).peopleSpaces, 0)
+  const usedSlots = buildingRooms.reduce((sum, room) => sum + capacityUsage(room).usedSlots, 0)
+  const usedSpaces = buildingRooms.reduce((sum, room) => sum + capacityUsage(room).usedSpaces, 0)
   const availableRooms = buildingRooms.filter((room) => statusForRoom(room) !== 'full').length
-  const occupancy = capacity > 0 ? Math.min(100, (assigned / capacity) * 100) : 0
+  const occupancy = Math.min(100, Math.max(usedSlots / Math.max(totalSlots, 1), usedSpaces / Math.max(totalSpaces, 1)) * 100)
   const status = building?.status || building?.operational_status || building?.building_status || 'open'
   const statusLabel = status === 'under_repair' ? 'Under repair' : status === 'closed' ? 'Closed' : 'Open'
   const floors = Array.from({ length: floorCount }, (_, index) => index + 1)
@@ -96,8 +103,7 @@ export default function BuildingDetail({
   }
 
   const renderRoom = (room) => {
-    const roomCapacity = householdCapacity(room)
-    const roomAssigned = assignedForRoom(room)
+    const usage = capacityUsage(room)
     const arrived = familiesByRoom.get(String(room.id))?.filter((family) => family?.is_checked_in).length ?? Number(room.household_arrived ?? room.arrived_households ?? 0)
     const roomStatus = statusForRoom(room)
     const roomFamilies = familiesByRoom.get(String(room.id)) || []
@@ -107,15 +113,18 @@ export default function BuildingDetail({
         key={room.id}
         type="button"
         className={`ec-room-tile is-${roomStatus}`}
-        title={householdNames.length ? `Assigned households: ${householdNames.join(', ')}` : `${roomAssigned} of ${roomCapacity ?? '—'} households assigned`}
+        title={householdNames.length ? `Assigned families: ${householdNames.join(', ')}` : `Slots ${usage.usedSlots}/${usage.familySlots} · Spaces ${usage.usedSpaces}/${usage.peopleSpaces}`}
         onClick={() => onOpenRoom?.(room)}
       >
         <span className="ec-room-tile-top">
           <strong>{formatRoomLabel(room.room_number)}</strong>
-          <span className={`ec-room-tile-status is-${roomStatus}`}>{roomStatus === 'full' ? 'Full' : roomStatus === 'empty' ? 'Empty' : 'Available'}</span>
+          <span className={`ec-room-tile-status is-${roomStatus}`}>{usage.over ? 'Over capacity' : roomStatus === 'full' ? 'Full' : roomStatus === 'empty' ? 'Empty' : 'Available'}</span>
         </span>
-        <span className="ec-room-tile-ratio">{roomAssigned} / {roomCapacity ?? '—'}</span>
-        <span className="ec-room-occupancy"><span style={{ width: `${roomCapacity > 0 ? Math.min(100, roomAssigned / roomCapacity * 100) : 0}%` }} /></span>
+        <span className="ec-room-tile-capacity" aria-label={`Families ${usage.usedSlots} of ${usage.familySlots}; people ${usage.usedSpaces} of ${usage.peopleSpaces}`}>
+          <span><small>Families</small><strong>{usage.usedSlots}<i>/</i>{usage.familySlots}</strong></span>
+          <span><small>People</small><strong>{usage.usedSpaces}<i>/</i>{usage.peopleSpaces}</strong></span>
+        </span>
+        <span className="ec-room-occupancy"><span style={{ width: `${usage.percent}%` }} /></span>
         <span className="ec-room-tile-arrived">{arrived} arrived</span>
       </button>
     )
@@ -138,11 +147,11 @@ export default function BuildingDetail({
               <h1>{building.name}</h1>
               <span className={`ec-sb-status-pill is-${status}`}><span className="ec-sb-status-dot" />{statusLabel}</span>
             </div>
-            <p>{buildingRooms.length} {buildingRooms.length === 1 ? 'room' : 'rooms'} · {assigned} of {capacity ?? '—'} households assigned</p>
+            <p>{buildingRooms.length} {buildingRooms.length === 1 ? 'room' : 'rooms'} · Slots {usedSlots}/{totalSlots} · Spaces {usedSpaces}/{totalSpaces}</p>
             <div className="ec-building-page-meta">
               <span>{floorCount} {floorCount === 1 ? 'floor' : 'floors'}</span>
               <span>{availableRooms} {availableRooms === 1 ? 'room' : 'rooms'} available</span>
-              <span className="ec-building-card-progress" title={`${assigned} of ${capacity ?? 'unknown'} households assigned`}><span style={{ width: `${occupancy}%` }} /></span>
+              <span className="ec-building-card-progress" title={`Slots ${usedSlots}/${totalSlots} · Spaces ${usedSpaces}/${totalSpaces}`}><span style={{ width: `${occupancy}%` }} /></span>
             </div>
           </div>
           <div className="ec-building-page-actions">

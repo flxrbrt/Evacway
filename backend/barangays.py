@@ -343,6 +343,7 @@ def _barangay_center_rows(barangay, include_inactive):
         assigned = room_assigned_map.get(room.id, 0)
         occupied = room_occupied_map.get(room.id, 0)
         room_families = families_by_room.get(room.id, [])
+        room_usage = room.capacity_usage()
         room_dict = room.to_dict()
         room_dict.update({
             "barangay_id": barangay.id,
@@ -358,9 +359,13 @@ def _barangay_center_rows(barangay, include_inactive):
             "assigned_count": assigned,
             "assigned": assigned,
             "occupied": occupied,
-            "available": max((room.capacity or 0) - assigned, 0),
-            "unassigned": max((room.capacity or 0) - assigned, 0),
-            "is_fully_assigned": bool((room.capacity or 0) > 0 and assigned >= (room.capacity or 0)),
+            "capacity": room.people_spaces,
+            "family_slots": room.family_slots,
+            "people_spaces": room.people_spaces,
+            **room_usage,
+            "available": room_usage['available_spaces'],
+            "unassigned": room_usage['available_spaces'],
+            "is_fully_assigned": room_usage['is_full'],
             "families": room_families
         })
         rooms_by_center.setdefault(room.evacuation_center_id, []).append(room_dict)

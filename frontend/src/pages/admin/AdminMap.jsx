@@ -684,8 +684,10 @@ export default function AdminMap() {
   const [selectedRoomToEdit, setSelectedRoomToEdit] = useState(null);
   const [adminRoomForm, setAdminRoomForm] = useState({
     room_number: "",
-    capacity: "",
+    family_slots: "5",
+    people_spaces: "25",
     building_id: "",
+    floor: "",
   });
   const [savingAdminRoom, setSavingAdminRoom] = useState(false);
 
@@ -970,8 +972,10 @@ export default function AdminMap() {
     setSelectedRoomToEdit(null);
     setAdminRoomForm({
       room_number: "",
-      capacity: "",
+      family_slots: "5",
+      people_spaces: "25",
       building_id: String(buildingId),
+      floor: "1",
     });
     setIsAdminRoomModalOpen(true);
   };
@@ -981,8 +985,10 @@ export default function AdminMap() {
     setSelectedRoomToEdit(rm);
     setAdminRoomForm({
       room_number: rm.room_number || "",
-      capacity: String(rm.capacity || ""),
+      family_slots: String(rm.family_slots ?? 5),
+      people_spaces: String(rm.people_spaces ?? rm.capacity ?? 25),
       building_id: String(buildingId),
+      floor: rm.floor != null ? String(rm.floor) : "",
     });
     setIsAdminRoomModalOpen(true);
   };
@@ -993,8 +999,12 @@ export default function AdminMap() {
       showPlacementToast("Room number is required.");
       return;
     }
-    if (!adminRoomForm.capacity || Number(adminRoomForm.capacity) <= 0) {
-      showPlacementToast("Room capacity must be greater than 0.");
+    if (!Number.isInteger(Number(adminRoomForm.family_slots)) || Number(adminRoomForm.family_slots) < 1) {
+      showPlacementToast("Family slots must be a whole number of at least 1.");
+      return;
+    }
+    if (!Number.isInteger(Number(adminRoomForm.people_spaces)) || Number(adminRoomForm.people_spaces) < 1) {
+      showPlacementToast("People spaces must be a whole number of at least 1.");
       return;
     }
 
@@ -1003,8 +1013,10 @@ export default function AdminMap() {
       const parsedBId = adminRoomForm.building_id !== "" ? Number(adminRoomForm.building_id) : null;
       const payload = {
         room_number: adminRoomForm.room_number.trim(),
-        capacity: Number(adminRoomForm.capacity),
+        family_slots: Number(adminRoomForm.family_slots),
+        people_spaces: Number(adminRoomForm.people_spaces),
         building_id: parsedBId,
+        floor: adminRoomForm.floor !== "" ? Number(adminRoomForm.floor) : (parsedBId != null ? 1 : null),
       };
 
       if (roomModalMode === "add") {
@@ -2794,7 +2806,7 @@ export default function AdminMap() {
                 type="button"
                 className="admin-map-btn-link"
                 onClick={() => {
-                  navigate(`${basePath}?tab=centers&center=${centerId}`);
+                  navigate(`${basePath}/evacuation-centers/${centerId}`);
                 }}
               >
                 <FontAwesomeIcon icon={faArrowUpRightFromSquare} />
@@ -2831,7 +2843,7 @@ export default function AdminMap() {
                     className="admin-map-btn admin-map-btn-secondary"
                     onClick={() => {
                       navigate(
-                        `${basePath}?tab=centers&center=${centerId}&subtab=rooms`
+                        `${basePath}/evacuation-centers/${centerId}?tab=structure`
                       );
                     }}
                   >
@@ -2847,7 +2859,7 @@ export default function AdminMap() {
                 type="button"
                 className="admin-map-btn admin-map-btn-primary"
                 onClick={() => {
-                  navigate(`${basePath}?tab=centers&center=${centerId}`);
+                  navigate(`${basePath}/evacuation-centers/${centerId}`);
                 }}
               >
                 <FontAwesomeIcon icon={faArrowUpRightFromSquare} />
@@ -2884,7 +2896,7 @@ export default function AdminMap() {
                     className="admin-map-btn admin-map-btn-secondary"
                     onClick={() => {
                       navigate(
-                        `${basePath}?tab=centers&center=${centerId}&subtab=rooms`
+                        `${basePath}/evacuation-centers/${centerId}?tab=structure`
                       );
                     }}
                   >
@@ -3444,7 +3456,7 @@ export default function AdminMap() {
                                                   const memName =
                                                     typeof mem === "string"
                                                       ? mem
-                                                      : mem.full_name || mem.name || "Household Member";
+                                                      : mem.full_name || mem.name || "Family Member";
                                                   const hasMemCheckin =
                                                     mem &&
                                                     typeof mem === "object" &&
@@ -3977,7 +3989,7 @@ export default function AdminMap() {
                           </span>
                           {room.capacity ? (
                             <span className="admin-map-room-capacity">
-                              {room.capacity} cap
+                              {room.family_slots ?? 5} slots · {room.people_spaces ?? room.capacity} spaces
                             </span>
                           ) : null}
                         </div>
@@ -4359,7 +4371,7 @@ export default function AdminMap() {
                 type="button"
                 className="admin-map-btn-secondary-outline"
                 onClick={() => {
-                  navigate(`${basePath}?tab=centers&center=${centerId}`);
+                  navigate(`${basePath}/evacuation-centers/${centerId}`);
                 }}
               >
                 <FontAwesomeIcon icon={faArrowUpRightFromSquare} size="xs" />
@@ -4405,15 +4417,15 @@ export default function AdminMap() {
 
                 {/* Assigned households */}
                 <div className="center-card-buildings-header" style={{ marginTop: 14 }}>
-                  <span className="buildings-header-title">Assigned Households ({centerFamilies.length})</span>
+                  <span className="buildings-header-title">Assigned Families ({centerFamilies.length})</span>
                 </div>
                 {selectedCenterDetailsQuery.isLoading ? (
                   <div style={{ padding: "16px 20px", color: "#64748b", fontSize: 13, textAlign: "center" }}>
-                    Loading assigned households...
+                    Loading assigned families...
                   </div>
                 ) : centerFamilies.length === 0 ? (
                   <div className="center-buildings-empty">
-                    <span>No households assigned to this shelter yet.</span>
+                    <span>No families assigned to this shelter yet.</span>
                   </div>
                 ) : (
                   centerFamilies.map((fam) => {
@@ -4457,7 +4469,7 @@ export default function AdminMap() {
                         >
                           <div>
                             <strong style={{ fontSize: 13, color: "#0f172a" }}>
-                              {fam.head_name || fam.head_of_family || "Unnamed Household"}
+                              {fam.head_name || fam.head_of_family || "Unnamed Family"}
                             </strong>
                             <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>
                               {fam.family_code || `FM-${famId}`} · {memCount} {memCount === 1 ? "member" : "members"}
@@ -5111,7 +5123,7 @@ export default function AdminMap() {
                   onClick={() => {
                     const basePath = isAdmin ? "/admin" : "/lgu";
                     navigate(
-                      `${basePath}?tab=centers&center=${saveNotice.centerId}`
+                      `${basePath}/evacuation-centers/${saveNotice.centerId}`
                     );
                   }}
                   title="Open this center on the Evacuation Centers page"

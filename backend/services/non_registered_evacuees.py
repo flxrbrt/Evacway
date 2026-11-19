@@ -21,7 +21,7 @@ def table_ready():
     if not inspect(db.engine).has_table('non_registered_evacuees'):
         return False
     columns = {column['name'] for column in inspect(db.engine).get_columns('non_registered_evacuees')}
-    if not {'is_lactating', 'is_solo_parent', 'needs_assistance'}.issubset(columns):
+    if not {'is_lactating', 'is_solo_parent', 'needs_assistance', 'room_id'}.issubset(columns):
         return False
     if db.engine.dialect.name == 'postgresql':
         return bool(db.session.execute(text(

@@ -62,7 +62,6 @@ export default function EvacuationCenterManager({
   const mapBasePath = isLgu ? "/lgu/map" : "/admin/map";
   const appBasePath = isLgu ? "/lgu" : "/admin";
 
-  const [centerSection, setCenterSection] = useState("overview");
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [barangayFilter, setBarangayFilter] = useState("");
@@ -183,7 +182,8 @@ export default function EvacuationCenterManager({
   const [roomModalMode, setRoomModalMode] = useState(null);
   const [roomForm, setRoomForm] = useState({
     room_number: "",
-    capacity: "",
+    family_slots: "5",
+    people_spaces: "25",
     building_id: "",
     floor: "",
   });
@@ -257,7 +257,7 @@ export default function EvacuationCenterManager({
     }
     if (!Array.isArray(centers?.features)) return;
 
-    const requestKey = `${location.pathname}:${location.search}`;
+    const requestKey = `${location.pathname}:${requestedCenterId}`;
     if (handledUrlRef.current === requestKey) return;
 
     const requestedCenter = centers.features.find((feature) => {
@@ -270,7 +270,6 @@ export default function EvacuationCenterManager({
     setSelectedCenter(normalizeCenter(requestedCenter));
     setSelectedRoom(null);
     setRoomDetail(null);
-    setCenterSection(routeBuildingId || routeRoomId || params.get("subtab") === "rooms" ? "structure" : "overview");
   }, [centers, location.pathname, location.search, routeCenterId, routeBuildingId, routeRoomId]);
 
   // Active building (kept for handleBack parity with previous behavior)
@@ -453,10 +452,8 @@ export default function EvacuationCenterManager({
         setNotice(`Evacuation center "${payload.name}" created successfully.`);
         if (created?.data) {
           setSelectedCenter(normalizeCenter(created.data));
-          setCenterSection("overview");
         } else if (created) {
           setSelectedCenter(normalizeCenter(created));
-          setCenterSection("overview");
         }
       } else {
         const updated = await api.updateEvacuationCenter(selectedCenter.id, payload);
@@ -513,7 +510,8 @@ export default function EvacuationCenterManager({
   function openEditRoomModal(room) {
     setRoomForm({
       room_number: room.room_number || "",
-      capacity: String(room.capacity || ""),
+      family_slots: String(room.family_slots ?? 5),
+      people_spaces: String(room.people_spaces ?? room.capacity ?? 25),
       building_id: room.building_id != null ? String(room.building_id) : "",
       floor: room.floor != null ? String(room.floor) : "",
     });
@@ -528,8 +526,12 @@ export default function EvacuationCenterManager({
       setError("Room number is required.");
       return;
     }
-    if (!roomForm.capacity || Number(roomForm.capacity) <= 0) {
-      setError("Valid room capacity greater than 0 is required.");
+    if (!Number.isInteger(Number(roomForm.family_slots)) || Number(roomForm.family_slots) < 1) {
+      setError("Family slots must be a whole number of at least 1.");
+      return;
+    }
+    if (!Number.isInteger(Number(roomForm.people_spaces)) || Number(roomForm.people_spaces) < 1) {
+      setError("People spaces must be a whole number of at least 1.");
       return;
     }
 
@@ -540,7 +542,8 @@ export default function EvacuationCenterManager({
       const parsedBuildingId = roomForm.building_id !== "" ? Number(roomForm.building_id) : null;
       const payload = {
         room_number: roomForm.room_number.trim(),
-        capacity: Number(roomForm.capacity),
+        family_slots: Number(roomForm.family_slots),
+        people_spaces: Number(roomForm.people_spaces),
         building_id: parsedBuildingId,
       };
 
@@ -620,7 +623,8 @@ export default function EvacuationCenterManager({
   function openAddRoomForBuilding(building) {
     setRoomForm({
       room_number: '',
-      capacity: '',
+      family_slots: '5',
+      people_spaces: '25',
       building_id: building?.id != null ? String(building.id) : '',
       floor: building?.id != null ? '1' : '',
     });
@@ -682,7 +686,7 @@ export default function EvacuationCenterManager({
     setConfirmDialog({
       title: "Delete Building",
       message: linkedRoomsCount > 0
-        ? `Are you sure you want to delete "${bldName}"? Its ${linkedRoomsCount} linked room(s) will be safely unlinked and kept as unassigned rooms. Any assigned households will remain intact.`
+        ? `Are you sure you want to delete "${bldName}"? Its ${linkedRoomsCount} linked room(s) will be safely unlinked and kept as unassigned rooms. Any assigned families will remain intact.`
         : `Are you sure you want to delete building "${bldName}"?`,
       confirmText: "Delete Building",
       danger: true,
@@ -721,7 +725,7 @@ export default function EvacuationCenterManager({
   function confirmDeleteRoom(room) {
     setConfirmDialog({
       title: "Delete Room",
-      message: `Are you sure you want to permanently delete ${formatRoomLabel(room.room_number)}? Move or unassign its households first; deletion is blocked while households are assigned.`,
+      message: `Are you sure you want to permanently delete ${formatRoomLabel(room.room_number)}? Move or unassign its families first; deletion is blocked while families are assigned.`,
       confirmText: "Delete Room",
       danger: true,
       onConfirm: async () => {
@@ -730,7 +734,6 @@ export default function EvacuationCenterManager({
           setNotice(`${formatRoomLabel(room.room_number)} deleted.`);
           if (selectedRoom?.id === room.id) {
             setSelectedRoom(null);
-            setCenterSection("rooms");
           }
           await loadCenterRooms(selectedCenter.id);
         } catch (err) {
@@ -768,10 +771,10 @@ export default function EvacuationCenterManager({
         : assignmentRoom.occupied ?? 0));
       remaining = Math.max(capacity - assigned, 0);
     } else if (assignRoomSelectionEnabled) {
-      setError("Please select an available room before assigning this household.");
+      setError("Please select an available room before assigning this family.");
       return;
     } else {
-      setError("Please select a room before assigning this household.");
+      setError("Please select a room before assigning this family.");
       return;
     }
 
@@ -831,9 +834,9 @@ export default function EvacuationCenterManager({
         return;
       }
       setConfirmDialog({
-        title: "Confirm Household Transfer",
-        message: `Move household "${movingFamily.household_head_name || movingFamily.head_name}" (${needed} members) to ${targetCenter?.name || "selected center"}? Occupancy will update automatically.`,
-        confirmText: "Move Household",
+        title: "Confirm Family Transfer",
+        message: `Move family "${movingFamily.household_head_name || movingFamily.head_name}" (${needed} members) to ${targetCenter?.name || "selected center"}? Occupancy will update automatically.`,
+        confirmText: "Move Family",
         danger: false,
         onConfirm: async () => {
           setMoving(true);
@@ -844,13 +847,13 @@ export default function EvacuationCenterManager({
               center_id: Number(targetCenterId),
             });
 
-            setNotice(`Household "${movingFamily.household_head_name || movingFamily.head_name}" moved to ${targetCenter?.name || "target center"}.`);
+            setNotice(`Family "${movingFamily.household_head_name || movingFamily.head_name}" moved to ${targetCenter?.name || "target center"}.`);
             setMoveModalOpen(false);
             setMovingFamily(null);
 
             await invalidateFamilyAssignments();
           } catch (err) {
-            setError(err.message || "Failed to move household.");
+            setError(err.message || "Failed to move family.");
           } finally {
             setMoving(false);
           }
@@ -864,10 +867,17 @@ export default function EvacuationCenterManager({
     const dest = targetCenterRooms.find((r) => String(r.id) === String(targetRoomId));
     if (!dest) return;
 
-    const destRemaining = dest.available ?? Math.max((dest.capacity || 0) - (dest.occupied || dest.assigned || 0), 0);
+    const destSlots = Math.max(1, Number(dest.family_slots ?? 5));
+    const destSpaces = Math.max(1, Number(dest.people_spaces ?? dest.capacity ?? 25));
+    const slotsLeft = Math.max(0, Number(dest.available_slots ?? destSlots - Number(dest.used_slots ?? dest.assigned_households ?? 0)));
+    const spacesLeft = Math.max(0, Number(dest.available_spaces ?? dest.unassigned ?? destSpaces - Number(dest.used_spaces ?? dest.assigned ?? dest.occupied ?? 0)));
 
-    if ((dest.capacity || 0) <= 0 || destRemaining <= 0 || needed > destRemaining) {
-      setError(`Cannot move: Family needs ${needed} spaces, but target room only has ${destRemaining} available.`);
+    if (slotsLeft < 1) {
+      setError("Cannot move: target room has no family slots available.");
+      return;
+    }
+    if (needed > spacesLeft) {
+      setError(`Cannot move: Family needs ${needed} people spaces, but target room only has ${spacesLeft} available.`);
       return;
     }
 
@@ -935,7 +945,7 @@ export default function EvacuationCenterManager({
       return new Promise((resolve) => {
         setConfirmDialog({
           title: "Remove Served Barangay?",
-          message: `Removing "${barangayName}" will affect ${affectedHouseholds} household${affectedHouseholds > 1 ? "s" : ""} (${affectedPersons} person${affectedPersons !== 1 ? "s" : ""}) currently assigned to this center. Are you sure you want to remove it?`,
+          message: `Removing "${barangayName}" will affect ${affectedHouseholds} family${affectedHouseholds > 1 ? "s" : ""} (${affectedPersons} person${affectedPersons !== 1 ? "s" : ""}) currently assigned to this center. Are you sure you want to remove it?`,
           confirmText: "Remove Barangay",
           danger: true,
           onConfirm: () => resolve(true),
@@ -1059,7 +1069,6 @@ export default function EvacuationCenterManager({
     setRoomDetail(null);
     setSelectedCenter(null);
     setSelectedRoom(null);
-    setCenterSection("buildings");
     handledUrlRef.current = "";
     navigate(`${appBasePath}?tab=centers`, { replace: true });
   }
@@ -1067,7 +1076,7 @@ export default function EvacuationCenterManager({
   const selectedCenterId = selectedCenter?.id || selectedCenter?.properties?.id;
   const centersListHref = `${appBasePath}?tab=centers`;
   const centerStructureHref = selectedCenterId
-    ? `${centersListHref}&center=${encodeURIComponent(selectedCenterId)}&subtab=structure`
+    ? `${appBasePath}/evacuation-centers/${encodeURIComponent(selectedCenterId)}?tab=structure`
     : centersListHref;
   const buildingDetailHref = (buildingId) => `${appBasePath}/evacuation-centers/${selectedCenterId}/buildings/${buildingId}`;
   const roomDetailHref = (roomId) => `${appBasePath}/evacuation-centers/${selectedCenterId}/rooms/${roomId}`;
@@ -1146,6 +1155,7 @@ export default function EvacuationCenterManager({
               else navigate(centerStructureHref);
             }}
             onBackToList={() => navigate(centersListHref)}
+            centerHref={centerStructureHref}
             onOpenBuilding={(building) => navigate(buildingDetailHref(building.id))}
             onAddHousehold={() => openAssignModal(routedRoom || roomDetail)}
             onUnassignHousehold={confirmUnassignFamily}
@@ -1154,7 +1164,6 @@ export default function EvacuationCenterManager({
         ) : (
         <CenterDetailPage
           center={selectedCenter}
-          section={centerSection}
           onDeactivate={confirmToggleCenterActive}
           counts={{
             structure: centerRooms.length,
@@ -1172,7 +1181,6 @@ export default function EvacuationCenterManager({
           householdSpaceLeft={selectedCenter?.household_space_left}
           centerBuildingCount={centerBuildingCount}
           onBack={handleBack}
-          onSectionChange={setCenterSection}
           onAssignHousehold={handleAssignHouseholdClick}
           onViewMap={() => {
             const cId = selectedCenter?.id || selectedCenter?.properties?.id;
@@ -1180,12 +1188,15 @@ export default function EvacuationCenterManager({
           }}
           onEditCenter={(step) => openEditCenterModal(selectedCenter, typeof step === "number" ? step : 1)}
           onAddRooms={() => {
+            setRoomForm({ room_number: "", family_slots: "5", people_spaces: "25", building_id: "", floor: "" });
+            setSelectedRoom(null);
             setRoomModalMode("add");
-
             setError("");
           }}
           onAddBuilding={openAddBuildingModal}
           onAddRoom={() => {
+            setRoomForm({ room_number: "", family_slots: "5", people_spaces: "25", building_id: "", floor: "" });
+            setSelectedRoom(null);
             setRoomModalMode("add");
             setError("");
           }}
@@ -1222,12 +1233,14 @@ export default function EvacuationCenterManager({
             navigate(`${mapBasePath}?center=${cId}`);
           }}
           onAddRooms={() => {
+            setRoomForm({ room_number: "", family_slots: "5", people_spaces: "25", building_id: "", floor: "" });
+            setSelectedRoom(null);
             setRoomModalMode("add");
             setError("");
           }}
           onRowOpen={(feature) => {
             const centerId = feature?.properties?.id ?? feature?.id;
-            navigate(`${appBasePath}?tab=centers&center=${encodeURIComponent(centerId)}`);
+            navigate(`${appBasePath}/evacuation-centers/${encodeURIComponent(centerId)}`);
           }}
           onDeactivate={(f) => confirmToggleCenterActive(f)}
           onPlaceOnMap={(f) => {
@@ -1266,6 +1279,7 @@ export default function EvacuationCenterManager({
           roomForm={roomForm}
           onChange={setRoomForm}
           saving={savingRoom}
+          errorMessage={error}
           onSubmit={handleSaveRoom}
           onClose={() => setRoomModalMode(null)}
           buildings={buildings}
@@ -1558,13 +1572,13 @@ export default function EvacuationCenterManager({
           </table>
 
           <div className="ecm-print-section-title" style={{ marginTop: 20 }}>
-            II. REGISTERED EVACUEE HOUSEHOLDS MANIFEST
+            II. REGISTERED EVACUEE FAMILIES MANIFEST
           </div>
           <table className="ecm-print-table">
             <thead>
               <tr>
                 <th style={{ width: 30 }} scope="col">#</th>
-                <th scope="col">Household Head</th>
+                <th scope="col">Family Head</th>
                 <th scope="col">Family Code</th>
                 <th scope="col">Room</th>
                 <th scope="col">Origin Barangay</th>
@@ -1591,7 +1605,7 @@ export default function EvacuationCenterManager({
               {allCenterFamilies.length === 0 && roomFamilies.length === 0 && (
                 <tr>
                   <td colSpan="8" style={{ textAlign: "center", padding: 16 }}>
-                    No evacuee households currently registered in this facility.
+                    No evacuee families currently registered in this facility.
                   </td>
                 </tr>
               )}

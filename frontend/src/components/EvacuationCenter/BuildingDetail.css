@@ -3,6 +3,14 @@
   min-width: 0;
   padding: 16px 16px 24px;
 }
+.ec-building-detail-page > .ec-breadcrumb {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  padding-top: 8px;
+  padding-bottom: 8px;
+  background: #f8fafc;
+}
 .ec-building-detail-card {
   margin-top: 18px;
   padding: 24px;

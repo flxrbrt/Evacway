@@ -183,11 +183,13 @@ export function getOccupancyColor(occupied = 0, capacity = 0) {
  * Status of a single room based on occupied vs capacity.
  */
 export function roomStatus(room) {
-  const cap = Number(room.capacity) || 0;
-  const occ = Number(room.occupied) || 0;
+  const slots = Math.max(1, Number(room.family_slots ?? 5));
+  const spaces = Math.max(1, Number(room.people_spaces ?? room.capacity ?? 25));
+  const usedSlots = Number(room.used_slots ?? room.assigned_households ?? 0);
+  const usedSpaces = Number(room.used_spaces ?? room.assigned ?? room.occupied ?? 0);
   if (room.is_active === false) return 'Closed';
-  if (cap > 0 && occ >= cap) return 'Full';
-  if (cap > 0 && Math.round((occ / cap) * 100) >= ROOM_STATUS_THRESHOLDS.NEAR_FULL) return 'Near full';
+  if (room.is_full || usedSlots >= slots || usedSpaces >= spaces) return 'Full';
+  if (Math.round(Math.max(usedSlots / slots, usedSpaces / spaces) * 100) >= ROOM_STATUS_THRESHOLDS.NEAR_FULL) return 'Near full';
   return 'Available';
 }
 

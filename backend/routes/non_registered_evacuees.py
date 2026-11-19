@@ -9,7 +9,7 @@ from openpyxl import Workbook
 from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
 
-from models import db, NonRegisteredEvacuee, EvacuationCenter, Resident, SystemLog, PHILIPPINES_TZ
+from models import db, NonRegisteredEvacuee, EvacuationCenter, EvacuationCenterRoom, Resident, SystemLog, PHILIPPINES_TZ
 from services.non_registered_evacuees import (
     PERSON_FIELDS, table_ready, resolve_operation, validate_person, parse_timestamp, center_occupancy,
 )
@@ -27,7 +27,7 @@ def staff_endpoint(function):
     @wraps(function)
     def wrapped(*args, **kwargs):
         if not table_ready():
-            return jsonify(error='Apply the non-registered evacuees table migration and support flags migration first.'), 503
+            return jsonify(error='Apply the non-registered arrivals and room-assignment migrations first.'), 503
         try:
             return function(*args, **kwargs)
         except InvalidInput as error:
@@ -90,6 +90,10 @@ def serialize_group(rows, sensitive=False):
         'group_code': str(head.group_code), 'head_name': head.to_dict()['name'],
         'people_count': len(rows), 'present_count': present,
         'center_id': head.center_id, 'center_name': head.center.name,
+        'room_id': head.room_id,
+        'room_name': head.room.room_number if head.room else None,
+        'building_name': head.room.building.name if head.room and head.room.building else None,
+        'floor': head.room.floor if head.room else None,
         'operation_id': head.operation_id, 'operation_name': head.operation.event_name,
         'arrived_at': min(row.arrived_at for row in rows).isoformat(),
         'status': 'present' if present == len(rows) else ('departed' if not present else 'partial'),
@@ -145,10 +149,23 @@ def create_group():
         errors.update({f'people.{index}.{key}': value for key, value in fields.items()})
     if errors:
         raise InvalidInput(errors)
+    room_id = positive_id(data.get('room_id'), 'room_id') if data.get('room_id') not in (None, '') else None
+    room = None
+    if room_id is not None:
+        room = EvacuationCenterRoom.query.filter_by(id=room_id, evacuation_center_id=center_id, is_active=True).with_for_update().first()
+        if room is None:
+            raise InvalidInput({'room_id': 'Choose an active room in the selected shelter.'})
+        if room.building is not None and room.building.status != 'open':
+            raise InvalidInput({'room_id': 'Choose a room in an open building.'})
+        usage = room.capacity_usage()
+        if usage['available_slots'] < 1:
+            raise InvalidInput({'room_id': 'This room has no available family slots. Choose another room.'})
+        if usage['available_spaces'] < len(validated):
+            raise InvalidInput({'room_id': f"This room has only {usage['available_spaces']} people spaces left; {len(validated)} are needed."})
     now = datetime.now(PHILIPPINES_TZ)
     code = str(uuid.uuid4())
     rows = [NonRegisteredEvacuee(**person, group_code=code, is_group_head=index == 0,
-            operation_id=operation.id, center_id=center_id, arrived_at=now,
+            operation_id=operation.id, center_id=center_id, room_id=room.id if room else None, arrived_at=now,
             recorded_by=int(get_jwt_identity())) for index, person in enumerate(validated)]
     db.session.add_all(rows)
     audit(f'Created non-registered arrival group ({len(rows)} people), operation #{operation.id}')
@@ -225,8 +242,17 @@ def add_member(code):
     values, fields = validate_person(body())
     if fields:
         raise InvalidInput(fields)
+    if head.room_id:
+        room = EvacuationCenterRoom.query.filter_by(id=head.room_id, is_active=True).with_for_update().first()
+        if not room:
+            raise InvalidInput({'room_id': 'The assigned room is no longer available.'})
+        if room.building is not None and room.building.status != 'open':
+            raise InvalidInput({'room_id': 'The assigned room is in a building that is closed or under repair.'})
+        usage = room.capacity_usage()
+        if usage['available_spaces'] < 1:
+            raise InvalidInput({'room_id': 'This room has no remaining people spaces. Move the group or choose another room before adding a member.'})
     person = NonRegisteredEvacuee(**values, group_code=head.group_code, is_group_head=False,
-        center_id=head.center_id, operation_id=head.operation_id, arrived_at=datetime.now(PHILIPPINES_TZ), recorded_by=int(get_jwt_identity()))
+        center_id=head.center_id, room_id=head.room_id, operation_id=head.operation_id, arrived_at=datetime.now(PHILIPPINES_TZ), recorded_by=int(get_jwt_identity()))
     db.session.add(person)
     audit(f'Added a member to non-registered group, operation #{head.operation_id}')
     db.session.commit()
@@ -237,6 +263,25 @@ def change_departure(rows, data):
     operation_for(rows[0].operation_id, rows[0].center_id, writable=True)
     if type(data.get('departed')) is not bool:
         raise InvalidInput({'departed': 'Use true to mark departed or false to undo.'})
+    if not data['departed']:
+        returning = [row for row in rows if row.departed_at is not None]
+        room_id = next((row.room_id for row in rows if row.room_id is not None), None)
+        if returning and room_id is not None:
+            room = EvacuationCenterRoom.query.filter_by(id=room_id, is_active=True).with_for_update().first()
+            if room is None:
+                raise InvalidInput({'room_id': 'The assigned room is no longer available.'})
+            if room.building is not None and room.building.status != 'open':
+                raise InvalidInput({'room_id': 'The assigned room is in a building that is closed or under repair.'})
+            usage = room.capacity_usage()
+            group_already_present = any(
+                row.room_id == room_id and row.departed_at is None
+                for row in NonRegisteredEvacuee.query.filter_by(group_code=rows[0].group_code).all()
+            )
+            needed_slots = 0 if group_already_present else 1
+            if usage['available_slots'] < needed_slots:
+                raise InvalidInput({'room_id': 'This room has no available family slots. Choose another room before restoring this arrival.'})
+            if usage['available_spaces'] < len(returning):
+                raise InvalidInput({'room_id': f"This room has only {usage['available_spaces']} people spaces left; {len(returning)} are needed to restore this arrival."})
     timestamp = None
     if data['departed']:
         try:

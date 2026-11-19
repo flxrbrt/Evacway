@@ -209,9 +209,15 @@ COLUMN_MAP = {
     "room no ": "room_number",
     "room": "room_number",
 
-    "room capacity": "room_capacity",
-    "room_capacity": "room_capacity",
-    "capacity of room": "room_capacity"
+    "room capacity": "people_spaces",
+    "room_capacity": "people_spaces",
+    "capacity of room": "people_spaces",
+    "people spaces": "people_spaces",
+    "people_spaces": "people_spaces",
+    "family slots": "family_slots",
+    "family_slots": "family_slots",
+    "room slots": "family_slots",
+    "room_family_slots": "family_slots"
 }
 
 
@@ -954,7 +960,7 @@ def validate_columns(df):
 
         # Room
         "room_number",
-        "room_capacity"
+        "people_spaces"
     ]
 
     missing_columns = [
@@ -1295,12 +1301,20 @@ def upload_residents():
                 row.get("room_number")
             )
 
-            room_capacity = parse_integer(
-                row.get("room_capacity"),
-                "room capacity",
+            people_spaces = parse_integer(
+                row.get("people_spaces"),
+                "room capacity / people spaces",
                 excel_row,
                 errors
             )
+            family_slots_provided = clean_value(row.get("family_slots")) is not None
+            parsed_family_slots = parse_integer(
+                row.get("family_slots"),
+                "family slots",
+                excel_row,
+                errors
+            )
+            family_slots = parsed_family_slots if parsed_family_slots is not None else 5
 
             # =================================================
             # VALIDATE RESIDENT
@@ -1425,7 +1439,7 @@ def upload_residents():
                 skipped += 1
                 continue
 
-            if room_capacity is None:
+            if people_spaces is None:
 
                 errors.append(
                     f"Row {excel_row}: "
@@ -1435,13 +1449,24 @@ def upload_residents():
                 skipped += 1
                 continue
 
-            if room_capacity <= 0:
+            if people_spaces <= 0:
 
                 errors.append(
                     f"Row {excel_row}: "
                     "room capacity must be greater than 0, skipped."
                 )
 
+                skipped += 1
+                continue
+
+            if family_slots_provided and parsed_family_slots is None:
+                skipped += 1
+                continue
+
+            if family_slots <= 0:
+                errors.append(
+                    f"Row {excel_row}: family slots must be greater than 0, skipped."
+                )
                 skipped += 1
                 continue
 
@@ -1595,7 +1620,9 @@ def upload_residents():
 
                     room_number=room_number,
 
-                    capacity=room_capacity,
+                    capacity=people_spaces,
+                    family_slots=family_slots,
+                    people_spaces=people_spaces,
 
                     # Location is added later
                     # through the map.
@@ -1614,15 +1641,18 @@ def upload_residents():
 
             else:
 
-                if room.capacity != room_capacity:
+                if room.people_spaces != people_spaces or (
+                    family_slots_provided and room.family_slots != family_slots
+                ):
 
                     errors.append(
                         f"Row {excel_row}: "
                         f"room '{room.room_number}' "
                         f"in '{center.name}' "
-                        f"has a different capacity "
-                        f"({room.capacity} vs "
-                        f"{room_capacity}), skipped."
+                        f"has different room limits "
+                        f"(people spaces {room.people_spaces} vs {people_spaces}"
+                        + (f", family slots {room.family_slots} vs {family_slots}" if family_slots_provided else "")
+                        + "), skipped."
                     )
 
                     skipped += 1
@@ -1630,43 +1660,6 @@ def upload_residents():
 
             # =================================================
             # ROOM CAPACITY CHECK
-            # =================================================
-
-            assigned_count = (
-                EvacuationAssignment.query
-                .filter_by(
-                    room_id=room.id
-                )
-                .count()
-            )
-
-            if assigned_count >= room.capacity:
-
-                errors.append(
-                    f"Row {excel_row}: "
-                    f"room '{room.room_number}' "
-                    f"in '{center.name}' "
-                    f"is already full "
-                    f"({assigned_count}/{room.capacity}), "
-                    "skipped."
-                )
-
-                skipped += 1
-                continue
-
-            # =================================================
-            # FAMILY / HOUSEHOLD GROUPING (AFTER VALIDATIONS)
-            # =================================================
-            #
-            # Group residents by the household import key:
-            #   Priority 1: household_id / family_id
-            #   Priority 2: family_code / household_code
-            #   Priority 3: composite key (barangay.id,
-            #               normalized household_head_name,
-            #               normalized address)
-            # Only create a Family record when a valid resident
-            # is actually being inserted, preventing orphan or
-            # per-member duplicate Family records.
             # =================================================
 
             household_key = build_household_import_key(
@@ -1689,6 +1682,65 @@ def upload_residents():
                     household_id=household_id_val,
                     family_code=family_code_val
                 )
+
+            assigned_count = (
+                EvacuationAssignment.query
+                .filter_by(
+                    room_id=room.id
+                )
+                .count()
+            )
+
+            assigned_family_ids = {
+                family_id
+                for (family_id,) in (
+                    db.session.query(Resident.family_id)
+                    .join(EvacuationAssignment, EvacuationAssignment.resident_id == Resident.id)
+                    .filter(
+                        EvacuationAssignment.room_id == room.id,
+                        Resident.family_id.is_not(None)
+                    )
+                    .distinct()
+                    .all()
+                )
+            }
+            household_already_uses_slot = family is not None and family.id in assigned_family_ids
+            if assigned_count >= room.people_spaces:
+
+                errors.append(
+                    f"Row {excel_row}: "
+                    f"room '{room.room_number}' "
+                    f"in '{center.name}' "
+                    f"has no people spaces available "
+                    f"({assigned_count}/{room.people_spaces}), "
+                    "skipped."
+                )
+
+                skipped += 1
+                continue
+
+            if not household_already_uses_slot and len(assigned_family_ids) >= room.family_slots:
+                errors.append(
+                    f"Row {excel_row}: room '{room.room_number}' in '{center.name}' "
+                    f"has no family slots available ({len(assigned_family_ids)}/{room.family_slots}), skipped."
+                )
+                skipped += 1
+                continue
+
+            # =================================================
+            # FAMILY / HOUSEHOLD GROUPING (AFTER VALIDATIONS)
+            # =================================================
+            #
+            # Group residents by the household import key:
+            #   Priority 1: household_id / family_id
+            #   Priority 2: family_code / household_code
+            #   Priority 3: composite key (barangay.id,
+            #               normalized household_head_name,
+            #               normalized address)
+            # Only create a Family record when a valid resident
+            # is actually being inserted, preventing orphan or
+            # per-member duplicate Family records.
+            # =================================================
 
             if family is None:
 
@@ -2356,7 +2408,7 @@ def find_my_evacuation_center():
                     "latitude": float(room.latitude) if room.latitude is not None else None,
                     "longitude": float(room.longitude) if room.longitude is not None else None,
                     "is_checked_in": is_checked_in,
-                    "checkin_status": "Checked in" if is_checked_in else "Reserved for your household",
+                    "checkin_status": "Checked in" if is_checked_in else "Reserved for your family",
                     "members": household_members_list,
                 }
 
@@ -2394,7 +2446,7 @@ def find_my_evacuation_center():
             "is_checked_in": is_checked_in,
 
             "checkin_status": (
-                ("Checked in" if is_checked_in else "Reserved for your household")
+                ("Checked in" if is_checked_in else "Reserved for your family")
                 if assignment
                 else None
             ),

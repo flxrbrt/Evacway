@@ -260,6 +260,27 @@ export function useDashboardSummary(isAdmin) {
       seenRoomIds.add(roomId);
       return true;
     });
+
+    const isRoomFull = (room) => {
+      if (typeof room.is_full === "boolean") return room.is_full;
+      if (typeof room.is_fully_assigned === "boolean") return room.is_fully_assigned;
+
+      const availableSlots = room.available_slots != null
+        ? Number(room.available_slots)
+        : room.family_slots != null
+          ? Number(room.family_slots) - Number(room.used_slots ?? 0)
+          : null;
+      const peopleLimit = room.people_spaces ?? room.capacity;
+      const availableSpaces = room.available_spaces != null
+        ? Number(room.available_spaces)
+        : peopleLimit != null
+          ? Number(peopleLimit) - Number(room.used_spaces ?? room.assigned ?? room.occupied ?? 0)
+          : null;
+
+      return (availableSlots != null && availableSlots <= 0)
+        || (availableSpaces != null && availableSpaces <= 0);
+    };
+
     const occupied = uniqueRooms.filter((room) =>
       Boolean(
         room.is_assigned ||
@@ -267,7 +288,11 @@ export function useDashboardSummary(isAdmin) {
         Number(room.assigned ?? room.occupied) > 0
       )
     ).length;
-    const capacity = uniqueRooms.reduce((sum, room) => sum + Number(room.capacity || 0), 0);
+    const available = uniqueRooms.filter((room) => !isRoomFull(room)).length;
+    const capacity = uniqueRooms.reduce(
+      (sum, room) => sum + Number(room.people_spaces ?? room.capacity ?? 0),
+      0
+    );
     const occupiedPeople = uniqueRooms.reduce((sum, room) => sum + Number(room.occupied || 0), 0);
     const assignedPeople = uniqueRooms.reduce((sum, room) => sum + Number(room.assigned ?? room.occupied ?? 0), 0);
 
@@ -281,7 +306,8 @@ export function useDashboardSummary(isAdmin) {
       occupied,
       assignedRooms: occupied,
       unassignedRooms: Math.max(0, uniqueRooms.length - occupied),
-      available: uniqueRooms.length - occupied,
+      available,
+      fullRooms: uniqueRooms.length - available,
       capacity,
       occupiedPeople,
       assignedPeople,
@@ -296,6 +322,8 @@ export function useDashboardSummary(isAdmin) {
   );
   const totalRooms = centerRooms.reduce((total, center) => total + center.total, 0);
   const occupiedRooms = centerRooms.reduce((total, center) => total + center.occupied, 0);
+  const availableRooms = centerRooms.reduce((total, center) => total + center.available, 0);
+  const fullRooms = Math.max(0, totalRooms - availableRooms);
   const staff = isAdmin ? usersQuery.data || [] : [];
   const errors = [
     barangaysQuery.error,
@@ -358,7 +386,8 @@ export function useDashboardSummary(isAdmin) {
           assignedRooms: occupiedRooms,
           unassignedRooms: Math.max(0, totalRooms - occupiedRooms),
           occupiedRooms,
-          availableRooms: Math.max(0, totalRooms - occupiedRooms),
+          availableRooms,
+          fullRooms,
           centerRooms,
           checkInSummary,
           checkInCenters: checkInQuery.data?.centers || [],

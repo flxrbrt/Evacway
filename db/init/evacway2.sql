@@ -4699,6 +4699,8 @@ CREATE TABLE public.evacuation_center_rooms (
     evacuation_center_id integer NOT NULL,
     room_number character varying(50) NOT NULL,
     capacity integer NOT NULL,
+    family_slots integer NOT NULL DEFAULT 5,
+    people_spaces integer NOT NULL DEFAULT 25,
     created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
     is_active boolean DEFAULT true NOT NULL,
     building_id integer,
@@ -7516,6 +7518,8 @@ COPY public.evacuation_center_rooms (id, evacuation_center_id, room_number, capa
 --
 -- Data for Name: evacuation_centers; Type: TABLE DATA; Schema: public; Owner: -
 --
+
+UPDATE public.evacuation_center_rooms SET people_spaces = capacity;
 
 COPY public.evacuation_centers (id, name, capacity, hazard_exposure_score, contact_number, is_active, geom, entrance_geom, managed_by, created_at, owner_name, max_rooms, center_type_id, building_material_id, evacuation_open_date, evacuation_status, evacuation_event_name, evacuation_open_time, evacuation_cutoff_date, evacuation_cutoff_time, evacuation_extension_count, evacuation_extended_until) FROM stdin;
 2	Sogod Central School	355	\N	09000000011	t	0103000020E610000001000000070000000CDB1F39AC3E5F4068326573B6C62440649BE92AAC3E5F40D0B9386B25C624404871DDECC73E5F40909EE86D1EC62440F8B78850C73E5F40A8D925BC9FC62440B0CA67A8B93E5F400046F8CAA2C6244080CC358EAD3E5F40804419D7ACC624400CDB1F39AC3E5F4068326573B6C62440	0104000020E610000003000000010100000025A68ABDC73E5F40A6DE659245C624400101000000E993D9B8AE3E5F40C7D42ADFABC6244001010000001D290713BA3E5F408D79C4EA21C62440	\N	2026-10-16 18:07:26.414503	\N	\N	1	1	2026-11-25	open	Typhoon Baboy	08:00	2026-11-26	18:00	0	\N

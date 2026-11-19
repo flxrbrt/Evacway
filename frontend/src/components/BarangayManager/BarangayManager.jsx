@@ -625,7 +625,8 @@ function BarangayManager() {
       centerName: center.name,
       room_name: "",
       room_type: "Individual/Family",
-      capacity: 15,
+      family_slots: 5,
+      people_spaces: 25,
       notes: "",
       is_active: true,
     });
@@ -641,7 +642,8 @@ function BarangayManager() {
       id: room.id,
       room_name: room.room_number || room.room_name || "",
       room_type: room.room_type || "Individual/Family",
-      capacity: room.capacity ?? 10,
+      family_slots: room.family_slots ?? 5,
+      people_spaces: room.people_spaces ?? room.capacity ?? 25,
       notes: room.notes || "",
       is_active: room.is_active !== false,
     });
@@ -654,8 +656,12 @@ function BarangayManager() {
       setError("Room name is required.");
       return;
     }
-    if (Number(roomModal.capacity) <= 0) {
-      setError("Room capacity must be greater than zero.");
+    if (!Number.isInteger(Number(roomModal.family_slots)) || Number(roomModal.family_slots) < 1) {
+      setError("Family slots must be a whole number of at least 1.");
+      return;
+    }
+    if (!Number.isInteger(Number(roomModal.people_spaces)) || Number(roomModal.people_spaces) < 1) {
+      setError("People spaces must be a whole number of at least 1.");
       return;
     }
 
@@ -666,7 +672,8 @@ function BarangayManager() {
         await api.addRoom(roomModal.centerId, {
           room_number: roomModal.room_name.trim(),
           room_type: roomModal.room_type,
-          capacity: Number(roomModal.capacity),
+          family_slots: Number(roomModal.family_slots),
+          people_spaces: Number(roomModal.people_spaces),
           notes: roomModal.notes.trim() || null,
         });
         setSuccessMsg(`${formatRoomLabel(roomModal.room_name.trim())} added to ${roomModal.centerName}.`);
@@ -674,7 +681,8 @@ function BarangayManager() {
         await api.updateRoom(roomModal.id, {
           room_number: roomModal.room_name.trim(),
           room_type: roomModal.room_type,
-          capacity: Number(roomModal.capacity),
+          family_slots: Number(roomModal.family_slots),
+          people_spaces: Number(roomModal.people_spaces),
           notes: roomModal.notes.trim() || null,
           is_active: Boolean(roomModal.is_active),
         });
@@ -804,7 +812,7 @@ function BarangayManager() {
   async function handleConfirmRoomAssign(e) {
     e.preventDefault();
     if (!roomAssignModal?.familyId || !roomAssignModal?.centerId) {
-      setError("Please select both a household and an evacuation center.");
+      setError("Please select both a family and an evacuation center.");
       return;
     }
 
@@ -865,8 +873,8 @@ function BarangayManager() {
         });
         setSuccessMsg(
           isDirect
-            ? "Household transferred to the selected center."
-            : "Household transferred to the selected room."
+            ? "Family transferred to the selected center."
+            : "Family transferred to the selected room."
         );
       } else {
         await api.assignFamily(famId, {
@@ -875,15 +883,15 @@ function BarangayManager() {
         });
         setSuccessMsg(
           isDirect
-            ? "Household assigned to the selected center."
-            : "Household assigned to the selected room."
+            ? "Family assigned to the selected center."
+            : "Family assigned to the selected room."
         );
       }
 
       setRoomAssignModal(null);
       await invalidateEvacuationQueries(queryClient);
     } catch (err) {
-      setError(err.message || "Failed to assign household.");
+      setError(err.message || "Failed to assign family.");
     } finally {
       setAssigningHousehold(false);
     }
@@ -895,11 +903,11 @@ function BarangayManager() {
       setUnassigning(true);
       setError("");
       await api.unassignFamily(unassignTarget.familyId);
-      setSuccessMsg(`Household "${unassignTarget.headName}" unassigned from room.`);
+      setSuccessMsg(`Family "${unassignTarget.headName}" unassigned from room.`);
       setUnassignTarget(null);
       await invalidateEvacuationQueries(queryClient);
     } catch (err) {
-      setError(err.message || "Failed to unassign household.");
+      setError(err.message || "Failed to unassign family.");
       setUnassignTarget(null);
     } finally {
       setUnassigning(false);
@@ -938,9 +946,9 @@ function BarangayManager() {
     const headers = [
       "Barangay ID",
       "Barangay Name",
-      "Total Households",
-      "Assigned Households",
-      "Unassigned Households",
+      "Total Families",
+      "Assigned Families",
+      "Unassigned Families",
       "Total Residents",
       "Evacuation Centers",
     ];
@@ -1058,7 +1066,7 @@ function BarangayManager() {
                 disabled={avail <= 0}
                 onClick={() => openAssignHouseholdToRoomModal(activeCenter, activeRoom)}
               >
-                <FontAwesomeIcon icon={faPlus} /> Assign Household
+                <FontAwesomeIcon icon={faPlus} /> Assign Family
               </button>
             </div>
           </div>
@@ -1080,7 +1088,7 @@ function BarangayManager() {
               <span className="stat-card-hint">{isFull ? "Full" : isFullyAssigned ? "Fully assigned" : "Ready for assignment"}</span>
             </div>
             <div className="stat-card is-plain">
-              <span className="stat-card-label">Assigned Households</span>
+              <span className="stat-card-label">Assigned Families</span>
               <strong className="stat-card-value">{assignedFamilies.length}</strong>
               <span className="stat-card-hint">Families in this room</span>
             </div>
@@ -1090,9 +1098,9 @@ function BarangayManager() {
             <div className="bm-section-card-header">
               <div>
                 <h4>
-                  <FontAwesomeIcon icon={faPeopleGroup} /> Assigned Households ({assignedFamilies.length})
+                  <FontAwesomeIcon icon={faPeopleGroup} /> Assigned Families ({assignedFamilies.length})
                 </h4>
-                <p>Manage households currently sheltered in {activeRoom.room_name}.</p>
+                <p>Manage families currently sheltered in {activeRoom.room_name}.</p>
               </div>
               <button
                 type="button"
@@ -1100,22 +1108,22 @@ function BarangayManager() {
                 disabled={avail <= 0}
                 onClick={() => openAssignHouseholdToRoomModal(activeCenter, activeRoom)}
               >
-                <FontAwesomeIcon icon={faPlus} /> Assign Household to Room
+                <FontAwesomeIcon icon={faPlus} /> Assign Family to Room
               </button>
             </div>
 
             {assignedFamilies.length === 0 ? (
               <div className="bm-empty-box">
                 <FontAwesomeIcon icon={faHouse} className="bm-empty-icon" />
-                <h4>No Households Assigned Yet</h4>
-                <p>This room has {avail} available slots ready for household assignment.</p>
+                <h4>No Families Assigned Yet</h4>
+                <p>This room has {avail} available slots ready for family assignment.</p>
                 {avail > 0 && (
                   <button
                     type="button"
                     className="btn btn-primary"
                     onClick={() => openAssignHouseholdToRoomModal(activeCenter, activeRoom)}
                   >
-                    <FontAwesomeIcon icon={faPlus} /> Assign Household
+                    <FontAwesomeIcon icon={faPlus} /> Assign Family
                   </button>
                 )}
               </div>
@@ -1125,8 +1133,8 @@ function BarangayManager() {
                   <table className="bm-table">
                     <thead>
                       <tr>
-                        <th>Household ID</th>
-                        <th>Household Head</th>
+                        <th>Family ID</th>
+                        <th>Family Head</th>
                         <th>Members Assigned</th>
                         <th>Vulnerability Notes</th>
                         <th className="bm-th-right">Actions</th>
@@ -1178,7 +1186,7 @@ function BarangayManager() {
                                   className="btn btn-secondary btn-sm"
                                   onClick={() => openHouseholdsSection({ familyId: fId })}
                                 >
-                                  <FontAwesomeIcon icon={faEye} /> View Household
+                                  <FontAwesomeIcon icon={faEye} /> View Family
                                 </button>
                                 <button
                                   type="button"
@@ -1364,7 +1372,7 @@ function BarangayManager() {
                 className="btn btn-outline"
                 onClick={() => openAssignHouseholdToRoomModal(activeCenter, null)}
               >
-                <FontAwesomeIcon icon={faRightLeft} /> Assign Household
+                <FontAwesomeIcon icon={faRightLeft} /> Assign Family
               </button>
               <button
                 type="button"
@@ -1405,7 +1413,7 @@ function BarangayManager() {
                 <h4>
                   <FontAwesomeIcon icon={faDoorOpen} /> Rooms in {activeCenter.name} ({rooms.length})
                 </h4>
-                <p>Select a room to view its assigned households, transfer families, or manage capacity.</p>
+                <p>Select a room to view its assigned families, transfer families, or manage capacity.</p>
               </div>
               <button
                 type="button"
@@ -1420,7 +1428,7 @@ function BarangayManager() {
               <div className="bm-empty-box">
                 <FontAwesomeIcon icon={faDoorOpen} className="bm-empty-icon" />
                 <h4>No Rooms Configured Yet</h4>
-                <p>Add rooms to {activeCenter.name} so households can be assigned to specific rooms.</p>
+                <p>Add rooms to {activeCenter.name} so families can be assigned to specific rooms.</p>
                 <button
                   type="button"
                   className="btn btn-primary"
@@ -1440,7 +1448,7 @@ function BarangayManager() {
                         <th>Capacity</th>
                         <th>Occupied</th>
                         <th>Available Slots</th>
-                        <th>Households</th>
+                        <th>Families</th>
                         <th className="bm-th-status">STATUS</th>
                         <th className="bm-th-right">Actions</th>
                       </tr>
@@ -1587,7 +1595,7 @@ function BarangayManager() {
                             <strong>{rAvail}</strong>
                           </div>
                           <div>
-                            <span>Households</span>
+                            <span>Families</span>
                             <strong>{famCount}</strong>
                           </div>
                         </div>
@@ -1634,7 +1642,7 @@ function BarangayManager() {
             <span className="bm-kicker">{selectedBarangay?.name} — Evacuation Facilities</span>
             <h3 className="bm-hero-title">Evacuation Centers & Rooms</h3>
             <p className="bm-hero-sub">
-              Manage evacuation centers, room capacities, and household room assignments in{" "}
+              Manage evacuation centers, room capacities, and family room assignments in{" "}
               {selectedBarangay?.name}.
             </p>
           </div>
@@ -1680,7 +1688,7 @@ function BarangayManager() {
               <h4>
                 <FontAwesomeIcon icon={faBuilding} /> Barangay Evacuation Centers ({centers.length})
               </h4>
-              <p>Select an evacuation center to inspect its rooms and assigned households.</p>
+              <p>Select an evacuation center to inspect its rooms and assigned families.</p>
             </div>
           </div>
 
@@ -1754,7 +1762,7 @@ function BarangayManager() {
                                 {occupiedResidents} of {cap} here · {assignedResidents} assigned
                               </strong>
                               <div className="bm-cell-sub">
-                                {assignedFamilies} household{assignedFamilies === 1 ? "" : "s"}
+                                {assignedFamilies} family{assignedFamilies === 1 ? "" : "s"}
                               </div>
                             </div>
                           </td>
@@ -1937,14 +1945,14 @@ function BarangayManager() {
             </p>
           </div>
           {workspaceTab === "families" && familyScreen === "list" && (
-            <div className="barangay-header-actions bm-all-households-actions">
+            <div className="barangay-header-actions bm-all-families-actions">
               <button
                 type="button"
                 className="bm-header-btn-primary"
                 onClick={() => familyActionsRef.current?.openAddFamilyWizard?.()}
               >
                 <FontAwesomeIcon icon={faPlus} />
-                <span>Add Household</span>
+                <span>Add Family</span>
               </button>
               <button
                 type="button"
@@ -1982,7 +1990,7 @@ function BarangayManager() {
               setFamilyScreen("list");
             }}
           >
-            <FontAwesomeIcon icon={faPeopleGroup} /> All Households
+            <FontAwesomeIcon icon={faPeopleGroup} /> All Families
           </button>
         </div>
       )}
@@ -2039,12 +2047,12 @@ function BarangayManager() {
       ) : loading ? (
         <LoadingState
           title="Loading barangays..."
-          subtitle="Fetching barangay records, households, and evacuation center summaries."
+          subtitle="Fetching barangay records, families, and evacuation center summaries."
         />
       ) : detailLoading ? (
         <LoadingState
           title="Opening barangay..."
-          subtitle="Loading households, residents, and evacuation centers."
+          subtitle="Loading families, residents, and evacuation centers."
         />
       ) : !selectedBarangay ? (
         /* =========================================================
@@ -2066,7 +2074,7 @@ function BarangayManager() {
 
             <div className="stat-card is-plain">
               <div className="stat-card-content">
-                <span className="stat-card-label">Households</span>
+                <span className="stat-card-label">Families</span>
                 <strong className="stat-card-value">{overallStats.totalHouseholds}</strong>
                 <span className="stat-card-hint">{overallStats.totalResidents} registered residents</span>
               </div>
@@ -2078,7 +2086,7 @@ function BarangayManager() {
               <div className="stat-card-content">
                 <span className="stat-card-label">Assigned</span>
                 <strong className="stat-card-value text-emerald-700">{overallStats.totalAssigned}</strong>
-                <span className="stat-card-hint">{overallStats.assignedPct}% of households</span>
+                <span className="stat-card-hint">{overallStats.assignedPct}% of families</span>
               </div>
               <span className="stat-card-icon stat-card-icon--resolved" aria-hidden="true">
                 <FontAwesomeIcon icon={faCircleCheck} />
@@ -2091,7 +2099,7 @@ function BarangayManager() {
                   {overallStats.totalUnassigned}
                 </strong>
                 <span className="stat-card-hint">
-                  {overallStats.totalUnassigned > 0 ? "Awaiting room assignment" : "All households assigned"}
+                  {overallStats.totalUnassigned > 0 ? "Awaiting room assignment" : "All families assigned"}
                 </span>
               </div>
               <span className={overallStats.totalUnassigned > 0 ? "stat-card-icon stat-card-icon--warning" : "stat-card-icon stat-card-icon--resolved"} aria-hidden="true">
@@ -2166,7 +2174,7 @@ function BarangayManager() {
                     <thead>
                       <tr>
                         <th>Barangay Community</th>
-                        <th className="bm-col-center">Households</th>
+                        <th className="bm-col-center">Families</th>
                         <th>Shelter Assignment</th>
                         <th className="bm-col-center bm-th-status">STATUS</th>
                         <th className="bm-col-center">Evacuation Centers</th>
@@ -2330,7 +2338,7 @@ function BarangayManager() {
                       </div>
 
                       <div className="bm-brgy-card-row2">
-                        {famCount} {famCount === 1 ? "household" : "households"} &middot;{" "}
+                        {famCount} {famCount === 1 ? "family" : "families"} &middot;{" "}
                         {resCount} {resCount === 1 ? "resident" : "residents"} &middot;{" "}
                         {centerCount} {centerCount === 1 ? "center" : "centers"}
                       </div>
@@ -2498,7 +2506,7 @@ function BarangayManager() {
                   onClick={() => familyActionsRef.current?.openAddFamilyWizard?.()}
                 >
                   <FontAwesomeIcon icon={faPlus} />
-                  <span>Add Household</span>
+                  <span>Add Family</span>
                 </button>
                 <button
                   type="button"
@@ -2537,7 +2545,7 @@ function BarangayManager() {
                 onClick={() => openHouseholdsSection()}
               >
                 <FontAwesomeIcon icon={faPeopleGroup} className="bm-tab-icon" />
-                <span className="bm-tab-label">Households</span>
+                <span className="bm-tab-label">Families</span>
                 <span className="bm-tab-count">{selectedBarangayStats.totalHouseholds}</span>
               </button>
             </div>
@@ -2577,8 +2585,8 @@ function BarangayManager() {
 
             const summaryText =
               totalHH === 0
-                ? `No households are currently registered in ${selectedBarangay.name}.`
-                : `${assignedHH} of ${totalHH} households (${assignPct}%) are assigned to a building & room, and ${unassignedHH} (${unassignPct}%) are unassigned.`;
+                ? `No families are currently registered in ${selectedBarangay.name}.`
+                : `${assignedHH} of ${totalHH} families (${assignPct}%) are assigned to a building & room, and ${unassignedHH} (${unassignPct}%) are unassigned.`;
 
             return (
               <div className="bm-overview-content">
@@ -2592,14 +2600,14 @@ function BarangayManager() {
                         className="btn btn-secondary btn-sm"
                         onClick={() => openHouseholdsSection()}
                       >
-                        Manage Households ({totalHH}){" "}
+                        Manage Families ({totalHH}){" "}
                         <FontAwesomeIcon icon={faArrowRight} />
                       </button>
                     </div>
 
                     <div className="bm-overview-numbers-grid">
                       <div className="bm-overview-number-item">
-                        <span className="bm-overview-number-label">Households</span>
+                        <span className="bm-overview-number-label">Families</span>
                         <strong className="bm-overview-number-val">
                           {totalHH}
                         </strong>
@@ -2630,9 +2638,9 @@ function BarangayManager() {
 
                     {totalHH === 0 ? (
                       <div className="bm-overview-charts-empty" role="status">
-                        <p className="bm-overview-empty-title">No household data yet</p>
+                        <p className="bm-overview-empty-title">No family data yet</p>
                         <p className="bm-overview-empty-sub">
-                          Assignment chart will appear once households are registered in {selectedBarangay.name}.
+                          Assignment chart will appear once families are registered in {selectedBarangay.name}.
                         </p>
                       </div>
                     ) : (
@@ -2641,7 +2649,7 @@ function BarangayManager() {
                         <div
                           className="bm-donut-wrap"
                           role="img"
-                          aria-label={`Donut chart: ${assignedHH} assigned (${assignPct}%) and ${unassignedHH} unassigned (${unassignPct}%) households`}
+                          aria-label={`Donut chart: ${assignedHH} assigned (${assignPct}%) and ${unassignedHH} unassigned (${unassignPct}%) families`}
                         >
                           <svg
                             className="bm-donut-svg"
@@ -2668,7 +2676,7 @@ function BarangayManager() {
                                 strokeDashoffset={unassignedOffset}
                                 transform="rotate(-90 60 60)"
                               >
-                                <title>{`Unassigned: ${unassignedHH} ${unassignedHH === 1 ? "household" : "households"} (${unassignPct}%)`}</title>
+                                <title>{`Unassigned: ${unassignedHH} ${unassignedHH === 1 ? "family" : "families"} (${unassignPct}%)`}</title>
                               </circle>
                             )}
                             {assignedHH > 0 && (
@@ -2684,7 +2692,7 @@ function BarangayManager() {
                                 strokeDashoffset={assignedOffset}
                                 transform="rotate(-90 60 60)"
                               >
-                                <title>{`Assigned: ${assignedHH} ${assignedHH === 1 ? "household" : "households"} (${assignPct}%)`}</title>
+                                <title>{`Assigned: ${assignedHH} ${assignedHH === 1 ? "family" : "families"} (${assignPct}%)`}</title>
                               </circle>
                             )}
                           </svg>
@@ -2701,8 +2709,8 @@ function BarangayManager() {
                           <div className="bm-donut-legend">
                             <div
                               className="bm-donut-legend-item"
-                              data-tooltip={`Assigned: ${assignedHH} ${assignedHH === 1 ? "household" : "households"} (${assignPct}%)`}
-                              title={`Assigned: ${assignedHH} ${assignedHH === 1 ? "household" : "households"} (${assignPct}%)`}
+                              data-tooltip={`Assigned: ${assignedHH} ${assignedHH === 1 ? "family" : "families"} (${assignPct}%)`}
+                              title={`Assigned: ${assignedHH} ${assignedHH === 1 ? "family" : "families"} (${assignPct}%)`}
                             >
                               <span className="bm-donut-dot assigned" aria-hidden="true" />
                               <span className="bm-donut-legend-label">Assigned</span>
@@ -2712,8 +2720,8 @@ function BarangayManager() {
                             </div>
                             <div
                               className="bm-donut-legend-item"
-                              data-tooltip={`Unassigned: ${unassignedHH} ${unassignedHH === 1 ? "household" : "households"} (${unassignPct}%)`}
-                              title={`Unassigned: ${unassignedHH} ${unassignedHH === 1 ? "household" : "households"} (${unassignPct}%)`}
+                              data-tooltip={`Unassigned: ${unassignedHH} ${unassignedHH === 1 ? "family" : "families"} (${unassignPct}%)`}
+                              title={`Unassigned: ${unassignedHH} ${unassignedHH === 1 ? "family" : "families"} (${unassignPct}%)`}
                             >
                               <span className="bm-donut-dot unassigned" aria-hidden="true" />
                               <span className="bm-donut-legend-label">Unassigned</span>
@@ -2859,7 +2867,7 @@ function BarangayManager() {
                         ).length;
                         if (affectedCount > 0) {
                           return window.confirm(
-                            `Removing "${bName}" will affect ${affectedCount} household(s) currently assigned to this center. Do you want to remove it?`
+                            `Removing "${bName}" will affect ${affectedCount} family(s) currently assigned to this center. Do you want to remove it?`
                           );
                         }
                         return true;
@@ -2974,6 +2982,7 @@ function BarangayManager() {
             </div>
             <form onSubmit={handleSaveRoom}>
               <div className="bm-dialog-body">
+                {error && <div className="alert-error" role="alert">{error}</div>}
                 <div className="bm-form-grid-2">
                   <label className="bm-form-field">
                     <span>Room Name *</span>
@@ -3001,14 +3010,32 @@ function BarangayManager() {
                     </select>
                   </label>
                   <label className="bm-form-field">
-                    <span>Capacity (Persons) *</span>
+                    <span>Family slots *</span>
                     <input
                       type="number"
                       min="1"
+                      step="1"
+                      inputMode="numeric"
                       required
-                      value={roomModal.capacity}
+                      onKeyDown={(e) => ["e", "E", "+", "-", ".", ","].includes(e.key) && e.preventDefault()}
+                      value={roomModal.family_slots}
                       onChange={(e) =>
-                        setRoomModal((p) => ({ ...p, capacity: e.target.value }))
+                        setRoomModal((p) => ({ ...p, family_slots: e.target.value }))
+                      }
+                    />
+                  </label>
+                  <label className="bm-form-field">
+                    <span>People spaces *</span>
+                    <input
+                      type="number"
+                      min="1"
+                      step="1"
+                      inputMode="numeric"
+                      required
+                      onKeyDown={(e) => ["e", "E", "+", "-", ".", ","].includes(e.key) && e.preventDefault()}
+                      value={roomModal.people_spaces}
+                      onChange={(e) =>
+                        setRoomModal((p) => ({ ...p, people_spaces: e.target.value }))
                       }
                     />
                   </label>
@@ -3107,8 +3134,8 @@ function BarangayManager() {
                   <span className="bm-kicker">Evacuation Assignment</span>
                   <h4>
                     {roomAssignModal.mode === "transfer-household"
-                      ? "Transfer Household"
-                      : "Assign Household"}
+                      ? "Transfer Family"
+                      : "Assign Family"}
                   </h4>
                 </div>
                 <button
@@ -3122,7 +3149,7 @@ function BarangayManager() {
               <form onSubmit={handleConfirmRoomAssign}>
                 <div className="bm-dialog-body">
                   <label className="bm-form-field">
-                    <span>Household *</span>
+                    <span>Family *</span>
                     <select
                       required
                       value={roomAssignModal.familyId}
@@ -3135,7 +3162,7 @@ function BarangayManager() {
                       }
                     >
                       <option value="">
-                        Select household in {selectedBarangay?.name}
+                        Select family in {selectedBarangay?.name}
                       </option>
                       {barangayFamilies.map((f) => (
                         <option key={f.id} value={f.id}>
@@ -3305,7 +3332,7 @@ function BarangayManager() {
         >
           <div className="bm-dialog bm-dialog-sm" onClick={(e) => e.stopPropagation()}>
             <div className="bm-dialog-header">
-              <h4>Unassign Household</h4>
+              <h4>Unassign Family</h4>
               <button
                 type="button"
                 className="bm-dialog-close"
@@ -3335,7 +3362,7 @@ function BarangayManager() {
                 disabled={unassigning}
                 onClick={handleConfirmUnassignHousehold}
               >
-                {unassigning ? "Unassigning..." : "Unassign Household"}
+                {unassigning ? "Unassigning..." : "Unassign Family"}
               </button>
             </div>
           </div>

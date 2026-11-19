@@ -41,7 +41,7 @@ import {
 } from "../../hooks/useEvacuationQueries";
 import { displayEntityName } from "../../utils/displayEntityName";
 import { formatRoomLabel } from "../../utils/formatRoomLabel";
-import { resolveCenterStructureMode } from "./utils";
+import { familyTerm, resolveCenterStructureMode } from "./utils";
 import LoadingState from "../LoadingState/LoadingState";
 import "./FamilyManagement.css";
 
@@ -107,7 +107,7 @@ function emptyMember(isHead = false) {
     suffix: "",
     date_of_birth: "",
     gender: "",
-    relationship_to_head: isHead ? "Household Head" : "",
+    relationship_to_head: isHead ? "Family Head" : "",
     contact_number: "",
     alternate_contact: "",
     is_head_of_family: isHead,
@@ -307,7 +307,7 @@ function validateDateOfBirth(
     return "Please enter a valid date of birth.";
   }
   if (isHead && age < 18) {
-    return "Household head must be at least 18 years old.";
+    return "Family head must be at least 18 years old.";
   }
   if (
     String(relationship || "").trim().toLocaleLowerCase() === "spouse" &&
@@ -378,11 +378,30 @@ function getRoomAssignedCount(room) {
   return Number(room?.assigned ?? room?.occupied ?? 0);
 }
 
+function getRoomUsedSlots(room) {
+  const families = room?.families ?? room?.assigned_families;
+  if (room?.used_slots != null) return Number(room.used_slots);
+  if (room?.assigned_households != null) return Number(room.assigned_households);
+  return Array.isArray(families)
+    ? new Set(families.map((family) => String(family.family_id ?? family.id))).size
+    : 0;
+}
+
+function getRoomAvailableSlots(room) {
+  const slots = Math.max(1, Number(room?.family_slots ?? 5));
+  if (room?.available_slots != null) return Math.max(Number(room.available_slots), 0);
+  return Math.max(slots - getRoomUsedSlots(room), 0);
+}
+
 function getRoomRemainingCapacity(room) {
   if (!room) return 0;
-  const cap = Number(room.capacity || 0);
-  if (room.unassigned != null) return Math.max(Number(room.unassigned), 0);
-  return Math.max(cap - getRoomAssignedCount(room), 0);
+  const spaces = Math.max(1, Number(room.people_spaces ?? room.capacity ?? 25));
+  if (room.available_spaces != null) return Math.max(Number(room.available_spaces), 0);
+  return Math.max(spaces - getRoomAssignedCount(room), 0);
+}
+
+function roomCanFitHousehold(room, people = 1) {
+  return getRoomAvailableSlots(room) >= 1 && getRoomRemainingCapacity(room) >= Math.max(1, Number(people) || 1);
 }
 
 function getCenterAssignedCount(center) {
@@ -459,8 +478,8 @@ function getAvailableBuildingsForCenter(center, rooms = [], needed = 1) {
           availableSpaces: 0,
         });
       }
-      const rem = getRoomRemainingCapacity(r);
-      if (rem >= needed) {
+      if (Number(needed) <= 0 || roomCanFitHousehold(r, needed)) {
+        const rem = getRoomRemainingCapacity(r);
         const entry = bldgMap.get(key);
         entry.rooms.push(r);
         entry.availableSpaces += rem;
@@ -469,7 +488,7 @@ function getAvailableBuildingsForCenter(center, rooms = [], needed = 1) {
   }
   const list = Array.from(bldgMap.values()).filter((b) => b.rooms.length > 0);
   const unmappedRooms = rooms.filter(
-    (r) => r.building_id == null && getRoomRemainingCapacity(r) >= needed
+    (r) => r.building_id == null && (Number(needed) <= 0 || roomCanFitHousehold(r, needed))
   );
   if (unmappedRooms.length > 0) {
     const unmappedSpaces = unmappedRooms.reduce(
@@ -495,8 +514,7 @@ function getFilteredRoomsForSelection(
   if (!center) return [];
   const hasBldgs = centerHasBuildings(center, rooms);
   return rooms.filter((r) => {
-    const rem = getRoomRemainingCapacity(r);
-    if (rem < needed) return false;
+    if (Number(needed) > 0 && !roomCanFitHousehold(r, needed)) return false;
     if (!hasBldgs) return true;
     if (!selectedBuildingId) return false;
     if (selectedBuildingId === "unmapped") return r.building_id == null;
@@ -505,9 +523,9 @@ function getFilteredRoomsForSelection(
 }
 
 const ADD_STEPS = [
-  { number: 1, title: "Household Details", subtitle: "Barangay, address & contacts" },
-  { number: 2, title: "Household Head", subtitle: "Head profile & health info" },
-  { number: 3, title: "Household Members", subtitle: "Additional members (optional)" },
+  { number: 1, title: "Family Details", subtitle: "Barangay, address & contacts" },
+  { number: 2, title: "Family Head", subtitle: "Head profile & health info" },
+  { number: 3, title: "Family Members", subtitle: "Additional members (optional)" },
   { number: 4, title: "Room & Save", subtitle: "Evacuation room & confirm" },
 ];
 
@@ -1382,7 +1400,7 @@ export default function FamilyManagement({
       setConfirmDialog({
         title: "Discard Unsaved Changes?",
         message:
-          "You have unsaved changes in the Add Household form. Are you sure you want to close and discard your changes?",
+          "You have unsaved changes in the Add Family form. Are you sure you want to close and discard your changes?",
         confirmText: "Discard Changes",
         cancelText: "Keep Editing",
         danger: true,
@@ -1438,7 +1456,7 @@ export default function FamilyManagement({
         ...prev.head,
         [field]: value,
         is_head_of_family: true,
-        relationship_to_head: "Household Head",
+        relationship_to_head: "Family Head",
       },
     }));
   }
@@ -1470,7 +1488,7 @@ export default function FamilyManagement({
       errs.barangay_id = "Barangay is required.";
     }
     if (!String(wizardForm.address || "").trim()) {
-      errs.address = "Complete household address is required.";
+      errs.address = "Complete family address is required.";
     }
     if (
       String(wizardForm.contact_number || "").length > 0 &&
@@ -1563,7 +1581,7 @@ export default function FamilyManagement({
         .toLocaleLowerCase();
       if (candidateName === headName) {
         errs.first_name =
-          "This member has the same full name as the household head.";
+          "This member has the same full name as the family head.";
       } else {
         const duplicateInOthers = wizardForm.otherMembers.some((m, idx) => {
           if (editingOtherIndex !== "new" && idx === editingOtherIndex) {
@@ -1575,7 +1593,7 @@ export default function FamilyManagement({
         });
         if (duplicateInOthers) {
           errs.first_name =
-            "Another household member with this full name is already added.";
+            "Another family member with this full name is already added.";
         }
       }
     }
@@ -1593,11 +1611,11 @@ export default function FamilyManagement({
     if (!rel) {
       errs.relationship_to_head = "Relationship to head is required.";
     } else if (
-      rel.toLocaleLowerCase() === "household head" ||
+      rel.toLocaleLowerCase() === "family head" ||
       rel.toLocaleLowerCase() === "self"
     ) {
       errs.relationship_to_head =
-        "Relationship cannot be Household Head since the head is already set.";
+        "Relationship cannot be Family Head since the head is already set.";
     }
     if (
       String(memberDraft.contact_number || "").length > 0 &&
@@ -1637,7 +1655,7 @@ export default function FamilyManagement({
           errs.assignment_center_id =
             "Selected evacuation center is full. Please choose another center.";
         } else if (selectedCenter && totalMembersCount > available) {
-          errs.assignment_center_id = `Selected center only has ${available} available space(s), but this household has ${totalMembersCount} member(s).`;
+          errs.assignment_center_id = `Selected center only has ${available} available space(s), but this family has ${totalMembersCount} member(s).`;
         }
         return errs;
       }
@@ -1656,12 +1674,9 @@ export default function FamilyManagement({
         );
         if (selectedRoom) {
           const available = getRoomRemainingCapacity(selectedRoom);
-          if (available <= 0) {
-            errs.assignment_room_id =
-              "Selected room is full. Please choose another room.";
-          } else if (totalMembersCount > available) {
-            errs.assignment_room_id = `Selected room only has ${available} available space(s), but this household has ${totalMembersCount} member(s).`;
-          }
+          const availableSlots = getRoomAvailableSlots(selectedRoom);
+          if (availableSlots < 1) errs.assignment_room_id = "Selected room has no family slots available. Please choose another room.";
+          else if (totalMembersCount > available) errs.assignment_room_id = `Selected room only has ${available} people space(s) available, but this family has ${totalMembersCount} member(s).`;
         }
       }
     }
@@ -1838,7 +1853,7 @@ export default function FamilyManagement({
 
       for (const m of wizardForm.otherMembers) {
         if (!String(m.first_name || "").trim() || !String(m.last_name || "").trim()) {
-          setError("All household members must have a valid first and last name.");
+          setError("All family members must have a valid first and last name.");
           return false;
         }
         const mDobErr = validateDateOfBirth(m.date_of_birth, { isHead: false });
@@ -1851,8 +1866,8 @@ export default function FamilyManagement({
           return false;
         }
         const rel = String(m.relationship_to_head || "").trim().toLocaleLowerCase();
-        if (rel === "household head" || rel === "self") {
-          setError("A household member's relationship cannot be Household Head.");
+        if (rel === "family head" || rel === "self") {
+          setError("A family member's relationship cannot be Family Head.");
           return false;
         }
       }
@@ -1862,7 +1877,7 @@ export default function FamilyManagement({
         memberDisplayName(m).trim().toLocaleLowerCase()
       );
       if (new Set(names).size !== names.length) {
-        setError("All household member names must be unique within the household.");
+        setError("All family member names must be unique within the family.");
         return false;
       }
       return true;
@@ -1952,8 +1967,8 @@ export default function FamilyManagement({
     const headFullName = memberDisplayName(wizardForm.head).trim();
     const totalMembers = 1 + wizardForm.otherMembers.length;
     setConfirmDialog({
-      title: "Save this household?",
-      message: `Register household "${headFullName}" (${totalMembers} member${totalMembers === 1 ? "" : "s"})?`,
+      title: "Save this family?",
+      message: `Register family "${headFullName}" (${totalMembers} member${totalMembers === 1 ? "" : "s"})?`,
       confirmText: "Confirm",
       cancelText: "Cancel",
       danger: false,
@@ -1985,7 +2000,7 @@ export default function FamilyManagement({
       {
         ...wizardForm.head,
         is_head_of_family: true,
-        relationship_to_head: "Household Head",
+        relationship_to_head: "Family Head",
       },
       ...wizardForm.otherMembers.map((m) => ({
         ...m,
@@ -2030,7 +2045,7 @@ export default function FamilyManagement({
           date_of_birth: member.date_of_birth || null,
           gender: member.gender || null,
           relationship_to_head: member.is_head_of_family
-            ? "Household Head"
+            ? "Family Head"
             : member.relationship_to_head.trim() || "Family Member",
           contact_number:
             member.contact_number.trim() ||
@@ -2075,7 +2090,7 @@ export default function FamilyManagement({
       await refreshAllData(createdFamily?.id);
       setNotice(
         result.message ||
-          `Household "${headFullName}" (${allMembers.length} member${allMembers.length === 1 ? "" : "s"}) registered successfully.`
+          `Family "${headFullName}" (${allMembers.length} member${allMembers.length === 1 ? "" : "s"}) registered successfully.`
       );
       setIsAddWizardOpen(false);
       if (createdFamily?.id && !hideScreenContent) {
@@ -2088,7 +2103,7 @@ export default function FamilyManagement({
         setActiveScreen("list");
       }
     } catch (requestError) {
-      setError(requestError.message || "Household could not be registered.");
+      setError(requestError.message || "Family could not be registered.");
     } finally {
       savingRef.current = false;
       setSaving(false);
@@ -2125,7 +2140,7 @@ export default function FamilyManagement({
       errs.barangay_id = "Barangay is required.";
     }
     if (!String(editHouseholdForm.address || "").trim()) {
-      errs.address = "Household address is required.";
+      errs.address = "Family address is required.";
     }
     if (
       String(editHouseholdForm.contact_number || "").length > 0 &&
@@ -2148,7 +2163,7 @@ export default function FamilyManagement({
         "Alternate Contact must not be the same as Contact Number.";
     }
     if (String(editHouseholdForm.remarks || "").length > 500) {
-      errs.remarks = "Household remarks must be 500 characters or fewer.";
+      errs.remarks = "Family remarks must be 500 characters or fewer.";
     }
     return errs;
   }, [modal, editHouseholdForm]);
@@ -2189,9 +2204,9 @@ export default function FamilyManagement({
       setConfirmDialog({
         title: "Change Barangay",
         message: targetBrgy?.name
-          ? `Move this household to another barangay (${targetBrgy.name})? The household code stays as it is.`
-          : "Move this household to another barangay? The household code stays as it is.",
-        confirmText: "Move Household",
+          ? `Move this family to another barangay (${targetBrgy.name})? The family code stays as it is.`
+          : "Move this family to another barangay? The family code stays as it is.",
+        confirmText: "Move Family",
         cancelText: "Keep Current",
         danger: false,
         onConfirm: () => {
@@ -2229,7 +2244,7 @@ export default function FamilyManagement({
       setConfirmDialog({
         title: "Discard unsaved changes?",
         message:
-          "You have unsaved changes. Are you sure you want to leave this form to view the household head's profile?",
+          "You have unsaved changes. Are you sure you want to leave this form to view the family head's profile?",
         confirmText: "View Profile",
         cancelText: "Keep Editing",
         danger: false,
@@ -2285,10 +2300,10 @@ export default function FamilyManagement({
       };
       const result = await api.updateFamily(activeFamily.id, payload);
       await refreshAllData(activeFamily.id);
-      setNotice(result.message || "Household information updated.");
+      setNotice(result.message || "Family information updated.");
       forceCloseModal();
     } catch (requestError) {
-      setError(requestError.message || "Failed to update household details.");
+      setError(requestError.message || "Failed to update family details.");
       if (modalBodyRef.current) modalBodyRef.current.scrollTop = 0;
     } finally {
       savingRef.current = false;
@@ -2339,11 +2354,11 @@ export default function FamilyManagement({
       if (!rel) {
         errs.relationship_to_head = "Relationship to head is required.";
       } else if (
-        rel.toLocaleLowerCase() === "household head" ||
+        rel.toLocaleLowerCase() === "family head" ||
         rel.toLocaleLowerCase() === "self"
       ) {
         errs.relationship_to_head =
-          "Relationship cannot be Household Head since the head already exists.";
+          "Relationship cannot be Family Head since the head already exists.";
       }
     }
 
@@ -2392,11 +2407,11 @@ export default function FamilyManagement({
         (m) => String(m.date_of_birth || "").trim() === candidateDob
       );
       if (exactMatch) {
-        return `Warning: A member named "${memberDisplayName(exactMatch)}" with date of birth ${candidateDob} already exists in this household.`;
+        return `Warning: A member named "${memberDisplayName(exactMatch)}" with date of birth ${candidateDob} already exists in this family.`;
       }
     }
     if (memberModalMode === "add") {
-      return `Warning: A member named "${memberDisplayName(matches[0])}" already exists in this household.`;
+      return `Warning: A member named "${memberDisplayName(matches[0])}" already exists in this family.`;
     }
     return "";
   }, [
@@ -2426,7 +2441,7 @@ export default function FamilyManagement({
     const rel = member.relationship_to_head || "";
     const normalizedRel =
       member.is_head_of_family || rel.toLowerCase() === "self"
-        ? "Household Head"
+        ? "Family Head"
         : rel || "";
     const rawGender = String(member.gender || "").trim();
     const normalizedGender =
@@ -2513,7 +2528,7 @@ export default function FamilyManagement({
         date_of_birth: memberModalForm.date_of_birth || null,
         gender: memberModalForm.gender || null,
         relationship_to_head: memberModalForm.is_head_of_family
-          ? "Household Head"
+          ? "Family Head"
           : memberModalForm.relationship_to_head.trim(),
         contact_number: memberModalForm.contact_number.trim() || null,
         alternate_contact: memberModalForm.alternate_contact.trim() || null,
@@ -2567,9 +2582,9 @@ export default function FamilyManagement({
     if (!activeFamily || !member || member.is_head_of_family) return;
     const name = memberDisplayName(member);
     setConfirmDialog({
-      title: "Set as Household Head",
-      message: `Designate "${name}" as the new Household Head of ${activeFamily.family_code}? The previous household head (${activeFamily.head_name}) will remain in the household as a regular member.`,
-      confirmText: "Set as Household Head",
+      title: "Set as Family Head",
+      message: `Designate "${name}" as the new Family Head of ${activeFamily.family_code}? The previous family head (${activeFamily.head_name}) will remain in the family as a regular member.`,
+      confirmText: "Set as Family Head",
       danger: false,
       onConfirm: async () => {
         try {
@@ -2579,10 +2594,10 @@ export default function FamilyManagement({
           setConfirmDialog(null);
           await refreshAllData(activeFamily.id);
           setNotice(
-            res.message || `"${name}" is now the Household Head of ${activeFamily.family_code}.`
+            res.message || `"${name}" is now the Family Head of ${activeFamily.family_code}.`
           );
         } catch (err) {
-          setError(err.message || "Failed to change household head.");
+          setError(err.message || "Failed to change family head.");
         }
       },
     });
@@ -2592,14 +2607,14 @@ export default function FamilyManagement({
     if (!activeFamily || !member) return;
     if (member.is_head_of_family) {
       setError(
-        "Cannot remove the household head directly. Please designate another family member as the Household Head first, or delete the entire household."
+        "Cannot remove the family head directly. Please designate another family member as the Family Head first, or delete the entire family."
       );
       return;
     }
     const name = memberDisplayName(member);
     setConfirmDialog({
       title: "Remove Family Member",
-      message: `Are you sure you want to remove "${name}" from household ${activeFamily.family_code}?`,
+      message: `Are you sure you want to remove "${name}" from family ${activeFamily.family_code}?`,
       confirmText: "Remove Member",
       danger: true,
       onConfirm: async () => {
@@ -2614,7 +2629,7 @@ export default function FamilyManagement({
             setSelectedMemberId(null);
           }
           await refreshAllData(activeFamily.id);
-          setNotice(res.message || `Removed "${name}" from household.`);
+          setNotice(res.message || `Removed "${name}" from family.`);
         } catch (err) {
           setError(err.message || "Failed to remove member.");
         }
@@ -2629,14 +2644,14 @@ export default function FamilyManagement({
     if (!fam) return;
     if (isFamilyAssigned(fam)) {
       setError(
-        "Cannot delete a household with an active room assignment. Please unassign the household first."
+        "Cannot delete a family with an active room assignment. Please unassign the family first."
       );
       return;
     }
     setConfirmDialog({
-      title: "Delete Household Record",
-      message: `Are you sure you want to delete household "${fam.head_name}" (${fam.family_code || "#" + fam.id})? This will permanently remove the household and its ${fam.member_count || 1} member record(s).`,
-      confirmText: "Delete Household",
+      title: "Delete Family Record",
+      message: `Are you sure you want to delete family "${fam.head_name}" (${fam.family_code || "#" + fam.id})? This will permanently remove the family and its ${fam.member_count || 1} member record(s).`,
+      confirmText: "Delete Family",
       danger: true,
       onConfirm: async () => {
         try {
@@ -2648,9 +2663,9 @@ export default function FamilyManagement({
             setSelectedFamilyId(null);
           }
           await refreshAllData();
-          setNotice(res.message || `Household "${fam.head_name}" deleted.`);
+          setNotice(res.message || `Family "${fam.head_name}" deleted.`);
         } catch (err) {
-          setError(err.message || "Failed to delete household.");
+          setError(err.message || "Failed to delete family.");
         }
       },
     });
@@ -2730,7 +2745,7 @@ export default function FamilyManagement({
       const available = getCenterRemainingCapacity(selectedCenter);
       if (needed > available) {
         setError(
-          `${selectedCenter?.name || "Selected center"} only has ${available} space(s) available, but this household has ${needed} member(s).`
+          `${selectedCenter?.name || "Selected center"} only has ${available} space(s) available, but this family has ${needed} member(s).`
         );
         return;
       }
@@ -2753,9 +2768,14 @@ export default function FamilyManagement({
       if (!room) return;
 
       const available = getRoomRemainingCapacity(room);
+      const availableSlots = getRoomAvailableSlots(room);
+      if (availableSlots < 1) {
+        setError(`${formatRoomLabel(room.room_number)} has no family slots available.`);
+        return;
+      }
       if (needed > available) {
         setError(
-          `${formatRoomLabel(room.room_number)} only has ${available} space(s) available, but this household has ${needed} member(s).`
+          `${formatRoomLabel(room.room_number)} only has ${available} people space(s) available, but this family has ${needed} member(s).`
         );
         return;
       }
@@ -2770,12 +2790,12 @@ export default function FamilyManagement({
       });
       await refreshAllData(activeFamily.id);
       const message = isDirectCenter
-        ? `Household assigned to ${selectedCenter?.name || "evacuation center"}.`
-        : `Household assigned to ${formatRoomLabel(assignRooms.find((r) => String(r.id) === String(assignRoomId))?.room_number)}.`;
+        ? `Family assigned to ${selectedCenter?.name || "evacuation center"}.`
+        : `Family assigned to ${formatRoomLabel(assignRooms.find((r) => String(r.id) === String(assignRoomId))?.room_number)}.`;
       setNotice(result.message || message);
       setModal("");
     } catch (requestError) {
-      setError(requestError.message || "Failed to assign household.");
+      setError(requestError.message || "Failed to assign family.");
     } finally {
       setAssigning(false);
     }
@@ -2837,7 +2857,7 @@ export default function FamilyManagement({
       const available = getCenterRemainingCapacity(destCenter);
       if (needed > available) {
         setError(
-          `${destCenter?.name || "Destination center"} only has ${available} space(s) available, but this household needs ${needed}.`
+          `${destCenter?.name || "Destination center"} only has ${available} space(s) available, but this family needs ${needed}.`
         );
         return;
       }
@@ -2860,9 +2880,14 @@ export default function FamilyManagement({
       if (!destRoom) return;
 
       const available = getRoomRemainingCapacity(destRoom);
+      const availableSlots = getRoomAvailableSlots(destRoom);
+      if (availableSlots < 1) {
+        setError("Destination room has no family slots available.");
+        return;
+      }
       if (needed > available) {
         setError(
-          `Destination room only has ${available} space(s) available, but this household needs ${needed}.`
+          `Destination room only has ${available} people space(s) available, but this family needs ${needed}.`
         );
         return;
       }
@@ -2873,9 +2898,9 @@ export default function FamilyManagement({
         ? "Confirm Center Transfer"
         : "Confirm Room Transfer",
       message: isDestDirectCenter
-        ? `Move household "${activeFamily.head_name}" (${needed} member${needed === 1 ? "" : "s"}) to ${destCenter ? displayEntityName(destCenter.name) : "selected center"}? Occupancy will update automatically.`
-        : `Move household "${activeFamily.head_name}" (${needed} member${needed === 1 ? "" : "s"}) to ${destCenter ? displayEntityName(destCenter.name) + " — " : ""}${formatRoomLabel(targetRooms.find((r) => String(r.id) === String(targetRoomId))?.room_number)}? Occupancy in both rooms will update automatically.`,
-      confirmText: "Transfer Household",
+        ? `Move family "${activeFamily.head_name}" (${needed} member${needed === 1 ? "" : "s"}) to ${destCenter ? displayEntityName(destCenter.name) : "selected center"}? Occupancy will update automatically.`
+        : `Move family "${activeFamily.head_name}" (${needed} member${needed === 1 ? "" : "s"}) to ${destCenter ? displayEntityName(destCenter.name) + " — " : ""}${formatRoomLabel(targetRooms.find((r) => String(r.id) === String(targetRoomId))?.room_number)}? Occupancy in both rooms will update automatically.`,
+      confirmText: "Transfer Family",
       danger: false,
       onConfirm: async () => {
         setMoving(true);
@@ -2889,11 +2914,11 @@ export default function FamilyManagement({
           setModal("");
           await refreshAllData(activeFamily.id);
           const message = isDestDirectCenter
-            ? `Household transferred to ${destCenter?.name}.`
-            : `Household transferred to ${formatRoomLabel(targetRooms.find((r) => String(r.id) === String(targetRoomId))?.room_number)}.`;
+            ? `Family transferred to ${destCenter?.name}.`
+            : `Family transferred to ${formatRoomLabel(targetRooms.find((r) => String(r.id) === String(targetRoomId))?.room_number)}.`;
           setNotice(res.message || message);
         } catch (err) {
-          setError(err.message || "Failed to transfer household.");
+          setError(err.message || "Failed to transfer family.");
         } finally {
           setMoving(false);
         }
@@ -2910,11 +2935,11 @@ export default function FamilyManagement({
     const isSingleVenue = fam.current_center_type === 'single_venue';
 
     setConfirmDialog({
-      title: isSingleVenue ? "Unassign Household from Venue" : "Unassign Household from Room",
+      title: isSingleVenue ? "Unassign Family from Venue" : "Unassign Family from Room",
       message: isSingleVenue
-        ? `Unassign household "${fam.head_name}" (${memberCount} member${memberCount === 1 ? "" : "s"}) from ${displayEntityName(currentCenter)}? This will release ${memberCount} space(s).`
-        : `Unassign household "${fam.head_name}" (${memberCount} member${memberCount === 1 ? "" : "s"}) from ${displayEntityName(currentCenter)} — ${formatRoomLabel(currentRoom)}? This will release ${memberCount} space(s).`,
-      confirmText: "Unassign Household",
+        ? `Unassign family "${fam.head_name}" (${memberCount} member${memberCount === 1 ? "" : "s"}) from ${displayEntityName(currentCenter)}? This will release ${memberCount} space(s).`
+        : `Unassign family "${fam.head_name}" (${memberCount} member${memberCount === 1 ? "" : "s"}) from ${displayEntityName(currentCenter)} — ${formatRoomLabel(currentRoom)}? This will release ${memberCount} space(s).`,
+      confirmText: "Unassign Family",
       danger: true,
       onConfirm: async () => {
         try {
@@ -2922,10 +2947,10 @@ export default function FamilyManagement({
           setConfirmDialog(null);
           await refreshAllData(fam.id);
           setNotice(
-            res.message || `Household "${fam.head_name}" unassigned.`
+            res.message || `Family "${fam.head_name}" unassigned.`
           );
         } catch (err) {
-          setError(err.message || "Failed to unassign household.");
+          setError(err.message || "Failed to unassign family.");
         }
       },
     });
@@ -2961,11 +2986,11 @@ export default function FamilyManagement({
         : "all-barangays";
       saveBlob(
         await api.exportFamilies(filters),
-        `evacway-households-${slug}.csv`
+        `evacway-families-${slug}.csv`
       );
     } catch (requestError) {
       setError(
-        requestError.message || "The household list could not be exported."
+        requestError.message || "The family list could not be exported."
       );
     }
   }
@@ -2979,7 +3004,7 @@ export default function FamilyManagement({
     activeFamily?.member_count || activeFamily?.resident_count || 1;
   const assignRoomAvailable = getRoomRemainingCapacity(selectedAssignRoom);
   const assignHasCapacity = selectedAssignRoom
-    ? assignRoomAvailable >= assignFamilyMembers
+    ? getRoomAvailableSlots(selectedAssignRoom) >= 1 && assignRoomAvailable >= assignFamilyMembers
     : false;
 
   const selectedTargetRoom = targetRooms.find(
@@ -2989,7 +3014,7 @@ export default function FamilyManagement({
     activeFamily?.member_count || activeFamily?.resident_count || 1;
   const targetRoomAvailable = getRoomRemainingCapacity(selectedTargetRoom);
   const moveHasCapacity = selectedTargetRoom
-    ? targetRoomAvailable >= moveFamilyMembers
+    ? getRoomAvailableSlots(selectedTargetRoom) >= 1 && targetRoomAvailable >= moveFamilyMembers
     : false;
 
   // =========================================================
@@ -3016,7 +3041,7 @@ export default function FamilyManagement({
       ? RELATIONSHIP_OPTIONS
       : RELATIONSHIP_OPTIONS.filter(
           (rel) =>
-            rel.toLowerCase() !== "household head" &&
+            rel.toLowerCase() !== "family head" &&
             rel.toLowerCase() !== "self"
         );
 
@@ -3531,7 +3556,7 @@ export default function FamilyManagement({
         compactMobileAllHouseholds ? "is-compact-mobile-all-households" : ""
       }`.trim()}
       data-screen={activeScreen}
-      aria-label="Household and Resident Management"
+      aria-label="Family and Resident Management"
     >
       {/* Feedback Banners */}
       {error && !modal && !isAddWizardOpen && (
@@ -3571,11 +3596,11 @@ export default function FamilyManagement({
             <div className="fm-modal-header fm-wizard-modal-header">
               <div>
                 <div className="fm-wizard-modal-title-row">
-                  <h3 id="fm-add-household-modal-title">Add Household</h3>
+                  <h3 id="fm-add-household-modal-title">Add Family</h3>
                   <span className="fm-step-pill">Step {wizardStep} of 4</span>
                 </div>
                 <p>
-                  Follow the steps below to register the household, head of household, and members.
+                  Follow the steps below to register the family, head of family, and members.
                 </p>
               </div>
               <button
@@ -3662,9 +3687,9 @@ export default function FamilyManagement({
             {wizardStep === 1 && (
               <div className="fm-step-panel">
                 <div className="fm-step-intro">
-                  <h4>Step 1: Household Details</h4>
+                  <h4>Step 1: Family Details</h4>
                   <p>
-                    Enter the barangay, complete household address or purok, contact numbers, and optional remarks.
+                    Enter the barangay, complete family address or purok, contact numbers, and optional remarks.
                   </p>
                 </div>
 
@@ -3713,7 +3738,7 @@ export default function FamilyManagement({
                     className={`fm-field ${wizardTouched.address && wizardStep1Errors.address ? "has-error" : ""}`}
                   >
                     <span>
-                      Complete Household Address / Purok{" "}
+                      Complete Family Address / Purok{" "}
                       <strong className="fm-req">*</strong>
                     </span>
                     <input
@@ -3748,7 +3773,7 @@ export default function FamilyManagement({
                   <label
                     className={`fm-field ${wizardTouched.contact_number && wizardStep1Errors.contact_number ? "has-error" : ""}`}
                   >
-                    <span>Household Contact Number</span>
+                    <span>Family Contact Number</span>
                     <input
                       id="fm-wizard-contact"
                       type="text"
@@ -3814,7 +3839,7 @@ export default function FamilyManagement({
 
                 <div className="fm-form-grid-1">
                   <label className="fm-field">
-                    <span>Household Remarks / Evacuation Notes</span>
+                    <span>Family Remarks / Evacuation Notes</span>
                     <textarea
                       rows={2}
                       value={wizardForm.remarks}
@@ -3824,7 +3849,7 @@ export default function FamilyManagement({
                           remarks: e.target.value,
                         }))
                       }
-                      placeholder="Optional household-level notes or special evacuation instructions"
+                      placeholder="Optional family-level notes or special evacuation instructions"
                     />
                   </label>
                 </div>
@@ -3837,13 +3862,13 @@ export default function FamilyManagement({
                 <div className="fm-step-intro">
                   <div className="fm-step-intro-row">
                     <div>
-                      <h4>Step 2: Household Head Profile</h4>
+                      <h4>Step 2: Family Head Profile</h4>
                       <p>
-                        Personal details and health information for the designated household head (must be 18 or older).
+                        Personal details and health information for the designated family head (must be 18 or older).
                       </p>
                     </div>
                     <span className="fm-badge fm-badge-blue">
-                      <FontAwesomeIcon icon={faUserCheck} /> Household Head
+                      <FontAwesomeIcon icon={faUserCheck} /> Family Head
                     </span>
                   </div>
                 </div>
@@ -3884,10 +3909,10 @@ export default function FamilyManagement({
                 <div className="fm-step-intro">
                   <div className="fm-step-intro-row">
                     <div>
-                      <h4>Step 3: Additional Household Members</h4>
+                      <h4>Step 3: Additional Family Members</h4>
                       <p>
-                        Add all additional residents living in this household.
-                        Single-person households can proceed directly to Step 4.
+                        Add all additional residents living in this family.
+                        Single-person families can proceed directly to Step 4.
                       </p>
                     </div>
                     {editingOtherIndex === null && (
@@ -3912,7 +3937,7 @@ export default function FamilyManagement({
                       <div className="fm-member-title-row">
                         <strong>{memberDisplayName(wizardForm.head)}</strong>
                         <span className="fm-badge fm-badge-blue">
-                          Household Head
+                          Family Head
                         </span>
                       </div>
                       <p className="fm-member-sub">
@@ -3938,8 +3963,8 @@ export default function FamilyManagement({
                     <div className="fm-member-draft-header">
                       <h5>
                         {editingOtherIndex === "new"
-                          ? "Add Household Member"
-                          : `Edit Household Member #${editingOtherIndex + 2}`}
+                          ? "Add Family Member"
+                          : `Edit Family Member #${editingOtherIndex + 2}`}
                       </h5>
                       <button
                         type="button"
@@ -3995,11 +4020,11 @@ export default function FamilyManagement({
                   <div className="fm-empty-inline">
                     <FontAwesomeIcon icon={faUsers} />
                     <div>
-                      <strong>No additional household members added yet</strong>
+                      <strong>No additional family members added yet</strong>
                       <p>
                         Click &ldquo;Add Another Member&rdquo; above to add
                         dependents, or click &ldquo;Next&rdquo; if this is
-                        a single-person household.
+                        a single-person family.
                       </p>
                     </div>
                   </div>
@@ -4018,7 +4043,7 @@ export default function FamilyManagement({
                               <div className="fm-member-title-row">
                                 <strong>{memberDisplayName(member)}</strong>
                                 <span className="fm-badge fm-badge-neutral">
-                                  {member.relationship_to_head || "Member"}
+                                  {familyTerm(member.relationship_to_head || "Member")}
                                 </span>
                                 {badges.map((b, bIdx) => (
                                   <span
@@ -4067,7 +4092,7 @@ export default function FamilyManagement({
                 <div className="fm-step-intro">
                   <h4>Step 4: Evacuation Assignment & Confirm Registration</h4>
                   <p>
-                    Optionally assign this household ({1 + wizardForm.otherMembers.length}{" "}
+                    Optionally assign this family ({1 + wizardForm.otherMembers.length}{" "}
                     total member{wizardForm.otherMembers.length === 0 ? "" : "s"})
                     to an active evacuation center now, and review summary details before saving.
                   </p>
@@ -4094,7 +4119,7 @@ export default function FamilyManagement({
                     <div>
                       <strong>Leave Unassigned for Now</strong>
                       <p>
-                        Register the household in the barangay registry without
+                        Register the family in the barangay registry without
                         occupying an evacuation center or room yet.
                       </p>
                     </div>
@@ -4148,13 +4173,13 @@ export default function FamilyManagement({
                     const wizardAvailableBldgs = getAvailableBuildingsForCenter(
                       selectedWizardCenter,
                       wizardRooms,
-                      0
+                      needed
                     );
                     const wizardFilteredRooms = getFilteredRoomsForSelection(
                       selectedWizardCenter,
                       wizardRooms,
                       wizardForm.assignment_building_id,
-                      0
+                      needed
                     );
                     const showCenterErr =
                       (wizardTouched.assignment_center_id ||
@@ -4323,13 +4348,14 @@ export default function FamilyManagement({
                                   const available =
                                     getRoomRemainingCapacity(room);
                                   const assigned = getRoomAssignedCount(room);
+                                  const slotsAvailable = getRoomAvailableSlots(room);
                                   return (
                                     <option key={room.id} value={room.id}>
                                       {formatRoomLabel(room.room_number)} —{" "}
-                                      {assigned}/{room.capacity} assigned (
-                                      {available <= 0
-                                        ? "Full"
-                                        : `${available} remaining`}
+                                      Slots {getRoomUsedSlots(room)}/{room.family_slots ?? 5} · Spaces {assigned}/{room.people_spaces ?? room.capacity ?? 25} (
+                                      {slotsAvailable < 1
+                                        ? "No slots"
+                                        : `${available} spaces left`}
                                       )
                                     </option>
                                   );
@@ -4390,7 +4416,7 @@ export default function FamilyManagement({
                                   </div>
                                   <div className="capacity-row">
                                     <span className="capacity-label">
-                                      Household to assign
+                                      Family to assign
                                     </span>
                                     <span className="capacity-value">
                                       {needed} members
@@ -4410,12 +4436,12 @@ export default function FamilyManagement({
                                 const available =
                                   getRoomRemainingCapacity(room);
                                 const assigned = getRoomAssignedCount(room);
+                                const slotsAvailable = getRoomAvailableSlots(room);
                                 const isSelected =
                                   String(wizardForm.assignment_room_id) ===
                                   String(room.id);
-                                const isFull = available <= 0;
-                                const isInsufficient =
-                                  !isFull && available < needed;
+                                const isFull = slotsAvailable <= 0 || available <= 0;
+                                const isInsufficient = !isFull && available < needed;
                                 return (
                                   <button
                                     key={room.id}
@@ -4443,8 +4469,8 @@ export default function FamilyManagement({
                                       </span>
                                     </div>
                                     <div className="fm-room-pick-meta">
-                                      <span>Capacity: {room.capacity}</span>
-                                      <span>Assigned: {assigned}</span>
+                                      <span>Slots: {getRoomUsedSlots(room)}/{room.family_slots ?? 5}</span>
+                                      <span>Spaces: {assigned}/{room.people_spaces ?? room.capacity ?? 25}</span>
                                     </div>
                                   </button>
                                 );
@@ -4458,7 +4484,7 @@ export default function FamilyManagement({
                 {/* Review Summary before submission */}
                 <div className="fm-step-intro" style={{ marginTop: "1.5rem" }}>
                   <h4>Registration Summary</h4>
-                  <p>Please review household details before saving.</p>
+                  <p>Please review family details before saving.</p>
                 </div>
 
                 <div className="fm-review-grid">
@@ -4466,7 +4492,7 @@ export default function FamilyManagement({
                   <div className="fm-review-card">
                     <div className="fm-review-card-header">
                       <h5>
-                        <FontAwesomeIcon icon={faHouse} /> Household & Head
+                        <FontAwesomeIcon icon={faHouse} /> Family & Head
                       </h5>
                       <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
                         <button
@@ -4496,7 +4522,7 @@ export default function FamilyManagement({
                         </dd>
                       </div>
                       <div>
-                        <dt>Household Head</dt>
+                        <dt>Family Head</dt>
                         <dd><strong>{memberDisplayName(wizardForm.head) || "—"}</strong></dd>
                       </div>
                       <div>
@@ -4544,7 +4570,7 @@ export default function FamilyManagement({
                               Unassigned
                             </span>
                             <p>
-                              Household will be registered in the barangay
+                              Family will be registered in the barangay
                               registry without an active center assignment.
                             </p>
                           </div>
@@ -4606,7 +4632,7 @@ export default function FamilyManagement({
                 <div className="fm-review-card" style={{ marginTop: "1rem" }}>
                   <div className="fm-review-card-header">
                     <h5>
-                      <FontAwesomeIcon icon={faUsers} /> Household Members ({1 + wizardForm.otherMembers.length})
+                      <FontAwesomeIcon icon={faUsers} /> Family Members ({1 + wizardForm.otherMembers.length})
                     </h5>
                     <button
                       type="button"
@@ -4644,11 +4670,11 @@ export default function FamilyManagement({
                                   <strong>{memberDisplayName(member)}</strong>
                                   {member.is_head_of_family ? (
                                     <span className="fm-badge fm-badge-blue">
-                                      Household Head
+                                      Family Head
                                     </span>
                                   ) : (
                                     <span className="fm-badge fm-badge-neutral">
-                                      {member.relationship_to_head || "Member"}
+                                      {familyTerm(member.relationship_to_head || "Member")}
                                     </span>
                                   )}
                                   {badges.map((b, bIdx) => (
@@ -4741,7 +4767,7 @@ export default function FamilyManagement({
         const barangayLabel =
           lockedBarangayName ||
           activeFamily?.barangay ||
-          "All Households";
+          "All Families";
 
         return (
           <div className="fm-detail-page fm-member-detail-page">
@@ -4770,7 +4796,7 @@ export default function FamilyManagement({
                       className="fm-detail-breadcrumb-link"
                       onClick={backToHouseholdList}
                     >
-                      <span>{lockedBarangayName ? barangayLabel : "All Households"}</span>
+                      <span>{lockedBarangayName ? barangayLabel : "All Families"}</span>
                     </button>
                   </>
                 ) : (
@@ -4783,7 +4809,7 @@ export default function FamilyManagement({
                       icon={faArrowLeft}
                       className="fm-detail-breadcrumb-icon"
                     />
-                    <span>Households</span>
+                    <span>Families</span>
                   </button>
                 )}
                 <FontAwesomeIcon
@@ -4796,7 +4822,7 @@ export default function FamilyManagement({
                   className="fm-detail-breadcrumb-link"
                   onClick={backToHouseholdDetails}
                 >
-                  <span>{activeFamily.head_name || "Household Details"}</span>
+                  <span>{activeFamily.head_name || "Family Details"}</span>
                 </button>
                 <FontAwesomeIcon
                   icon={faChevronRight}
@@ -4818,7 +4844,7 @@ export default function FamilyManagement({
                         onClick={() => confirmPromoteToHead(activeMember)}
                       >
                         <FontAwesomeIcon icon={faUserCheck} />
-                        <span>Set as Household Head</span>
+                        <span>Set as Family Head</span>
                       </button>
                       <button
                         type="button"
@@ -4860,11 +4886,11 @@ export default function FamilyManagement({
                       <h3>{memberDisplayName(activeMember)}</h3>
                       {activeMember.is_head_of_family ? (
                         <span className="fm-badge fm-badge-blue">
-                          Household Head
+                          Family Head
                         </span>
                       ) : (
                         <span className="fm-badge fm-badge-neutral">
-                          {activeMember.relationship_to_head || "Family Member"}
+                          {familyTerm(activeMember.relationship_to_head || "Family Member")}
                         </span>
                       )}
                       <span
@@ -4880,7 +4906,7 @@ export default function FamilyManagement({
                       </span>
                     </div>
                     <p className="fm-profile-subtitle">
-                      Household {activeFamily.family_code} (Head: {activeFamily.head_name}) • Barangay{" "}
+                      Family {activeFamily.family_code} (Head: {activeFamily.head_name}) • Barangay{" "}
                       {activeMember.barangay || activeFamily.barangay || "N/A"}
                     </p>
                   </div>
@@ -4946,15 +4972,15 @@ export default function FamilyManagement({
                       <dt>Relationship to Head</dt>
                       <dd>
                         {activeMember.is_head_of_family
-                          ? "Household Head"
-                          : activeMember.relationship_to_head || "N/A"}
+                          ? "Family Head"
+                          : familyTerm(activeMember.relationship_to_head || "N/A")}
                       </dd>
                     </div>
                     <div>
-                      <dt>Household Head</dt>
+                      <dt>Family Head</dt>
                       <dd>
                         {activeMember.is_head_of_family
-                          ? "Yes — Household Head"
+                          ? "Yes — Family Head"
                           : `No (${activeFamily.head_name})`}
                       </dd>
                     </div>
@@ -4971,7 +4997,7 @@ export default function FamilyManagement({
                       <dd>{activeMember.alternate_contact || "N/A"}</dd>
                     </div>
                     <div>
-                      <dt>Household Address</dt>
+                      <dt>Family Address</dt>
                       <dd>
                         {activeMember.address ||
                           activeFamily.address ||
@@ -5067,17 +5093,17 @@ export default function FamilyManagement({
                   <h4>
                     <FontAwesomeIcon icon={faBuilding} />
                     {getFamilyStructureMode(activeFamily) === "open_area"
-                      ? "Household & Evacuation Center Assignment"
-                      : "Household & Evacuation Room Assignment"}
+                      ? "Family & Evacuation Center Assignment"
+                      : "Family & Evacuation Room Assignment"}
                   </h4>
                 </div>
                 <dl className="fm-dl-grid">
                   <div>
-                    <dt>Household ID</dt>
+                    <dt>Family ID</dt>
                     <dd>{activeFamily.family_code}</dd>
                   </div>
                   <div>
-                    <dt>Household Head</dt>
+                    <dt>Family Head</dt>
                     <dd>{activeFamily.head_name}</dd>
                   </div>
                   <div>
@@ -5142,10 +5168,10 @@ export default function FamilyManagement({
         const barangayLabel =
           lockedBarangayName ||
           activeFamily?.barangay ||
-          "All Households";
+          "All Families";
 
         return (
-          <div className="fm-detail-page fm-household-detail-page">
+          <div className="fm-detail-page fm-family-detail-page">
             <div className="fm-detail-topline">
               <nav className="fm-detail-breadcrumb" aria-label="Breadcrumb">
                 {typeof onBackToBarangays === "function" ? (
@@ -5171,7 +5197,7 @@ export default function FamilyManagement({
                       className="fm-detail-breadcrumb-link"
                       onClick={backToHouseholdList}
                     >
-                      <span>{lockedBarangayName ? barangayLabel : "All Households"}</span>
+                      <span>{lockedBarangayName ? barangayLabel : "All Families"}</span>
                     </button>
                   </>
                 ) : (
@@ -5184,7 +5210,7 @@ export default function FamilyManagement({
                       icon={faArrowLeft}
                       className="fm-detail-breadcrumb-icon"
                     />
-                    <span>Households</span>
+                    <span>Families</span>
                   </button>
                 )}
                 <FontAwesomeIcon
@@ -5193,16 +5219,16 @@ export default function FamilyManagement({
                   aria-hidden="true"
                 />
                 <span className="fm-detail-breadcrumb-current">
-                  {activeFamily?.head_name || "Household Details"}
+                  {activeFamily?.head_name || "Family Details"}
                 </span>
               </nav>
             </div>
 
             {familyDetailQuery.isLoading && !activeFamily ? (
-              <LoadingState message="Loading household details..." />
+              <LoadingState message="Loading family details..." />
             ) : !activeFamily ? (
               <div className="fm-empty-state">
-                <p>Household record could not be found.</p>
+                <p>Family record could not be found.</p>
               </div>
             ) : (
               <>
@@ -5239,7 +5265,7 @@ export default function FamilyManagement({
                           onClick={() => openEditHouseholdModal(activeFamily)}
                         >
                           <FontAwesomeIcon icon={faPenToSquare} />
-                          <span>Edit Household</span>
+                          <span>Edit Family</span>
                         </button>
                         {canDeleteHousehold && (
                           <button
@@ -5257,7 +5283,7 @@ export default function FamilyManagement({
                         <button
                           type="button"
                           className="fm-detail-menu-trigger"
-                          aria-label="Household actions"
+                          aria-label="Family actions"
                           aria-expanded={detailMenuOpen}
                           aria-haspopup="menu"
                           onClick={() => setDetailMenuOpen((prev) => !prev)}
@@ -5276,7 +5302,7 @@ export default function FamilyManagement({
                               }}
                             >
                               <FontAwesomeIcon icon={faPenToSquare} />
-                              <span>Edit Household</span>
+                              <span>Edit Family</span>
                             </button>
                             {canDeleteHousehold && (
                               <button
@@ -5318,7 +5344,7 @@ export default function FamilyManagement({
                 <div className="fm-info-panel">
                   <div className="fm-info-panel-header">
                     <h4>
-                      <FontAwesomeIcon icon={faHouse} /> Household Details
+                      <FontAwesomeIcon icon={faHouse} /> Family Details
                     </h4>
                     <button
                       type="button"
@@ -5330,7 +5356,7 @@ export default function FamilyManagement({
                   </div>
                   <dl className="fm-dl-grid">
                     <div>
-                      <dt>Household Code</dt>
+                      <dt>Family Code</dt>
                       <dd>{activeFamily.family_code}</dd>
                     </div>
                     <div>
@@ -5411,25 +5437,23 @@ export default function FamilyManagement({
                               </dd>
                             </div>
                             <div>
-                              <dt>Room Capacity</dt>
+                              <dt>Family Slots</dt>
                               <dd>
-                                {activeFamily.current_room_capacity ??
-                                  activeFamily.assignments?.[0]?.room_capacity ??
+                                {activeFamily.current_room_family_slots ??
+                                  activeFamily.assignments?.[0]?.room_family_slots ??
                                   "—"}
                               </dd>
                             </div>
                             <div>
-                              <dt>Room Occupancy</dt>
+                              <dt>People Spaces</dt>
                               <dd>
-                                {activeFamily.current_room_occupied ?? 0} of{" "}
+                                {activeFamily.current_room_assigned ??
+                                  activeFamily.assigned_members ??
+                                  0} of{" "}
                                 {activeFamily.current_room_capacity ??
                                   activeFamily.assignments?.[0]?.room_capacity ??
                                   "—"}{" "}
-                                here ·{" "}
-                                {activeFamily.current_room_assigned ??
-                                  activeFamily.assigned_members ??
-                                  "—"}{" "}
-                                assigned
+                                total
                               </dd>
                             </div>
                           </>
@@ -5484,7 +5508,7 @@ export default function FamilyManagement({
                   ) : (
                     <div className="fm-assignment-empty-box">
                       <p>
-                        This household is currently{" "}
+                        This family is currently{" "}
                         <strong>Unassigned</strong> to any evacuation center.
                       </p>
                       <button
@@ -5582,7 +5606,7 @@ export default function FamilyManagement({
                                     <strong className="fm-row-link-text">{displayName}</strong>
                                     {member.is_head_of_family && (
                                       <span className="fm-badge fm-badge-blue">
-                                        Household Head
+                                        Family Head
                                       </span>
                                     )}
                                   </div>
@@ -5590,8 +5614,8 @@ export default function FamilyManagement({
                                 <td>
                                   {member.is_head_of_family
                                     ? "Self (Head)"
-                                    : member.relationship_to_head ||
-                                      "Family Member"}
+                                    : familyTerm(member.relationship_to_head ||
+                                      "Family Member")}
                                 </td>
                                 <td>
                                   {member.date_of_birth ? (
@@ -5645,8 +5669,8 @@ export default function FamilyManagement({
                         const badges = getVulnerabilityBadges(member);
                         const displayName = memberDisplayName(member);
                         const roleLabel = member.is_head_of_family
-                          ? "Household Head"
-                          : member.relationship_to_head || "Family Member";
+                          ? "Family Head"
+                          : familyTerm(member.relationship_to_head || "Family Member");
                         const metaParts = [
                           member.gender || "N/A",
                           age !== null ? `${age} yrs` : null,
@@ -5793,12 +5817,12 @@ export default function FamilyManagement({
               <div>
                 <h3>
                   {lockedBarangayName
-                    ? `Households in ${lockedBarangayName}`
-                    : "Registered Households"}
+                    ? `Families in ${lockedBarangayName}`
+                    : "Registered Families"}
                 </h3>
                 <p>
-                  Search households, filter by evacuation assignment status, and
-                  manage household members and room assignments.
+                  Search families, filter by evacuation assignment status, and
+                  manage family members and room assignments.
                 </p>
               </div>
               <div className="fm-list-actions">
@@ -5807,7 +5831,7 @@ export default function FamilyManagement({
                   className="fm-btn fm-btn-primary"
                   onClick={openAddFamilyWizard}
                 >
-                  <FontAwesomeIcon icon={faPlus} /> Add Household
+                  <FontAwesomeIcon icon={faPlus} /> Add Family
                 </button>
                 <button
                   type="button"
@@ -5830,8 +5854,8 @@ export default function FamilyManagement({
                 onChange={(e) => setSearchInput(e.target.value)}
                 placeholder={
                   compactMobileAllHouseholds && isMobileViewport
-                    ? "Search households"
-                    : "Search by household ID, household head, or member name..."
+                    ? "Search families"
+                    : "Search by family ID, family head, or member name..."
                 }
               />
             </label>
@@ -5910,10 +5934,10 @@ export default function FamilyManagement({
                 setSortBy(nextSort);
                 setDirection(nextDir);
               }}
-              aria-label="Sort households"
+              aria-label="Sort families"
             >
-              <option value="family_code:asc">Household ID (A–Z)</option>
-              <option value="head_name:asc">Household Head (A–Z)</option>
+              <option value="family_code:asc">Family ID (A–Z)</option>
+              <option value="head_name:asc">Family Head (A–Z)</option>
               <option value="member_count:desc">Most Members</option>
               <option value="created_at:desc">Recently Added</option>
             </select>
@@ -5921,15 +5945,15 @@ export default function FamilyManagement({
 
           {/* Household List Content */}
           {loading ? (
-            <LoadingState message="Loading households..." />
+            <LoadingState message="Loading families..." />
           ) : families.length === 0 ? (
             <div className="fm-empty-state">
               <FontAwesomeIcon icon={faUsers} />
-              <h4>No households found</h4>
+              <h4>No families found</h4>
               <p>
                 {search || assignmentStatus
-                  ? "No households match your current search or filter criteria."
-                  : "Register a household using 'Add Household' to get started."}
+                  ? "No families match your current search or filter criteria."
+                  : "Register a family using 'Add Family' to get started."}
               </p>
               {!hideListHeader && (
                 <button
@@ -5937,7 +5961,7 @@ export default function FamilyManagement({
                   className="fm-btn fm-btn-primary"
                   onClick={openAddFamilyWizard}
                 >
-                  <FontAwesomeIcon icon={faPlus} /> Add Household
+                  <FontAwesomeIcon icon={faPlus} /> Add Family
                 </button>
               )}
             </div>
@@ -5946,13 +5970,13 @@ export default function FamilyManagement({
               {/* Desktop Table */}
               <div ref={listTableWrapRef} className="fm-table-wrap fm-desktop-only">
                 <table
-                  className={`fm-table fm-households-table ${
+                  className={`fm-table fm-families-table ${
                     lockedBarangayId ? "is-barangay-tab" : "is-all-tab"
                   }`}
                 >
                   <thead>
                     <tr>
-                      <th className="fm-col-household">Household</th>
+                      <th className="fm-col-household">Family</th>
                       {!lockedBarangayId && <th className="fm-col-barangay">Barangay</th>}
                       <th>Members</th>
                       <th>Building &middot; Room</th>
@@ -5980,7 +6004,7 @@ export default function FamilyManagement({
                           key={fam.id}
                           className="fm-table-row fm-clickable-row"
                           tabIndex={0}
-                          aria-label={`View household details for ${fam.head_name}`}
+                          aria-label={`View family details for ${fam.head_name}`}
                           onClick={() => openHouseholdDetails(fam)}
                           onKeyDown={(e) => {
                             if (e.key === "Enter" || e.key === " ") {
@@ -6054,8 +6078,8 @@ export default function FamilyManagement({
                               <button
                                 type="button"
                                 className="fm-btn-icon edit"
-                                aria-label="Edit household"
-                                title="Edit household"
+                                aria-label="Edit family"
+                                title="Edit family"
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   openEditHouseholdModal(fam);
@@ -6130,7 +6154,7 @@ export default function FamilyManagement({
                         }`}
                         role="button"
                         tabIndex={0}
-                        aria-label={`View household details for ${fam.head_name}`}
+                        aria-label={`View family details for ${fam.head_name}`}
                         onClick={() => openHouseholdDetails(fam)}
                         onKeyDown={(e) => {
                           if (e.key === "Enter" || e.key === " ") {
@@ -6381,7 +6405,7 @@ export default function FamilyManagement({
                       setPage(1);
                       setPageSize(Number(e.target.value));
                     }}
-                    aria-label="Select households per page"
+                    aria-label="Select families per page"
                   >
                     <option value={25}>25</option>
                     <option value={50}>50</option>
@@ -6451,17 +6475,17 @@ export default function FamilyManagement({
             <div className="fm-modal-header">
               <div>
                 <h3>
-                  {modal === "edit-household" && "Edit Household Information"}
+                  {modal === "edit-household" && "Edit Family Information"}
                   {modal === "member-form" &&
                     (memberModalMode === "add"
-                      ? "Add Household Member"
-                      : "Edit Household Member")}
-                  {modal === "assign" && "Assign Household to Evacuation Center"}
+                      ? "Add Family Member"
+                      : "Edit Family Member")}
+                  {modal === "assign" && "Assign Family to Evacuation Center"}
                   {modal === "move" && "Change Assigned Evacuation Center / Room"}
                 </h3>
                 <p>
                   {modal === "edit-household" &&
-                    `Update shared household details for ${activeFamily?.family_code || ""}.`}
+                    `Update shared family details for ${activeFamily?.family_code || ""}.`}
                   {modal === "member-form" &&
                     `Household: ${activeFamily?.head_name || ""} (${activeFamily?.family_code || ""})`}
                   {modal === "assign" &&
@@ -6513,7 +6537,7 @@ export default function FamilyManagement({
                   <div className="fm-modal-body" ref={modalBodyRef}>
                     {activeFamily?.members && activeFamily.members.length > 1 && (
                       <label className="fm-field">
-                        <span>Designated Household Head (Select Member)</span>
+                        <span>Designated Family Head (Select Member)</span>
                         <select
                           value={editHouseholdForm.head_resident_id}
                           onChange={(e) => {
@@ -6535,7 +6559,7 @@ export default function FamilyManagement({
                               {memberDisplayName(m)}
                               {m.is_head_of_family
                                 ? " (Current Head)"
-                                : ` (${m.relationship_to_head || "Member"})`}
+                                : ` (${familyTerm(m.relationship_to_head || "Member")})`}
                             </option>
                           ))}
                         </select>
@@ -6544,7 +6568,7 @@ export default function FamilyManagement({
 
                     <div className="fm-form-grid-2">
                       <div className="fm-field">
-                        <span>Household Head</span>
+                        <span>Family Head</span>
                         <div className="fm-readonly-box fm-readonly-head-box">
                           <span>
                             {editHouseholdForm.head_name ||
@@ -6602,7 +6626,7 @@ export default function FamilyManagement({
                       className={`fm-field ${editShowErr("address") ? "has-error" : ""}`}
                     >
                       <span>
-                        Complete Household Address{" "}
+                        Complete Family Address{" "}
                         <strong className="fm-req">*</strong>
                       </span>
                       <input
@@ -6751,7 +6775,7 @@ export default function FamilyManagement({
                       className={`fm-field ${editShowErr("remarks") ? "has-error" : ""}`}
                     >
                       <span className="fm-field-label-row">
-                        <span>Household Remarks</span>
+                        <span>Family Remarks</span>
                         <span className="fm-char-count">
                           {(editHouseholdForm.remarks || "").length}/500
                         </span>
@@ -6777,7 +6801,7 @@ export default function FamilyManagement({
                             ? "fm-edit-hh-remarks-error"
                             : undefined
                         }
-                        placeholder="Optional household notes"
+                        placeholder="Optional family notes"
                       />
                       {editShowErr("remarks") && (
                         <small
@@ -6856,8 +6880,8 @@ export default function FamilyManagement({
                             ...prev,
                             is_head_of_family: e.target.checked,
                             relationship_to_head: e.target.checked
-                              ? "Household Head"
-                              : prev.relationship_to_head === "Household Head"
+                              ? "Family Head"
+                              : prev.relationship_to_head === "Family Head"
                                 ? ""
                                 : prev.relationship_to_head,
                           }))
@@ -6867,8 +6891,8 @@ export default function FamilyManagement({
                         {activeFamily?.members?.find(
                           (m) => Number(m.id) === Number(memberModalTargetId)
                         )?.is_head_of_family
-                          ? "Current Household Head"
-                          : "Set this resident as the Household Head"}
+                          ? "Current Family Head"
+                          : "Set this resident as the Family Head"}
                       </span>
                     </label>
                   )}
@@ -6956,7 +6980,7 @@ export default function FamilyManagement({
                 <form onSubmit={submitAssignment} className="fm-modal-body">
                   <div className="fm-capacity-summary">
                     <div>
-                      <span>Household Head</span>
+                      <span>Family Head</span>
                       <strong>{activeFamily.head_name}</strong>
                     </div>
                     <div>
@@ -7035,7 +7059,7 @@ export default function FamilyManagement({
                           </div>
                           <div className="capacity-row">
                             <span className="capacity-label">
-                              Household to assign
+                              Family to assign
                             </span>
                             <span className="capacity-value">
                               {needed} members
@@ -7044,7 +7068,7 @@ export default function FamilyManagement({
                           {!venueHasCapacity && (
                             <p className="capacity-warning">
                               <FontAwesomeIcon icon={faTriangleExclamation} />{" "}
-                              Warning: this household has {needed} members but
+                              Warning: this family has {needed} members but
                               only {venueAvailable} space left. Assigning would
                               exceed center capacity.
                             </p>
@@ -7122,10 +7146,11 @@ export default function FamilyManagement({
                             </option>
                             {filteredRooms.map((r) => {
                               const avail = getRoomRemainingCapacity(r);
+                              const slots = Math.max(1, Number(r.family_slots ?? 5));
+                              const spaces = Math.max(1, Number(r.people_spaces ?? r.capacity ?? 25));
                               return (
                                 <option key={r.id} value={r.id}>
-                                  {formatRoomLabel(r.room_number)} ({avail}{" "}
-                                  available / {r.capacity} cap)
+                                  {formatRoomLabel(r.room_number)} · Slots {getRoomUsedSlots(r)}/{slots} · Spaces {getRoomAssignedCount(r)}/{spaces} ({getRoomAvailableSlots(r)} slots, {avail} spaces left)
                                 </option>
                               );
                             })}
@@ -7138,18 +7163,16 @@ export default function FamilyManagement({
                           className={`fm-room-preview ${assignHasCapacity ? "is-ok" : "is-error"}`}
                         >
                           <div>
-                            <span>Room Capacity</span>
-                            <strong>{selectedAssignRoom.capacity}</strong>
+                            <span>Family slots</span>
+                            <strong>{getRoomUsedSlots(selectedAssignRoom)}/{selectedAssignRoom.family_slots ?? 5}</strong>
                           </div>
                           <div>
-                            <span>Currently Assigned</span>
-                            <strong>
-                              {getRoomAssignedCount(selectedAssignRoom)}
-                            </strong>
+                            <span>People spaces</span>
+                            <strong>{getRoomAssignedCount(selectedAssignRoom)}/{selectedAssignRoom.people_spaces ?? selectedAssignRoom.capacity ?? 25}</strong>
                           </div>
                           <div>
-                            <span>Remaining Capacity</span>
-                            <strong>{assignRoomAvailable}</strong>
+                            <span>Available</span>
+                            <strong>{getRoomAvailableSlots(selectedAssignRoom)} slots · {assignRoomAvailable} spaces</strong>
                           </div>
                         </div>
                       )}
@@ -7326,7 +7349,7 @@ export default function FamilyManagement({
                           </div>
                           <div className="capacity-row">
                             <span className="capacity-label">
-                              Household to move
+                              Family to move
                             </span>
                             <span className="capacity-value">
                               {needed} members
@@ -7335,7 +7358,7 @@ export default function FamilyManagement({
                           {!venueHasCapacity && (
                             <p className="capacity-warning">
                               <FontAwesomeIcon icon={faTriangleExclamation} />{" "}
-                              Warning: this household has {needed} members but
+                              Warning: this family has {needed} members but
                               only {venueAvailable} space left. Moving would
                               exceed center capacity.
                             </p>
@@ -7415,10 +7438,11 @@ export default function FamilyManagement({
                             </option>
                             {destFilteredRooms.map((r) => {
                               const avail = getRoomRemainingCapacity(r);
+                              const slots = Math.max(1, Number(r.family_slots ?? 5));
+                              const spaces = Math.max(1, Number(r.people_spaces ?? r.capacity ?? 25));
                               return (
                                 <option key={r.id} value={r.id}>
-                                  {formatRoomLabel(r.room_number)} ({avail}{" "}
-                                  available / {r.capacity} cap)
+                                  {formatRoomLabel(r.room_number)} · Slots {getRoomUsedSlots(r)}/{slots} · Spaces {getRoomAssignedCount(r)}/{spaces} ({getRoomAvailableSlots(r)} slots, {avail} spaces left)
                                 </option>
                               );
                             })}
@@ -7431,18 +7455,16 @@ export default function FamilyManagement({
                           className={`fm-room-preview ${moveHasCapacity ? "is-ok" : "is-error"}`}
                         >
                           <div>
-                            <span>Target Room Capacity</span>
-                            <strong>{selectedTargetRoom.capacity}</strong>
+                            <span>Family slots</span>
+                            <strong>{getRoomUsedSlots(selectedTargetRoom)}/{selectedTargetRoom.family_slots ?? 5}</strong>
                           </div>
                           <div>
-                            <span>Currently Assigned</span>
-                            <strong>
-                              {getRoomAssignedCount(selectedTargetRoom)}
-                            </strong>
+                            <span>People spaces</span>
+                            <strong>{getRoomAssignedCount(selectedTargetRoom)}/{selectedTargetRoom.people_spaces ?? selectedTargetRoom.capacity ?? 25}</strong>
                           </div>
                           <div>
-                            <span>Remaining Capacity</span>
-                            <strong>{targetRoomAvailable}</strong>
+                            <span>Available</span>
+                            <strong>{getRoomAvailableSlots(selectedTargetRoom)} slots · {targetRoomAvailable} spaces</strong>
                           </div>
                         </div>
                       )}
@@ -7535,7 +7557,7 @@ export default function FamilyManagement({
           className="fm-mobile-filter-sheet-backdrop"
           role="dialog"
           aria-modal="true"
-          aria-label="Filter households"
+          aria-label="Filter families"
           onMouseDown={(e) => {
             if (e.target === e.currentTarget) setIsMobileFiltersOpen(false);
           }}
@@ -7626,10 +7648,10 @@ export default function FamilyManagement({
                       sortKey: e.target.value,
                     }))
                   }
-                  aria-label="Sort households"
+                  aria-label="Sort families"
                 >
-                  <option value="family_code:asc">Household ID (A–Z)</option>
-                  <option value="head_name:asc">Household Head (A–Z)</option>
+                  <option value="family_code:asc">Family ID (A–Z)</option>
+                  <option value="head_name:asc">Family Head (A–Z)</option>
                   <option value="member_count:desc">Most Members</option>
                   <option value="created_at:desc">Recently Added</option>
                 </select>

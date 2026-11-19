@@ -361,7 +361,7 @@ def _family_list_rows(families):
             EvacuationCenterRoom.id.label('room_id'),
             EvacuationCenterRoom.room_number,
             EvacuationCenterRoom.floor,
-            EvacuationCenterRoom.capacity,
+            EvacuationCenterRoom.people_spaces,
             EvacuationCenterRoom.building_id,
             EvacuationCenterBuilding.name.label('building_name'),
             func.count(EvacuationAssignment.id),
@@ -391,7 +391,7 @@ def _family_list_rows(families):
             EvacuationCenterRoom.id,
             EvacuationCenterRoom.room_number,
             EvacuationCenterRoom.floor,
-            EvacuationCenterRoom.capacity,
+            EvacuationCenterRoom.people_spaces,
             EvacuationCenterRoom.building_id,
             EvacuationCenterBuilding.name,
             CenterType.code,
@@ -643,7 +643,7 @@ def export_families():
     ws_residents = wb.active
     ws_residents.title = 'Residents'
     res_headers = [
-        'Family Code', 'Head of Family', 'Barangay', 'Household Contact', 'Address',
+        'Family Code', 'Head of Family', 'Barangay', 'Family Contact', 'Address',
         'Member Name', 'Relationship', 'Date of Birth', 'Gender',
         'Is PWD', 'Disability Type', 'Is Pregnant', 'Is Lactating',
         'Solo Parent', 'Needs Assistance', 'Medical Notes',
@@ -692,7 +692,7 @@ def export_families():
             ])
 
     # Sheet 2: Households Summary
-    ws_households = wb.create_sheet('Households Summary')
+    ws_households = wb.create_sheet('Families Summary')
     hh_headers = [
         'Family Code', 'Head of Family', 'Barangay', 'Contact Number', 'Address',
         'Total Members', 'Assigned Members', 'Evacuation Center', 'Center Type', 'Building', 'Room', 'Status'
@@ -2193,18 +2193,26 @@ def add_family():
             if assign_structure_mode == 'open_area':
                 return jsonify({'error': 'Open area centers do not use rooms; assign directly to the center'}), 400
             try:
-                assignment_room = db.session.get(EvacuationCenterRoom, int(raw_room_id))
+                assignment_room = (
+                    EvacuationCenterRoom.query
+                    .filter_by(id=int(raw_room_id))
+                    .with_for_update()
+                    .first()
+                )
             except (TypeError, ValueError):
                 assignment_room = None
             if not assignment_room or not assignment_room.is_active:
                 return jsonify({'error': 'Cannot assign a family to an inactive or missing room'}), 400
             if assignment_room.evacuation_center_id != assignment_center.id:
                 return jsonify({'error': 'Selected room does not belong to the selected center'}), 400
-            occupancy = EvacuationAssignment.query.filter_by(room_id=assignment_room.id).count()
-            if (assignment_room.capacity or 0) <= 0 or occupancy + len(parsed_members) + 1 > assignment_room.capacity:
-                return jsonify({
-                    'error': f'Room does not have enough capacity. Available: {max((assignment_room.capacity or 0) - occupancy, 0)}, Needed: {len(parsed_members) + 1}'
-                }), 400
+            room_usage = assignment_room.capacity_usage()
+            needed_spaces = len(parsed_members) + 1
+            if room_usage['available_slots'] < 1:
+                db.session.rollback()
+                return jsonify({'error': f"Room has no family slots available ({assignment_room.family_slots} total, {room_usage['used_slots']} used).", 'limit': 'family_slots'}), 400
+            if room_usage['available_spaces'] < needed_spaces:
+                db.session.rollback()
+                return jsonify({'error': f"Room has only {room_usage['available_spaces']} people space(s) available; this household needs {needed_spaces}.", 'limit': 'people_spaces'}), 400
         else:
             if assign_structure_mode != 'open_area':
                 return jsonify({'error': 'Selected evacuation center requires a room assignment'}), 400
@@ -2451,12 +2459,19 @@ def add_family_member(family_id):
     )
     assigned_room = None
     if existing_assignment:
-        assigned_room = db.session.get(EvacuationCenterRoom, existing_assignment.room_id)
+        assigned_room = (
+            EvacuationCenterRoom.query
+            .filter_by(id=existing_assignment.room_id)
+            .with_for_update()
+            .first()
+        )
         if assigned_room:
-            current_occ = EvacuationAssignment.query.filter_by(room_id=assigned_room.id).count()
-            if current_occ + 1 > assigned_room.capacity:
+            usage = assigned_room.capacity_usage()
+            if usage['available_spaces'] < 1:
+                db.session.rollback()
                 return jsonify({
-                    "error": f"Cannot add member while family is assigned to Room {assigned_room.room_number}, which is at full capacity ({current_occ}/{assigned_room.capacity}). Move the family to a larger room first."
+                    "error": f"Cannot add a member: Room {assigned_room.room_number} has no people spaces available ({assigned_room.people_spaces} total, {usage['used_spaces']} used). Move the family to a room with space first.",
+                    "limit": "people_spaces",
                 }), 400
 
     if is_head and has_head:
@@ -2747,7 +2762,12 @@ def assign_family(family_id):
 
     room = None
     if room_id:
-        room = EvacuationCenterRoom.query.get(room_id)
+        room = (
+            EvacuationCenterRoom.query
+            .filter_by(id=room_id)
+            .with_for_update()
+            .first()
+        )
         if not room:
             return jsonify({"error": "Room not found"}), 404
         if not room.is_active:
@@ -2774,16 +2794,22 @@ def assign_family(family_id):
     needed_spaces = len(residents)
 
     if room:
-        current_occupancy = EvacuationAssignment.query.filter_by(room_id=room.id).count()
-        room_cap = room.capacity or 0
-        remaining = max(room_cap - current_occupancy, 0)
-        if room_cap <= 0 or current_occupancy + needed_spaces > room_cap:
+        room_usage = room.capacity_usage()
+        if room_usage['available_slots'] < 1:
+            db.session.rollback()
             return jsonify({
-                "error": f"Room does not have enough capacity. Available: {remaining}, Needed: {needed_spaces}",
-                "capacity": room_cap,
-                "occupied": current_occupancy,
-                "available": remaining,
-                "needed": needed_spaces
+                "error": f"Room has no family slots available ({room.family_slots} total, {room_usage['used_slots']} used).",
+                "limit": "family_slots",
+                "available_slots": room_usage['available_slots'],
+                "needed_slots": 1,
+            }), 400
+        if room_usage['available_spaces'] < needed_spaces:
+            db.session.rollback()
+            return jsonify({
+                "error": f"Room has only {room_usage['available_spaces']} people space(s) available; this household needs {needed_spaces}.",
+                "limit": "people_spaces",
+                "available_spaces": room_usage['available_spaces'],
+                "needed_spaces": needed_spaces,
             }), 400
     else:
         # Direct center assignment (open_area)
@@ -2855,7 +2881,12 @@ def move_family(family_id):
     new_room = None
 
     if new_room_id:
-        new_room = EvacuationCenterRoom.query.get(new_room_id)
+        new_room = (
+            EvacuationCenterRoom.query
+            .filter_by(id=new_room_id)
+            .with_for_update()
+            .first()
+        )
         if not new_room:
             return jsonify({"error": "Target room not found"}), 404
         if not new_room.is_active:
@@ -2907,16 +2938,22 @@ def move_family(family_id):
     members_count = len(current_assignments)
 
     if new_room:
-        target_occupancy = EvacuationAssignment.query.filter_by(room_id=new_room.id).count()
-        target_room_cap = new_room.capacity or 0
-        remaining = max(target_room_cap - target_occupancy, 0)
-        if target_room_cap <= 0 or target_occupancy + members_count > target_room_cap:
+        target_usage = new_room.capacity_usage()
+        if target_usage['available_slots'] < 1:
+            db.session.rollback()
             return jsonify({
-                "error": f"Target room does not have enough capacity. Available: {remaining}, Needed: {members_count}",
-                "capacity": target_room_cap,
-                "occupied": target_occupancy,
-                "available": remaining,
-                "needed": members_count
+                "error": f"Target room has no family slots available ({new_room.family_slots} total, {target_usage['used_slots']} used).",
+                "limit": "family_slots",
+                "available_slots": target_usage['available_slots'],
+                "needed_slots": 1,
+            }), 400
+        if target_usage['available_spaces'] < members_count:
+            db.session.rollback()
+            return jsonify({
+                "error": f"Target room has only {target_usage['available_spaces']} people space(s) available; the household needs {members_count}.",
+                "limit": "people_spaces",
+                "available_spaces": target_usage['available_spaces'],
+                "needed_spaces": members_count,
             }), 400
     else:
         target_occupancy = (

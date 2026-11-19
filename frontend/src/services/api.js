@@ -70,6 +70,15 @@ async function requestFile(path) {
   return response.blob();
 }
 
+function roomCapacityPayload(data = {}) {
+  const { capacity: legacyCapacity, ...roomData } = data || {};
+  return {
+    ...roomData,
+    family_slots: Number(roomData.family_slots ?? 5),
+    people_spaces: Number(roomData.people_spaces ?? legacyCapacity ?? 25),
+  };
+}
+
 
 export const api = {
   getNonRegisteredEvacuees: (params = {}) => request(`/api/non-registered-evacuees?${new URLSearchParams(params)}`),
@@ -513,7 +522,7 @@ export const api = {
       `/api/evacuation-centers/${centerId}/rooms`,
       {
         method: "POST",
-        body: JSON.stringify(data),
+        body: JSON.stringify(roomCapacityPayload(data)),
       }
     ),
 
@@ -525,7 +534,7 @@ export const api = {
   updateRoom: (roomId, data) =>
     request(`/api/rooms/${roomId}`, {
       method: "PUT",
-      body: JSON.stringify(data),
+      body: JSON.stringify(roomCapacityPayload(data)),
     }),
 
   toggleRoomActive: (roomId) =>

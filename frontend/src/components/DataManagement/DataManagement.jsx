@@ -37,6 +37,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "../../context/AuthContext";
 import { api } from "../../services/api";
 import { useBarangays, invalidateEvacuationQueries } from "../../hooks/useEvacuationQueries";
+import { familyTerm } from "../EvacuationCenter/utils";
 import ShelterMetadataTab from "./ShelterMetadataTab";
 import "./DataManagement.css";
 
@@ -201,7 +202,7 @@ function DataManagement() {
             id: `head-${family.id}`,
             family_id: family.id,
             full_name: family.head_name || "Head of Family",
-            relationship_to_head: "Household Head",
+            relationship_to_head: "Family Head",
             is_head_of_family: true,
             contact_number: family.head_contact || family.contact_number,
           },
@@ -582,8 +583,8 @@ function DataManagement() {
       const link = document.createElement("a");
       link.href = url;
       const filename = selectedImportBarangay
-        ? `EvacWay_Household_Import_Template_${toFilenameSlug(selectedImportBarangay.name)}.xlsx`
-        : "EvacWay_Household_Import_Template.xlsx";
+      ? `EvacWay_Family_Import_Template_${toFilenameSlug(selectedImportBarangay.name)}.xlsx`
+      : "EvacWay_Family_Import_Template.xlsx";
       link.setAttribute("download", filename);
       document.body.appendChild(link);
       link.click();
@@ -669,58 +670,6 @@ function DataManagement() {
       setErrorMsg(err.message || "Failed to export evacuation centers.");
     } finally {
       setExportingCenters(false);
-    }
-  }
-
-  // =========================================================================
-  // SUB-TAB: IMPORT EVACUATION CENTERS STATE & HANDLERS
-  // =========================================================================
-  const [downloadingCenterTemplate, setDownloadingCenterTemplate] = useState(false);
-  const [centerImportFile, setCenterImportFile] = useState(null);
-  const [centerUploading, setCenterUploading] = useState(false);
-  const [centerImportResult, setCenterImportResult] = useState(null);
-  const [centerImportError, setCenterImportError] = useState("");
-  const [centerDragActive, setCenterDragActive] = useState(false);
-  const [showCenterFormatModal, setShowCenterFormatModal] = useState(false);
-  const centerFileInputRef = useRef(null);
-
-  async function handleDownloadCenterTemplate() {
-    try {
-      setDownloadingCenterTemplate(true);
-      const blob = await api.downloadCenterTemplate();
-      const url = window.URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.setAttribute("download", "EvacWay_Centers_Import_Template.xlsx");
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      window.URL.revokeObjectURL(url);
-      setSuccessMsg("Evacuation centers template downloaded successfully.");
-    } catch (err) {
-      console.error("Download center template failed:", err);
-      setErrorMsg(err.message || "Failed to download center template.");
-    } finally {
-      setDownloadingCenterTemplate(false);
-    }
-  }
-
-  async function handleUploadCenterFile() {
-    if (!centerImportFile) return;
-    try {
-      setCenterUploading(true);
-      setCenterImportError("");
-      setCenterImportResult(null);
-      const res = await api.uploadCenters(centerImportFile);
-      setCenterImportResult(res);
-      setSuccessMsg(
-        `Centers processed successfully: ${res.created_count || 0} created, ${res.updated_count || 0} updated.`
-      );
-    } catch (err) {
-      console.error("Upload center file failed:", err);
-      setCenterImportError(err.message || "Failed to import evacuation centers.");
-    } finally {
-      setCenterUploading(false);
     }
   }
 
@@ -883,7 +832,7 @@ function DataManagement() {
               Registered Resident Masterlist & Demographics
             </h3>
             <p style={{ margin: "4px 0 0", fontSize: "13px", color: "var(--muted, #64748b)" }}>
-              Viewing registered household heads and family members for Census Year {selectedRosterYear}. Filter by year, barangay, or vulnerabilities.
+              Viewing registered family heads and family members for Census Year {selectedRosterYear}. Filter by year, barangay, or vulnerabilities.
             </p>
           </div>
           <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
@@ -984,7 +933,7 @@ function DataManagement() {
             </div>
             <div className="dm-year-stat-info">
               <span className="dm-year-stat-val">{yearFamilies.length.toLocaleString()}</span>
-              <span className="dm-year-stat-lbl">Households in {selectedRosterYear}</span>
+              <span className="dm-year-stat-lbl">Families in {selectedRosterYear}</span>
             </div>
           </div>
 
@@ -1018,7 +967,7 @@ function DataManagement() {
               <span className="dm-year-stat-val">
                 {yearFamilies.filter((f) => f.assignment_status === "Assigned").length.toLocaleString()}
               </span>
-              <span className="dm-year-stat-lbl">Sheltered Households</span>
+              <span className="dm-year-stat-lbl">Sheltered Families</span>
             </div>
           </div>
         </div>
@@ -1048,7 +997,7 @@ function DataManagement() {
                 }}
               >
                 <FontAwesomeIcon icon={faHouseUser} />
-                <span>Households ({filteredFamilies.length.toLocaleString()})</span>
+                <span>Families ({filteredFamilies.length.toLocaleString()})</span>
               </button>
               <button
                 type="button"
@@ -1064,7 +1013,7 @@ function DataManagement() {
               {yearViewMode === "residents"
                 ? `Showing ${paginatedResidents.length} of ${filteredResidents.length.toLocaleString()} residents`
                 : yearViewMode === "households"
-                  ? `Showing ${paginatedFamilies.length} of ${filteredFamilies.length.toLocaleString()} households`
+                  ? `Showing ${paginatedFamilies.length} of ${filteredFamilies.length.toLocaleString()} families`
                   : `${years.length} Census Years`}
             </div>
           </div>
@@ -1082,7 +1031,7 @@ function DataManagement() {
                     onChange={(e) => handleSearchInputChange(e.target.value)}
                     placeholder={
                       yearViewMode === "households"
-                        ? "Search household head, family code, address..."
+                        ? "Search family head, family code, address..."
                         : "Search resident name, family code, address..."
                     }
                   />
@@ -1262,7 +1211,7 @@ function DataManagement() {
                           </td>
                           <td>
                             <span style={{ fontSize: "12.5px", color: "#334155", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", display: "block" }}>
-                              {r.relationship_to_head || (isHead ? "Household Head" : "Member")}
+                  {familyTerm(r.relationship_to_head || (isHead ? "Family Head" : "Member"))}
                             </span>
                           </td>
                           <td>
@@ -1418,7 +1367,7 @@ function DataManagement() {
                           {r.family_code}
                         </span>
                         <span>•</span>
-                        <span>{r.relationship_to_head || (isHead ? "Household Head" : "Member")}</span>
+                    <span>{familyTerm(r.relationship_to_head || (isHead ? "Family Head" : "Member"))}</span>
                       </div>
 
                       <div className="dm-mobile-detail-rows">
@@ -1579,7 +1528,7 @@ function DataManagement() {
           filteredFamilies.length === 0 ? (
             <div className="dm-empty-state">
               <FontAwesomeIcon icon={faHouseUser} className="dm-empty-icon" />
-              <p>No households found matching your search for year {selectedRosterYear}.</p>
+              <p>No families found matching your search for year {selectedRosterYear}.</p>
             </div>
           ) : (
             <>
@@ -1589,7 +1538,7 @@ function DataManagement() {
                     <tr>
                       <th style={{ width: "36px", textAlign: "center" }}></th>
                       <th style={{ width: "13%" }}>Family Code</th>
-                      <th style={{ width: "21%" }}>Head of Household</th>
+                      <th style={{ width: "21%" }}>Head of Family</th>
                       <th style={{ width: "19%" }}>Barangay & Address</th>
                       <th style={{ width: "9%" }}>Members</th>
                       <th style={{ width: "19%" }}>Special Needs</th>
@@ -1713,7 +1662,7 @@ function DataManagement() {
                                                 </span>
                                               )}
                                             </td>
-                                            <td>{m.relationship_to_head || "—"}</td>
+                  <td>{familyTerm(m.relationship_to_head || "—")}</td>
                                             <td>
                                               {m.age != null ? `${m.age} yrs` : m.date_of_birth || "—"} {m.gender ? `• ${m.gender}` : ""}
                                             </td>
@@ -1776,9 +1725,9 @@ function DataManagement() {
                     <div key={`fam-m-${f.id}`} className="dm-mobile-card-roster">
                       <div className="dm-mobile-card-header">
                         <div>
-                          <div className="dm-mobile-card-name">{f.head_name || "Head of Household"}</div>
+                          <div className="dm-mobile-card-name">{f.head_name || "Head of Family"}</div>
                           <div style={{ fontSize: "11.5px", color: "var(--muted, #64748b)", marginTop: "2px" }}>
-                            Household Head
+                            Family Head
                           </div>
                         </div>
                         {f.assignment_status === "Assigned" ? (
@@ -1906,7 +1855,7 @@ function DataManagement() {
                                       )}
                                     </div>
                                     <div style={{ color: "var(--muted, #64748b)", fontSize: "11.5px", marginBottom: "4px" }}>
-                                      {m.relationship_to_head || "Member"} • {m.age != null ? `${m.age} yrs` : m.date_of_birth || "—"}{" "}
+                                      {familyTerm(m.relationship_to_head || "Member")} • {m.age != null ? `${m.age} yrs` : m.date_of_birth || "—"}{" "}
                                       {m.gender ? `• ${m.gender}` : ""}
                                     </div>
                                     {(m.is_pwd || m.is_pregnant || m.needs_assistance || m.medical_notes) && (
@@ -1965,7 +1914,7 @@ function DataManagement() {
                   <strong>
                     {Math.min(yearPage * yearPerPage, filteredFamilies.length)}
                   </strong>{" "}
-                  of <strong>{filteredFamilies.length.toLocaleString()}</strong> households
+                  of <strong>{filteredFamilies.length.toLocaleString()}</strong> families
                 </div>
 
                 <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
@@ -2003,7 +1952,7 @@ function DataManagement() {
                   <tr>
                     <th style={{ width: "16%" }}>Census Year</th>
                     <th style={{ width: "16%" }}>System Status</th>
-                    <th style={{ width: "24%" }}>Registered Households</th>
+                    <th style={{ width: "24%" }}>Registered Families</th>
                     <th style={{ width: "24%" }}>Registered Residents</th>
                     <th style={{ width: "20%" }}>Actions</th>
                   </tr>
@@ -2119,7 +2068,7 @@ function DataManagement() {
 
                     <div className="dm-mobile-detail-rows">
                       <div className="dm-mobile-detail-row">
-                        <span className="dm-mobile-detail-lbl">Households</span>
+                        <span className="dm-mobile-detail-lbl">Families</span>
                         <span className="dm-mobile-detail-val">
                           {(y.households ?? y.household_count ?? 0).toLocaleString()} families
                         </span>
@@ -2193,17 +2142,6 @@ function DataManagement() {
             >
               <FontAwesomeIcon icon={faFileExcel} />
               Import Residents
-            </button>
-            <button
-              type="button"
-              className={`dm-subtab-btn ${activeSubtab === "import_centers" ? "is-active" : ""}`}
-              onClick={() => {
-                setActiveSubtab("import_centers");
-                setErrorMsg("");
-              }}
-            >
-              <FontAwesomeIcon icon={faBuilding} />
-              Import Centers
             </button>
             <button
               type="button"
@@ -2289,7 +2227,7 @@ function DataManagement() {
               <div className="dm-import-heading">
                 <h3>Excel Resident Roster Import</h3>
                 <p>
-                  Select a barangay, then upload an Excel file (.xlsx) containing household heads and family members.
+                  Select a barangay, then upload an Excel file (.xlsx) containing family heads and family members.
                   The preview, summary, and saved data apply only to that barangay.
                 </p>
               </div>
@@ -2332,8 +2270,8 @@ function DataManagement() {
                   disabled={exportingMasterlist}
                   title={
                     selectedImportBarangay
-                      ? `Export registered households and residents for ${selectedImportBarangay.name} (.xlsx)`
-                      : "Export registered households and residents to Excel"
+                      ? `Export registered families and residents for ${selectedImportBarangay.name} (.xlsx)`
+                      : "Export registered families and residents to Excel"
                   }
                   style={{ fontSize: "13px", padding: "8px 14px", background: "#f8fafc", borderColor: "#cbd5e1", color: "#334155" }}
                 >
@@ -2486,11 +2424,11 @@ function DataManagement() {
                       </span>
                     </div>
                     <div className="dm-summary-card">
-                      <span className="dm-summary-label">New Households</span>
+                      <span className="dm-summary-label">New Families</span>
                       <span className="dm-summary-val">{stagedResult.new_households ?? 0}</span>
                     </div>
                     <div className="dm-summary-card">
-                      <span className="dm-summary-label">Updated Households</span>
+                      <span className="dm-summary-label">Updated Families</span>
                       <span className="dm-summary-val">
                         {stagedResult.updated_households ?? 0}
                         <span className="dm-summary-sub">
@@ -2569,7 +2507,7 @@ function DataManagement() {
                             <tr>
                               <th>Row</th>
                               <th>Barangay in File</th>
-                              <th>Household Head</th>
+                              <th>Family Head</th>
                               <th>Member</th>
                             </tr>
                           </thead>
@@ -2676,7 +2614,7 @@ function DataManagement() {
 
                     {reviewTab === "skipped" && (
                       <div style={{ fontSize: "13px", color: "var(--muted, #64748b)", margin: "-4px 0 2px 2px" }}>
-                        These households are already registered with the same details and will not be changed.
+                        These families are already registered with the same details and will not be changed.
                       </div>
                     )}
 
@@ -2720,7 +2658,7 @@ function DataManagement() {
                             <table className="dm-review-table">
                               <thead>
                                 <tr>
-                                  <th style={{ width: "36%" }}>Household Head</th>
+                                  <th style={{ width: "36%" }}>Family Head</th>
                                   <th style={{ width: "24%" }}>Barangay</th>
                                   <th style={{ width: "12%" }}>Members</th>
                                   <th style={{ width: "28%" }}>Change</th>
@@ -2731,9 +2669,9 @@ function DataManagement() {
                                   <tr>
                                     <td colSpan={4} className="dm-review-table-empty">
                                       {trimmedSearch ? (
-                                        <>No households match &ldquo;<strong>{reviewSearch}</strong>&rdquo; in this tab.</>
+                                        <>No families match &ldquo;<strong>{reviewSearch}</strong>&rdquo; in this tab.</>
                                       ) : (
-                                        <>No {reviewTab} households in this file.</>
+                                        <>No {reviewTab} families in this file.</>
                                       )}
                                     </td>
                                   </tr>
@@ -2789,7 +2727,7 @@ function DataManagement() {
                                               </div>
                                             )}
                                             {(f.status === "new" || reviewTab === "new") && (
-                                              <span className="dm-change-tag is-blue">New household</span>
+                                              <span className="dm-change-tag is-blue">New family</span>
                                             )}
                                             {f.status === "skipped" && reviewTab === "skipped" && (
                                               <span className="dm-change-tag is-gray">No changes</span>
@@ -2924,11 +2862,11 @@ function DataManagement() {
                 </div>
                 <div className="dm-summary-grid">
                   <div className="dm-summary-card">
-                    <span className="dm-summary-label">Households Created</span>
+                    <span className="dm-summary-label">Families Created</span>
                     <span className="dm-summary-val">{importResult.created}</span>
                   </div>
                   <div className="dm-summary-card">
-                    <span className="dm-summary-label">Households Updated</span>
+                    <span className="dm-summary-label">Families Updated</span>
                     <span className="dm-summary-val">{importResult.updated}</span>
                   </div>
                   <div className="dm-summary-card">
@@ -2955,186 +2893,6 @@ function DataManagement() {
                   </div>
                 </div>
               </>
-            )}
-          </div>
-        )}
-
-        {/* =========================================================================
-            SUB-TAB: IMPORT EVACUATION CENTERS
-            ========================================================================= */}
-        {activeSubtab === "import_centers" && (
-          <div className="dm-card">
-            <div className="dm-import-intro">
-              <div className="dm-import-heading">
-                <h3>
-                  <FontAwesomeIcon icon={faBuilding} style={{ color: "var(--brand, #2563eb)", marginRight: "8px" }} />
-                  Excel Evacuation Centers Import
-                </h3>
-                <p>
-                  Bulk upload evacuation shelters (.xlsx) with Center Types, Building Materials, Amenities, and covered Barangays.
-                  Existing centers with matching names will be updated; new centers will be created as Active.
-                </p>
-              </div>
-
-              <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", alignItems: "center" }}>
-                <button
-                  type="button"
-                  className="dm-btn dm-btn-secondary"
-                  onClick={() => setShowCenterFormatModal(true)}
-                  title="View required columns and format guide"
-                  style={{ fontSize: "13px", padding: "8px 14px" }}
-                >
-                  <FontAwesomeIcon icon={faEye} />
-                  Format Guide & Columns
-                </button>
-
-                <button
-                  type="button"
-                  className="dm-template-btn"
-                  onClick={handleDownloadCenterTemplate}
-                  disabled={downloadingCenterTemplate}
-                  title="Download blank Excel template with database reference values"
-                >
-                  <FontAwesomeIcon icon={downloadingCenterTemplate ? faCircleNotch : faDownload} spin={downloadingCenterTemplate} />
-                  {downloadingCenterTemplate ? "Downloading..." : "Download Center Template"}
-                </button>
-
-                <button
-                  type="button"
-                  className="dm-btn dm-btn-secondary"
-                  onClick={handleExportCenters}
-                  disabled={exportingCenters}
-                  title="Export all evacuation centers to Excel"
-                  style={{ fontSize: "13px", padding: "8px 14px", background: "#f0fdf4", borderColor: "#bbf7d0", color: "#166534" }}
-                >
-                  <FontAwesomeIcon icon={exportingCenters ? faCircleNotch : faFileExport} spin={exportingCenters} />
-                  {exportingCenters ? "Exporting..." : "Export Centers (.xlsx)"}
-                </button>
-              </div>
-            </div>
-
-            {centerImportError && (
-              <div className="dm-alert dm-alert-error" style={{ margin: "16px 0 0" }}>
-                <div className="dm-alert-content">
-                  <FontAwesomeIcon icon={faTriangleExclamation} />
-                  <span>{centerImportError}</span>
-                </div>
-                <button
-                  type="button"
-                  className="dm-alert-close"
-                  onClick={() => setCenterImportError("")}
-                  aria-label="Dismiss alert"
-                >
-                  <FontAwesomeIcon icon={faXmark} />
-                </button>
-              </div>
-            )}
-
-            {centerImportResult && (
-              <div
-                className="dm-alert dm-alert-success"
-                style={{
-                  margin: "16px 0 0",
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: "6px",
-                  background: "#f0fdf4",
-                  borderColor: "#bbf7d0",
-                  color: "#166534",
-                }}
-              >
-                <div style={{ display: "flex", alignItems: "center", gap: "8px", fontWeight: 700 }}>
-                  <FontAwesomeIcon icon={faCircleCheck} />
-                  <span>Centers Processed Successfully!</span>
-                </div>
-                <div style={{ fontSize: "13px" }}>
-                  • <strong>{centerImportResult.created_count}</strong> new evacuation center(s) created<br />
-                  • <strong>{centerImportResult.updated_count}</strong> existing center(s) updated with new data
-                </div>
-                {centerImportResult.warnings && centerImportResult.warnings.length > 0 && (
-                  <div style={{ marginTop: "6px", fontSize: "12px", color: "#854d0e", background: "#fef9c3", padding: "6px 10px", borderRadius: "6px" }}>
-                    <strong>Notices:</strong>
-                    <ul style={{ margin: "4px 0 0", paddingLeft: "16px" }}>
-                      {centerImportResult.warnings.map((w, i) => (
-                        <li key={i}>{w}</li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Drag & Drop File Upload Area */}
-            {!centerImportFile ? (
-              <div
-                className={`dm-dropzone ${centerDragActive ? "is-dragging" : ""}`}
-                onDragOver={(e) => { e.preventDefault(); setCenterDragActive(true); }}
-                onDragLeave={() => setCenterDragActive(false)}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  setCenterDragActive(false);
-                  const f = e.dataTransfer.files?.[0];
-                  if (f) {
-                    setCenterImportFile(f);
-                    setCenterImportError("");
-                    setCenterImportResult(null);
-                  }
-                }}
-                onClick={() => centerFileInputRef.current?.click()}
-                style={{ marginTop: "20px" }}
-              >
-                <input
-                  ref={centerFileInputRef}
-                  type="file"
-                  accept=".xlsx, .xls"
-                  className="dm-file-input"
-                  onChange={(e) => {
-                    const f = e.target.files?.[0];
-                    if (f) {
-                      setCenterImportFile(f);
-                      setCenterImportError("");
-                      setCenterImportResult(null);
-                    }
-                  }}
-                />
-                <FontAwesomeIcon icon={faUpload} className="dm-dropzone-icon" />
-                <h4 className="dm-dropzone-title">Click to upload or drag & drop Evacuation Centers Excel</h4>
-                <p className="dm-dropzone-sub">Supports .xlsx or .xls files</p>
-              </div>
-            ) : (
-              <div className="dm-file-info" style={{ marginTop: "20px" }}>
-                <div className="dm-file-meta">
-                  <FontAwesomeIcon icon={faFileExcel} className="dm-file-icon" style={{ color: "#16a34a" }} />
-                  <div>
-                    <div className="dm-file-name">{centerImportFile.name}</div>
-                    <div className="dm-file-size">{(centerImportFile.size / 1024).toFixed(1)} KB</div>
-                  </div>
-                </div>
-                <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-                  <button
-                    type="button"
-                    className="dm-btn dm-btn-primary dm-btn-sm"
-                    onClick={handleUploadCenterFile}
-                    disabled={centerUploading}
-                  >
-                    <FontAwesomeIcon icon={centerUploading ? faCircleNotch : faUpload} spin={centerUploading} />
-                    {centerUploading ? "Uploading..." : "Process Import"}
-                  </button>
-                  <button
-                    type="button"
-                    className="dm-file-remove"
-                    onClick={() => {
-                      setCenterImportFile(null);
-                      setCenterImportResult(null);
-                      setCenterImportError("");
-                    }}
-                    disabled={centerUploading}
-                    title="Remove file"
-                  >
-                    <FontAwesomeIcon icon={faXmark} />
-                  </button>
-                </div>
-              </div>
             )}
           </div>
         )}
@@ -3358,7 +3116,7 @@ function DataManagement() {
                     Excel Resident Roster Format & Specifications
                   </h4>
                   <p style={{ margin: "4px 0 0", fontSize: "13px", color: "#64748b" }}>
-                    Structure: <strong>1 row per family member</strong>. Repeat the Family Code, Head of Family, and Address for all members of the household.
+                    Structure: <strong>1 row per family member</strong>. Repeat the Family Code, Head of Family, and Address for all members of the family.
                   </p>
                 </div>
                 <button
@@ -3379,7 +3137,7 @@ function DataManagement() {
                   </div>
                   <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
                     <span style={{ display: "inline-block", width: "10px", height: "10px", borderRadius: "50%", background: "#0284c7" }}></span>
-                    <strong>Blue:</strong> Household Information
+                    <strong>Blue:</strong> Family Information
                   </div>
                   <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
                     <span style={{ display: "inline-block", width: "10px", height: "10px", borderRadius: "50%", background: "#7c3aed" }}></span>
@@ -3486,7 +3244,7 @@ function DataManagement() {
                   <strong>💡 Pro-Tips for Importing:</strong>
                   <ul style={{ margin: "6px 0 0", paddingLeft: "20px" }}>
                     <li><strong>Repeated Family Rows:</strong> If a family has 4 members, create 4 rows with the same <code>Family Code</code>, <code>Head of Family</code>, and <code>Barangay</code>.</li>
-                    <li><strong>Shelter Amenities Integration:</strong> Marking <code>Is PWD</code>, <code>Disability Type</code>, or <code>Needs Assistance</code> automatically informs the system to prioritize this household for centers that feature <em>Wheelchair Ramps</em>, <em>Ground Floor Access</em>, or <em>PWD Restrooms</em>.</li>
+                    <li><strong>Shelter Amenities Integration:</strong> Marking <code>Is PWD</code>, <code>Disability Type</code>, or <code>Needs Assistance</code> automatically informs the system to prioritize this family for centers that feature <em>Wheelchair Ramps</em>, <em>Ground Floor Access</em>, or <em>PWD Restrooms</em>.</li>
                     <li><strong>Minimal Format Accepted:</strong> If you only have basic roster data, you can omit the optional vulnerability columns and upload just the first 9 columns.</li>
                   </ul>
                 </div>
@@ -3512,122 +3270,6 @@ function DataManagement() {
                   >
                     <FontAwesomeIcon icon={faDownload} />
                     Download This Template
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* =========================================================================
-            MODAL: CENTER EXCEL FORMAT PREVIEW & GUIDELINES
-            ========================================================================= */}
-        {showCenterFormatModal && (
-          <div className="dm-modal-overlay" onClick={() => setShowCenterFormatModal(false)}>
-            <div
-              className="dm-modal-card"
-              onClick={(e) => e.stopPropagation()}
-              style={{ maxWidth: "1050px", width: "95vw", maxHeight: "90vh", display: "flex", flexDirection: "column" }}
-            >
-              <div className="dm-modal-header" style={{ padding: "16px 24px", borderBottom: "1px solid #e2e8f0" }}>
-                <div>
-                  <h4 className="dm-modal-title" style={{ fontSize: "17px", fontWeight: "700", display: "flex", alignItems: "center", gap: "8px" }}>
-                    <FontAwesomeIcon icon={faFileExcel} style={{ color: "#16a34a" }} />
-                    Evacuation Centers Excel Format & Column Specifications
-                  </h4>
-                  <p style={{ margin: "4px 0 0", fontSize: "13px", color: "#64748b" }}>
-                    Structure: <strong>1 row per evacuation center</strong>. Center Types, Building Materials, and Amenities will be automatically mapped to your database.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  className="dm-modal-close"
-                  onClick={() => setShowCenterFormatModal(false)}
-                >
-                  <FontAwesomeIcon icon={faXmark} />
-                </button>
-              </div>
-
-              <div className="dm-modal-body" style={{ overflowY: "auto", padding: "20px 24px" }}>
-                <div style={{ overflowX: "auto", border: "1px solid #cbd5e1", borderRadius: "8px", boxShadow: "0 1px 3px rgba(0,0,0,0.05)" }}>
-                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "12.5px", textAlign: "left", whiteSpace: "nowrap" }}>
-                    <thead>
-                      <tr style={{ background: "#f1f5f9", borderBottom: "2px solid #cbd5e1" }}>
-                        <th style={{ padding: "10px 12px", color: "#b91c1c", fontWeight: "700" }}>Center Name *</th>
-                        <th style={{ padding: "10px 12px", color: "#0284c7", fontWeight: "700" }}>Barangays Served *</th>
-                        <th style={{ padding: "10px 12px", color: "#b91c1c", fontWeight: "700" }}>Capacity *</th>
-                        <th style={{ padding: "10px 12px", color: "#b91c1c", fontWeight: "700" }}>Center Type *</th>
-                        <th style={{ padding: "10px 12px", color: "#475569" }}>Building Material</th>
-                        <th style={{ padding: "10px 12px", color: "#7c3aed" }}>Amenities</th>
-                        <th style={{ padding: "10px 12px", color: "#475569" }}>Contact Number</th>
-                        <th style={{ padding: "10px 12px", color: "#475569" }}>Owner Name</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr style={{ borderBottom: "1px solid #e2e8f0" }}>
-                        <td style={{ padding: "8px 12px", fontWeight: "600" }}>Sogod Central School</td>
-                        <td style={{ padding: "8px 12px" }}>San Jose, Poblacion</td>
-                        <td style={{ padding: "8px 12px", fontWeight: "600" }}>450</td>
-                        <td style={{ padding: "8px 12px" }}>Campus</td>
-                        <td style={{ padding: "8px 12px" }}>Reinforced Concrete</td>
-                        <td style={{ padding: "8px 12px" }}>Wheelchair Ramp, PWD Restroom, Kitchen</td>
-                        <td style={{ padding: "8px 12px" }}>09171234567</td>
-                        <td style={{ padding: "8px 12px", color: "#94a3b8" }}>—</td>
-                      </tr>
-                      <tr style={{ borderBottom: "1px solid #e2e8f0" }}>
-                        <td style={{ padding: "8px 12px", fontWeight: "600" }}>Municipal Gymnasium</td>
-                        <td style={{ padding: "8px 12px" }}>Poblacion</td>
-                        <td style={{ padding: "8px 12px", fontWeight: "600" }}>350</td>
-                        <td style={{ padding: "8px 12px" }}>Single Venue</td>
-                        <td style={{ padding: "8px 12px" }}>Steel Frame</td>
-                        <td style={{ padding: "8px 12px" }}>Wheelchair Ramp, Emergency Generator</td>
-                        <td style={{ padding: "8px 12px" }}>09181234567</td>
-                        <td style={{ padding: "8px 12px", color: "#94a3b8" }}>—</td>
-                      </tr>
-                      <tr>
-                        <td style={{ padding: "8px 12px", fontWeight: "600" }}>St. Joseph Parish Hall</td>
-                        <td style={{ padding: "8px 12px" }}>San Jose</td>
-                        <td style={{ padding: "8px 12px", fontWeight: "600" }}>120</td>
-                        <td style={{ padding: "8px 12px" }}>Private Property</td>
-                        <td style={{ padding: "8px 12px" }}>Reinforced Concrete</td>
-                        <td style={{ padding: "8px 12px" }}>Kitchen, Potable Water</td>
-                        <td style={{ padding: "8px 12px" }}>09191234567</td>
-                        <td style={{ padding: "8px 12px" }}>Diocese of Maasin</td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-
-                <div style={{ marginTop: "16px", padding: "14px 18px", background: "#f0fdf4", borderRadius: "8px", border: "1px solid #bbf7d0", fontSize: "13px", color: "#166534", lineHeight: "1.6" }}>
-                  <strong>🏢 Center Import Highlights:</strong>
-                  <ul style={{ margin: "6px 0 0", paddingLeft: "20px" }}>
-                    <li><strong>Automatic Upsert:</strong> If a center with the same name exists, its capacity, type, material, amenities, and barangays will be updated. Otherwise, a new shelter is created.</li>
-                    <li><strong>Pre-Loaded Reference Sheet:</strong> When you download the Excel template, Sheet 2 contains all active Center Types, Building Materials, Amenities, and registered Barangays currently in your database.</li>
-                    <li><strong>Map Ready:</strong> Newly imported centers are created as <em>Active</em> and are immediately ready for boundary placement or room tagging on the map.</li>
-                  </ul>
-                </div>
-              </div>
-
-              <div className="dm-modal-footer" style={{ padding: "14px 24px", borderTop: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <span style={{ fontSize: "12px", color: "#64748b" }}>Supports standard Microsoft Excel (.xlsx) files.</span>
-                <div style={{ display: "flex", gap: "10px" }}>
-                  <button
-                    type="button"
-                    className="dm-btn dm-btn-secondary"
-                    onClick={() => setShowCenterFormatModal(false)}
-                  >
-                    Close
-                  </button>
-                  <button
-                    type="button"
-                    className="dm-btn dm-btn-primary"
-                    onClick={() => {
-                      setShowCenterFormatModal(false);
-                      handleDownloadCenterTemplate();
-                    }}
-                  >
-                    <FontAwesomeIcon icon={faDownload} />
-                    Download Centers Template
                   </button>
                 </div>
               </div>
@@ -3671,14 +3313,14 @@ function DataManagement() {
                   </p>
                   <ul style={{ margin: "0 0 14px 20px", padding: 0, fontSize: "13.5px", lineHeight: "1.6", color: "var(--text-0, #0f172a)" }}>
                     <li>
-                      <strong>{newCount} new household{newCount === 1 ? "" : "s"}</strong> ({newResCount} resident{newResCount === 1 ? "" : "s"})
+                      <strong>{newCount} new family{newCount === 1 ? "" : "s"}</strong> ({newResCount} resident{newResCount === 1 ? "" : "s"})
                     </li>
                     <li>
-                      <strong>{updatedCount} updated household{updatedCount === 1 ? "" : "s"}</strong> ({updatedMembersCount} new member{updatedMembersCount === 1 ? "" : "s"} added
+                      <strong>{updatedCount} updated family{updatedCount === 1 ? "" : "s"}</strong> ({updatedMembersCount} new member{updatedMembersCount === 1 ? "" : "s"} added
                       {stagedResult?.members_to_fill > 0 && `, ${stagedResult.members_to_fill} existing member${stagedResult.members_to_fill === 1 ? "" : "s"} with blank fields filled`})
                     </li>
                     <li>
-                      <strong>{skippedCount} household{skippedCount === 1 ? "" : "s"} unchanged</strong> (already up to date)
+                      <strong>{skippedCount} family{skippedCount === 1 ? "" : "s"} unchanged</strong> (already up to date)
                     </li>
                     {otherBarangaySkipped > 0 && (
                       <li>
@@ -3907,7 +3549,7 @@ function DataManagement() {
                   Are you sure you want to delete <strong>{deleteTarget.name}</strong>?
                 </p>
                 <p style={{ fontSize: "12.5px", color: "var(--muted, #64748b)", margin: 0 }}>
-                  Barangays with registered households or linked evacuation centers cannot be deleted until their associated records have been transferred or removed.
+                  Barangays with registered families or linked evacuation centers cannot be deleted until their associated records have been transferred or removed.
                 </p>
               </div>
               <div className="dm-modal-footer">

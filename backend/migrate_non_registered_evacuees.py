@@ -25,10 +25,13 @@ UP = [
         group_code UUID NOT NULL, is_group_head BOOLEAN NOT NULL DEFAULT FALSE,
         operation_id INTEGER NOT NULL REFERENCES evacuation_operations(id) ON DELETE RESTRICT,
         center_id INTEGER NOT NULL REFERENCES evacuation_centers(id) ON DELETE RESTRICT,
+        room_id INTEGER REFERENCES evacuation_center_rooms(id) ON DELETE SET NULL,
         arrived_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
         departed_at TIMESTAMPTZ CHECK (departed_at IS NULL OR departed_at >= arrived_at),
         recorded_by INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT
     )""",
+    'ALTER TABLE non_registered_evacuees ADD COLUMN IF NOT EXISTS room_id INTEGER REFERENCES evacuation_center_rooms(id) ON DELETE SET NULL',
+    'CREATE INDEX IF NOT EXISTS ix_nre_room_present ON non_registered_evacuees(room_id) WHERE departed_at IS NULL',
     'CREATE INDEX IF NOT EXISTS ix_nre_operation_center ON non_registered_evacuees(operation_id,center_id)',
     'CREATE INDEX IF NOT EXISTS ix_nre_group ON non_registered_evacuees(group_code)',
     'CREATE INDEX IF NOT EXISTS ix_nre_arrived_desc ON non_registered_evacuees(arrived_at DESC)',

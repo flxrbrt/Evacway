@@ -1582,19 +1582,18 @@ class EvacuationCenterBuilding(BaseModel):
         floor_summary = []
         for floor in range(1, int(self.floors or 1) + 1):
             floor_rooms = [room for room in self.rooms if room.is_active and room.floor == floor]
-            assigned_households = set()
-            for room in floor_rooms:
-                for assignment in room.assignments:
-                    resident = assignment.resident
-                    assigned_households.add(
-                        ("family", resident.family_id) if resident and resident.family_id
-                        else ("resident", assignment.resident_id)
-                    )
+            used_slots = sum(room.capacity_usage()["used_slots"] for room in floor_rooms)
+            used_spaces = sum(room.capacity_usage()["used_spaces"] for room in floor_rooms)
+            full_rooms = sum(1 for room in floor_rooms if room.capacity_usage()["is_full"])
             floor_summary.append({
                 "floor": floor,
                 "room_count": len(floor_rooms),
-                "assigned": len(assigned_households),
-                "capacity": sum(room.capacity or 0 for room in floor_rooms),
+                "assigned": used_slots,
+                "family_slots": sum(room.family_slots or 0 for room in floor_rooms),
+                "used_slots": used_slots,
+                "people_spaces": sum(room.people_spaces or 0 for room in floor_rooms),
+                "used_spaces": used_spaces,
+                "full_rooms": full_rooms,
             })
         return {
             "id": self.id,
@@ -1649,10 +1648,15 @@ class EvacuationCenterRoom(BaseModel):
         nullable=False
     )
 
+    # Legacy database column retained until the compatibility migration is
+    # fully deployed. New application logic uses family_slots/people_spaces.
     capacity = db.Column(
         db.Integer,
         nullable=False
     )
+
+    family_slots = db.Column(db.Integer, nullable=False, default=5, server_default='5')
+    people_spaces = db.Column(db.Integer, nullable=False, default=25, server_default='25')
 
     floor = db.Column(db.Integer, nullable=True)
 
@@ -1691,6 +1695,42 @@ class EvacuationCenterRoom(BaseModel):
         cascade='all, delete-orphan'
     )
 
+    def capacity_usage(self):
+        """Calculate current room usage from registered and walk-in occupants."""
+        assigned_residents = {}
+        for assignment in self.assignments or []:
+            resident = assignment.resident
+            if resident is not None:
+                assigned_residents[resident.id] = resident.family_id
+            elif assignment.resident_id is not None:
+                assigned_residents[assignment.resident_id] = None
+
+        slot_keys = {
+            ('family', family_id) if family_id is not None else ('resident', resident_id)
+            for resident_id, family_id in assigned_residents.items()
+        }
+        used_slots = len(slot_keys)
+        used_spaces = len(assigned_residents)
+        walk_in_slots, walk_in_spaces = db.session.query(
+            db.func.count(db.func.distinct(NonRegisteredEvacuee.group_code)),
+            db.func.count(NonRegisteredEvacuee.id),
+        ).filter(
+            NonRegisteredEvacuee.room_id == self.id,
+            NonRegisteredEvacuee.departed_at.is_(None),
+        ).one()
+        used_slots += int(walk_in_slots or 0)
+        used_spaces += int(walk_in_spaces or 0)
+        family_slots = int(self.family_slots or 0)
+        people_spaces = int(self.people_spaces or 0)
+        return {
+            'used_slots': used_slots,
+            'used_spaces': used_spaces,
+            'available_slots': max(family_slots - used_slots, 0),
+            'available_spaces': max(people_spaces - used_spaces, 0),
+            'is_full': used_slots >= family_slots or used_spaces >= people_spaces,
+            'is_over_capacity': used_slots > family_slots or used_spaces > people_spaces,
+        }
+
     def to_dict(self):
         return {
             "id": self.id,
@@ -1702,8 +1742,11 @@ class EvacuationCenterRoom(BaseModel):
                 else None
             ),
             "building_floors": self.building.floors if self.building is not None else None,
+            "building_status": self.building.status if self.building is not None else None,
             "room_number": self.room_number,
-            "capacity": self.capacity,
+            "family_slots": self.family_slots,
+            "people_spaces": self.people_spaces,
+            **self.capacity_usage(),
             "floor": self.floor,
             "is_active": self.is_active,
 
@@ -1904,11 +1947,13 @@ class NonRegisteredEvacuee(BaseModel):
     is_group_head = db.Column(db.Boolean, nullable=False, default=False, server_default=db.false())
     operation_id = db.Column(db.Integer, db.ForeignKey('evacuation_operations.id', ondelete='RESTRICT'), nullable=False)
     center_id = db.Column(db.Integer, db.ForeignKey('evacuation_centers.id', ondelete='RESTRICT'), nullable=False)
+    room_id = db.Column(db.Integer, db.ForeignKey('evacuation_center_rooms.id', ondelete='SET NULL'), nullable=True, index=True)
     arrived_at = db.Column(db.DateTime(timezone=True), nullable=False, default=lambda: datetime.now(PHILIPPINES_TZ))
     departed_at = db.Column(db.DateTime(timezone=True))
     recorded_by = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='RESTRICT'), nullable=False)
     center = db.relationship('EvacuationCenter', foreign_keys=[center_id])
     operation = db.relationship('EvacuationOperation', foreign_keys=[operation_id])
+    room = db.relationship('EvacuationCenterRoom', foreign_keys=[room_id])
     __table_args__ = (
         db.CheckConstraint("sex IN ('male', 'female', 'other')", name='ck_nre_sex'),
         db.CheckConstraint('age_years BETWEEN 0 AND 120', name='ck_nre_age'),
@@ -1925,7 +1970,7 @@ class NonRegisteredEvacuee(BaseModel):
     def to_dict(self, include_sensitive=False):
         result = {key: getattr(self, key) for key in (
             'id', 'first_name', 'middle_name', 'last_name', 'sex', 'age_years',
-            'address', 'is_group_head', 'operation_id', 'center_id', 'recorded_by',
+            'address', 'is_group_head', 'operation_id', 'center_id', 'room_id', 'recorded_by',
         )}
         result['group_code'] = str(self.group_code)
         result['name'] = ' '.join(filter(None, (self.first_name, self.middle_name, self.last_name)))

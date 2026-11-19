@@ -87,6 +87,14 @@ function App() {
             }
           />
           <Route
+            path="/admin/evacuation-centers/:centerId"
+            element={
+              <ProtectedRoute allowedRoles={["admin"]}>
+                <AdminDashboard />
+              </ProtectedRoute>
+            }
+          />
+          <Route
             path="/admin/evacuation-centers/:centerId/buildings/:buildingId"
             element={
               <ProtectedRoute allowedRoles={["admin"]}>
@@ -104,6 +112,14 @@ function App() {
           />
           <Route
             path="/lgu/evacuation-centers/:centerId/buildings/:buildingId"
+            element={
+              <ProtectedRoute allowedRoles={["lgu_personnel"]}>
+                <LguDashboard />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/lgu/evacuation-centers/:centerId"
             element={
               <ProtectedRoute allowedRoles={["lgu_personnel"]}>
                 <LguDashboard />

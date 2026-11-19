@@ -102,11 +102,11 @@
   --shadow-map-control: 0 2px 8px rgba(15, 23, 42, 0.15);
 
   /* §5 Design tokens - type scale */
-  --text-page-title: 28px;
-  --text-card-title: 16px;
-  --text-body: 14px;
-  --text-caption: 12px;
-  --text-kpi: 28px;
+  --text-page-title: 26px;
+  --text-card-title: 15px;
+  --text-body: 13.5px;
+  --text-caption: 11.5px;
+  --text-kpi: 26px;
 
   /* §5 Design tokens - semantic radii (aliases to existing values) */
   --radius-control: var(--radius-md);
@@ -254,6 +254,9 @@ html, body {
   max-width: 100%;
   overflow-x: hidden;
 }
+html {
+  font-size: 15px;
+}
 html, body, #root {
   min-height: 100%;
   height: 100%;
@@ -263,6 +266,7 @@ body {
   background: var(--bg-0);
   color: var(--text-0);
   font-family: var(--font-body);
+  font-size: 15px;
   -webkit-font-smoothing: antialiased;
 }
 h1, h2, h3, h4, h5, h6 {

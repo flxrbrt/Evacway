@@ -615,6 +615,8 @@ export default function EvacueeCheckIn() {
     queryClient.invalidateQueries({ queryKey: ['evacuee-check-in-list'] }),
     queryClient.invalidateQueries({ queryKey: ['evacuation-centers'] }),
     queryClient.invalidateQueries({ queryKey: ['evacuation-center-details'] }),
+    queryClient.invalidateQueries({ queryKey: ['rooms'] }),
+    queryClient.invalidateQueries({ queryKey: ['buildings'] }),
     queryClient.invalidateQueries({ queryKey: ['logs'] }),
   ]);
 
@@ -1115,7 +1117,7 @@ export default function EvacueeCheckIn() {
           <div className="stat-card-content">
             <span className="stat-card-label">Fully Arrived</span>
             <strong className="stat-card-value">{summary.total_checked_in}</strong>
-            <span className="stat-card-hint">All household members arrived</span>
+            <span className="stat-card-hint">All family members arrived</span>
           </div>
           <span className="stat-card-icon stat-card-icon--resolved" aria-hidden="true">
             <FontAwesomeIcon icon={faCircleCheck} />
@@ -1135,7 +1137,7 @@ export default function EvacueeCheckIn() {
           <div className="stat-card-content">
             <span className="stat-card-label">Partially Arrived</span>
             <strong className="stat-card-value">{summary.total_partial || 0}</strong>
-            <span className="stat-card-hint">Some household members arrived</span>
+            <span className="stat-card-hint">Some family members arrived</span>
           </div>
           <span className="stat-card-icon stat-card-icon--warning" aria-hidden="true">
             <FontAwesomeIcon icon={faClock} />
@@ -1155,7 +1157,7 @@ export default function EvacueeCheckIn() {
           <div className="stat-card-content">
             <span className="stat-card-label">Pending Arrival</span>
             <strong className="stat-card-value">{summary.total_pending}</strong>
-            <span className="stat-card-hint">No household members arrived</span>
+            <span className="stat-card-hint">No family members arrived</span>
           </div>
           <span className="stat-card-icon stat-card-icon--pending" aria-hidden="true">
             <FontAwesomeIcon icon={faCircleExclamation} />
@@ -1180,7 +1182,7 @@ export default function EvacueeCheckIn() {
             placeholder={
               isMobileViewport
                 ? "Search name or code"
-                : "Search by name or household code"
+                : "Search by name or family code"
             }
             value={searchQuery}
             onChange={(e) => {
@@ -1209,7 +1211,7 @@ export default function EvacueeCheckIn() {
           <button type="button" aria-pressed={filterStatus === 'all'} onClick={() => setFilterStatus('all')}>All arrivals</button>
           <button type="button" aria-pressed={filterStatus === 'non_registered'} onClick={() => setFilterStatus('non_registered')}>Non-registered</button>
         </div>
-        <AddNonRegisteredButton disabled={!canAddNonRegistered} onClick={() => setNonRegisteredModal({ kind: 'create' })} />
+        <AddNonRegisteredButton disabled={!canAddNonRegistered} onClick={() => setNonRegisteredModal({ kind: 'choose' })} />
         <button
           type="button"
           className={`checkin-mobile-filter-btn ${selectedCenterId !== "all" ? "has-active" : ""}`}
@@ -1264,14 +1266,14 @@ export default function EvacueeCheckIn() {
             <h3 className="checkin-empty-title">No Evacuees Found</h3>
             <p className="checkin-empty-text">
               {searchQuery
-                ? `No matching households found for "${searchQuery}".`
+                ? `No matching families found for "${searchQuery}".`
                 : filterStatus === "pending"
-                  ? "All assigned households have arrived!"
+                  ? "All assigned families have arrived!"
                   : filterStatus === "partial"
-                    ? "No households have partial arrivals right now."
-                    : "No households match the current filters."}
+                    ? "No families have partial arrivals right now."
+                    : "No families match the current filters."}
             </p>
-            <AddNonRegisteredButton disabled={!canAddNonRegistered} onClick={() => setNonRegisteredModal({ kind: 'create' })} />
+            <AddNonRegisteredButton disabled={!canAddNonRegistered} onClick={() => setNonRegisteredModal({ kind: 'choose' })} />
           </div>
         ) : (
           <>
@@ -1280,7 +1282,7 @@ export default function EvacueeCheckIn() {
               <table className="checkin-table">
                 <thead>
                   <tr>
-                    <th scope="col" className="col-household">Household</th>
+                    <th scope="col" className="col-household">Family</th>
                     <th scope="col" className="col-barangay">Origin Barangay</th>
                     <th scope="col" className="col-center">Assigned Shelter</th>
                     <th scope="col" className="col-members">Family Members</th>
@@ -1428,7 +1430,7 @@ export default function EvacueeCheckIn() {
                                   className="checkin-action-btn btn-undo"
                                   onClick={() => handleQuickUndo(evacuee)}
                                   disabled={isRowLoading}
-                                  title="Undo arrival for this household"
+                                  title="Undo arrival for this family"
                                   aria-label={`Undo arrival for ${evacuee.head_name}`}
                                 >
                                   {isRowLoading ? (
@@ -1479,7 +1481,7 @@ export default function EvacueeCheckIn() {
                                   className={`checkin-action-btn btn-arrive ${!canCheckIn ? "is-disabled" : ""}`}
                                   onClick={() => handleQuickCheckInAll(evacuee)}
                                   disabled={isRowLoading || !canCheckIn}
-                                  title={getCheckInDisabledReason(evacuee) || "Mark all members of this household as arrived"}
+                                  title={getCheckInDisabledReason(evacuee) || "Mark all members of this family as arrived"}
                                   aria-label={`Mark all as arrived for ${evacuee.head_name}`}
                                 >
                                   {isRowLoading ? (
@@ -1777,7 +1779,7 @@ export default function EvacueeCheckIn() {
           canEdit={canAddNonRegistered} isAdmin={isAdmin} onChanged={refreshArrivals}
           onEdit={(person, group) => setNonRegisteredModal({ kind: 'edit', person, group })}
           onMember={(group) => setNonRegisteredModal({ kind: 'member', group })}
-          onAdd={() => setNonRegisteredModal({ kind: 'create' })} addDisabled={!canAddNonRegistered} />}
+          onAdd={() => setNonRegisteredModal({ kind: 'choose' })} addDisabled={!canAddNonRegistered} />}
       </section>
 
       {/* Member Checklist Modal (For Partial / Individual Arrival) */}
@@ -1799,7 +1801,7 @@ export default function EvacueeCheckIn() {
             {/* Modal Header */}
             <div className="checkin-modal-header">
               <div className="checkin-modal-titles">
-                <span className="checkin-modal-tag">Household Arrival Checklist</span>
+                <span className="checkin-modal-tag">Family Arrival Checklist</span>
                 <h2 id="member-modal-title">{modalFamily.head_name}</h2>
                 <span className="checkin-modal-sub">
                   {modalFamily.family_code ? `Code: ${modalFamily.family_code} · ` : ""}

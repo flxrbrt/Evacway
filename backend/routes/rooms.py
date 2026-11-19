@@ -24,6 +24,32 @@ from utils import role_required
 rooms_bp = Blueprint('rooms', __name__)
 
 
+def _positive_room_limit(data, key, default, label, legacy_key=None):
+    value = data.get(key, data.get(legacy_key) if legacy_key else None)
+    if value is None or str(value).strip() == '':
+        value = default
+    try:
+        parsed = int(value)
+        if isinstance(value, float) and not value.is_integer():
+            raise ValueError
+    except (TypeError, ValueError):
+        raise ValueError(f'{label} must be a whole number greater than 0')
+    if parsed <= 0:
+        raise ValueError(f'{label} must be greater than 0')
+    return parsed
+
+
+def _room_capacity_payload(room):
+    usage = room.capacity_usage()
+    return {
+        'family_slots': int(room.family_slots or 0),
+        'people_spaces': int(room.people_spaces or 0),
+        # Temporary API alias for clients being updated in the next task part.
+        'capacity': int(room.people_spaces or 0),
+        **usage,
+    }
+
+
 # ==========================================
 # GET ROOMS OF AN EVACUATION CENTER
 # ==========================================
@@ -55,9 +81,8 @@ def get_rooms(center_id):
     result = []
 
     for room in rooms:
-        assigned = EvacuationAssignment.query.filter_by(
-            room_id=room.id
-        ).count()
+        usage = room.capacity_usage()
+        assigned = usage['used_spaces']
         occupied = EvacuationAssignment.query.filter(
             EvacuationAssignment.room_id == room.id,
             EvacuationAssignment.checked_in_at.isnot(None)
@@ -69,11 +94,12 @@ def get_rooms(center_id):
         # Capacity is consumed by assigned residents, whether or not they have
         # checked in yet. Keep `occupied` as arrivals and expose remaining
         # assignment capacity separately.
-        room_data["available"] = max((room.capacity or 0) - assigned, 0)
-        room_data["unassigned"] = max((room.capacity or 0) - assigned, 0)
+        room_data.update(_room_capacity_payload(room))
+        room_data["available"] = usage['available_spaces']
+        room_data["unassigned"] = usage['available_spaces']
         is_assigned = assigned > 0
         room_data["is_assigned"] = is_assigned
-        room_data["is_fully_assigned"] = bool((room.capacity or 0) > 0 and assigned >= (room.capacity or 0))
+        room_data["is_fully_assigned"] = usage['is_full']
         room_data["assignment_status"] = "Assigned" if is_assigned else "Unassigned"
 
         room_data["latitude"] = None
@@ -114,7 +140,11 @@ def create_room(center_id):
     data = request.get_json() or {}
 
     room_number = data.get('room_number')
-    capacity = data.get('capacity')
+    try:
+        family_slots = _positive_room_limit(data, 'family_slots', 5, 'Family slots')
+        people_spaces = _positive_room_limit(data, 'people_spaces', 25, 'People spaces', 'capacity')
+    except ValueError as err:
+        return jsonify({'error': str(err)}), 400
     raw_floor = data.get('floor')
     if data.get('barangay_id') is not None and str(data.get('barangay_id')).strip() != "":
         try:
@@ -135,23 +165,6 @@ def create_room(center_id):
         }), 400
 
     room_number = str(room_number).strip()
-
-    if capacity is None or str(capacity).strip() == "":
-        return jsonify({
-            "error": "Room capacity is required"
-        }), 400
-
-    try:
-        capacity = int(capacity)
-    except (TypeError, ValueError):
-        return jsonify({
-            "error": "Room capacity must be a number"
-        }), 400
-
-    if capacity <= 0:
-        return jsonify({
-            "error": "Room capacity must be greater than 0"
-        }), 400
 
     # Optional coordinates
     parsed_lat = None
@@ -248,7 +261,9 @@ def create_room(center_id):
         evacuation_center_id=center_id,
         building_id=parsed_building_id,
         room_number=room_number,
-        capacity=capacity,
+        capacity=people_spaces,
+        family_slots=family_slots,
+        people_spaces=people_spaces,
         floor=parsed_floor,
         latitude=parsed_lat,
         longitude=parsed_lng,
@@ -258,11 +273,11 @@ def create_room(center_id):
     db.session.add(room)
     db.session.commit()
 
-    # Keep center.capacity in sync with active room capacities
+    # Keep the legacy center people-capacity field in sync with room spaces.
     active_rooms = EvacuationCenterRoom.query.filter_by(
         evacuation_center_id=center_id, is_active=True
     ).all()
-    center.capacity = sum(r.capacity or 0 for r in active_rooms)
+    center.capacity = sum(r.people_spaces or 0 for r in active_rooms)
     db.session.commit()
 
     user_id = get_jwt_identity()
@@ -277,8 +292,9 @@ def create_room(center_id):
     room_data = room.to_dict()
     room_data["occupied"] = 0
     room_data["assigned"] = 0
-    room_data["available"] = capacity
-    room_data["unassigned"] = capacity
+    room_data.update(_room_capacity_payload(room))
+    room_data["available"] = people_spaces
+    room_data["unassigned"] = people_spaces
 
     return jsonify({
         "message": "Room added successfully",
@@ -295,34 +311,45 @@ def create_room(center_id):
 )
 @role_required('admin', 'lgu_personnel')
 def update_room(room_id):
-    room = EvacuationCenterRoom.query.get(room_id)
+    # This SELECT starts the assignment transaction and holds the room row lock
+    # through the capacity check and assignment commit.
+    room = EvacuationCenterRoom.query.filter_by(id=room_id).with_for_update().first()
     if not room:
         return jsonify({"error": "Room not found"}), 404
 
     original_building_id = room.building_id
     data = request.get_json() or {}
 
-    current_assigned = EvacuationAssignment.query.filter_by(room_id=room.id).count()
+    usage = room.capacity_usage()
+    current_assigned = usage['used_spaces']
     current_occupied = EvacuationAssignment.query.filter(
         EvacuationAssignment.room_id == room.id,
         EvacuationAssignment.checked_in_at.isnot(None)
     ).count()
 
-    if 'capacity' in data:
-        cap = data.get('capacity')
-        if cap is None or str(cap).strip() == "":
-            return jsonify({"error": "Room capacity is required"}), 400
+    current_usage = room.capacity_usage()
+    for key, label, used_key, current_limit in (
+        ('family_slots', 'Family slots', 'used_slots', int(room.family_slots or 5)),
+        ('people_spaces', 'People spaces', 'used_spaces', int(room.people_spaces or 25)),
+    ):
+        legacy_value = data.get('capacity') if key == 'people_spaces' and key not in data else None
+        if key not in data and legacy_value is None:
+            continue
         try:
-            parsed_cap = int(cap)
-            if parsed_cap <= 0:
-                return jsonify({"error": "Room capacity must be greater than 0"}), 400
-            if parsed_cap < current_assigned:
-                return jsonify({
-                    "error": f"Room capacity ({parsed_cap}) cannot be less than current assigned count ({current_assigned})"
-                }), 400
-            room.capacity = parsed_cap
-        except (TypeError, ValueError):
-            return jsonify({"error": "Room capacity must be a number"}), 400
+            parsed_limit = _positive_room_limit(
+                {key: data.get(key, legacy_value)}, key, current_limit, label
+            )
+        except ValueError as err:
+            return jsonify({'error': str(err)}), 400
+        used = current_usage[used_key]
+        if parsed_limit < used and parsed_limit < current_limit:
+            limit_name = 'family slots' if key == 'family_slots' else 'people spaces'
+            return jsonify({
+                'error': f'Cannot lower {limit_name} to {parsed_limit}; {used} are currently used. Increase capacity or move/unassign occupants first.'
+            }), 400
+        setattr(room, key, parsed_limit)
+        if key == 'people_spaces':
+            room.capacity = parsed_limit
 
     if 'room_number' in data:
         num = str(data.get('room_number') or '').strip()
@@ -416,7 +443,7 @@ def update_room(room_id):
     active_rooms = EvacuationCenterRoom.query.filter_by(
         evacuation_center_id=room.evacuation_center_id, is_active=True
     ).all()
-    room.evacuation_center.capacity = sum(r.capacity or 0 for r in active_rooms)
+    room.evacuation_center.capacity = sum(r.people_spaces or 0 for r in active_rooms)
     db.session.commit()
 
     user_id = get_jwt_identity()
@@ -432,10 +459,11 @@ def update_room(room_id):
     room_data = room.to_dict()
     room_data["occupied"] = current_occupied
     room_data["assigned"] = current_assigned
-    room_data["available"] = max(room.capacity - current_assigned, 0)
-    room_data["unassigned"] = max(room.capacity - current_assigned, 0)
+    room_data.update(_room_capacity_payload(room))
+    room_data["available"] = room_data["available_spaces"]
+    room_data["unassigned"] = room_data["available_spaces"]
     room_data["is_assigned"] = is_assigned
-    room_data["is_fully_assigned"] = bool(room.capacity > 0 and current_assigned >= room.capacity)
+    room_data["is_fully_assigned"] = room_data['is_full']
     room_data["assignment_status"] = "Assigned" if is_assigned else "Unassigned"
 
     return jsonify({
@@ -484,10 +512,11 @@ def update_room_location(room_id):
         room_data = room.to_dict()
         room_data["occupied"] = occupied
         room_data["assigned"] = assigned
-        room_data["available"] = max(room.capacity - assigned, 0)
-        room_data["unassigned"] = max(room.capacity - assigned, 0)
+        room_data.update(_room_capacity_payload(room))
+        room_data["available"] = room_data['available_spaces']
+        room_data["unassigned"] = room_data['available_spaces']
         room_data["is_assigned"] = is_assigned
-        room_data["is_fully_assigned"] = bool(room.capacity > 0 and assigned >= room.capacity)
+        room_data["is_fully_assigned"] = room_data['is_full']
         room_data["assignment_status"] = "Assigned" if is_assigned else "Unassigned"
 
         return jsonify({
@@ -532,10 +561,11 @@ def update_room_location(room_id):
     room_data = room.to_dict()
     room_data["occupied"] = occupied
     room_data["assigned"] = assigned
-    room_data["available"] = max(room.capacity - assigned, 0)
-    room_data["unassigned"] = max(room.capacity - assigned, 0)
+    room_data.update(_room_capacity_payload(room))
+    room_data["available"] = room_data['available_spaces']
+    room_data["unassigned"] = room_data['available_spaces']
     room_data["is_assigned"] = is_assigned
-    room_data["is_fully_assigned"] = bool(room.capacity > 0 and assigned >= room.capacity)
+    room_data["is_fully_assigned"] = room_data['is_full']
     room_data["assignment_status"] = "Assigned" if is_assigned else "Unassigned"
 
     return jsonify({
@@ -580,10 +610,11 @@ def toggle_room_active(room_id):
     room_data = room.to_dict()
     room_data["occupied"] = occupied
     room_data["assigned"] = assigned
-    room_data["available"] = max(room.capacity - assigned, 0)
-    room_data["unassigned"] = max(room.capacity - assigned, 0)
+    room_data.update(_room_capacity_payload(room))
+    room_data["available"] = room_data['available_spaces']
+    room_data["unassigned"] = room_data['available_spaces']
     room_data["is_assigned"] = is_assigned
-    room_data["is_fully_assigned"] = bool(room.capacity > 0 and assigned >= room.capacity)
+    room_data["is_fully_assigned"] = room_data['is_full']
     room_data["assignment_status"] = "Assigned" if is_assigned else "Unassigned"
 
     return jsonify(room_data), 200
@@ -614,12 +645,12 @@ def delete_room(room_id):
     db.session.delete(room)
     db.session.flush()
 
-    # Keep center capacity in sync with the remaining active rooms.
+    # Keep the legacy center people-capacity field in sync with room spaces.
     active_rooms = EvacuationCenterRoom.query.filter_by(
         evacuation_center_id=center_id, is_active=True
     ).all()
     if center:
-        center.capacity = sum(r.capacity or 0 for r in active_rooms)
+        center.capacity = sum(r.people_spaces or 0 for r in active_rooms)
 
     user_id = get_jwt_identity()
     db.session.add(SystemLog(user_id=user_id, action=f"Deleted room: {room_number}" + (f" (floor {room.floor})" if room.floor is not None else "") + f" (ID: {room_id})"))
@@ -801,6 +832,7 @@ def get_room_families(room_id):
 
     center = EvacuationCenter.query.get(room.evacuation_center_id)
     is_assigned = total_assigned > 0
+    room_usage = room.capacity_usage()
 
     return jsonify({
         "room_id": room.id,
@@ -811,14 +843,17 @@ def get_room_families(room_id):
         "floor": room.floor,
         "center_id": room.evacuation_center_id,
         "center_name": center.name if center else "Unknown",
-        "capacity": room.capacity,
+        "capacity": room.people_spaces,
+        "family_slots": room.family_slots,
+        "people_spaces": room.people_spaces,
+        **room_usage,
         "occupied": total_occupied,
         "assigned": total_assigned,
-        "available": max((room.capacity or 0) - total_assigned, 0),
-        "unassigned": max((room.capacity or 0) - total_assigned, 0),
+        "available": room_usage['available_spaces'],
+        "unassigned": room_usage['available_spaces'],
         "is_active": room.is_active,
         "is_assigned": is_assigned,
-        "is_fully_assigned": bool((room.capacity or 0) > 0 and total_assigned >= (room.capacity or 0)),
+        "is_fully_assigned": room_usage['is_full'],
         "assignment_status": "Assigned" if is_assigned else "Unassigned",
         "families": families
     })
@@ -898,7 +933,9 @@ def get_available_families(room_id):
 )
 @role_required('admin', 'lgu_personnel')
 def assign_families(room_id):
-    room = EvacuationCenterRoom.query.get(room_id)
+    # Keep this lock until all assignments are committed. Concurrent requests
+    # for the same room will recalculate usage after the first transaction.
+    room = EvacuationCenterRoom.query.filter_by(id=room_id).with_for_update().first()
     if not room:
         return jsonify({"error": "Room not found"}), 404
 
@@ -928,10 +965,10 @@ def assign_families(room_id):
         return jsonify({"error": "Select at least one family to assign"}), 400
 
     # Current room occupancy
-    current_occupied = EvacuationAssignment.query.filter_by(room_id=room.id).count()
-    remaining_space = max(room.capacity - current_occupied, 0)
+    current_usage = room.capacity_usage()
 
     families_to_assign = []
+    standalone_residents = []
 
     if family_ids:
         if not isinstance(family_ids, list):
@@ -959,7 +996,10 @@ def assign_families(room_id):
             return jsonify({"error": "Invalid resident ID"}), 400
 
         residents = Resident.query.filter(Resident.id.in_(resident_ids)).all()
+        if len(residents) != len(resident_ids):
+            return jsonify({"error": "One or more selected residents were not found"}), 404
         found_fids = set(r.family_id for r in residents if r.family_id)
+        standalone_residents = [resident for resident in residents if resident.family_id is None]
         if found_fids:
             families_to_assign = Family.query.filter(Family.id.in_(found_fids)).all()
             if linked_barangay_ids and any(
@@ -986,51 +1026,64 @@ def assign_families(room_id):
                 "error": f"Family '{fam.head_name}' ({fam.family_code}) is already assigned to a room. Use the move option to change rooms."
             }), 400
 
-    # Calculate total members needed
+    for resident in standalone_residents:
+        if EvacuationAssignment.query.filter_by(resident_id=resident.id).first():
+            return jsonify({"error": f"Resident '{resident.get_full_name()}' is already assigned to a room."}), 400
+
+    # Calculate both limits before creating any fallback resident rows.
     total_members_needed = 0
     family_residents_map = {}
     for fam in families_to_assign:
         residents = Resident.query.filter_by(family_id=fam.id).all()
-        if not residents:
-            # Ensure at least one resident record for the head
-            head_resident = Resident(
-                family_id=fam.id,
-                first_name=fam.head_name.split()[0] if fam.head_name else "Head",
-                last_name=" ".join(fam.head_name.split()[1:]) if fam.head_name and len(fam.head_name.split()) > 1 else "",
-                household_head_name=fam.head_name,
-                barangay=fam.barangay.name if fam.barangay else "",
-                contact_number=fam.contact_number,
-                family_members=fam.member_count or 1
-            )
-            db.session.add(head_resident)
-            db.session.flush()
-            residents = [head_resident]
-
         family_residents_map[fam.id] = residents
-        total_members_needed += len(residents)
+        total_members_needed += len(residents) if residents else max(int(fam.member_count or 1), 1)
 
-    # Check room capacity
-    if current_occupied + total_members_needed > room.capacity:
+    total_members_needed += len(standalone_residents)
+    slots_needed = len(families_to_assign) + len(standalone_residents)
+    if current_usage['available_slots'] < slots_needed:
+        db.session.rollback()
         return jsonify({
-            "error": (
-                f"Room only has {remaining_space} available space(s). "
-                f"The selected families need {total_members_needed} space(s)."
-            ),
-            "capacity": room.capacity,
-            "occupied": current_occupied,
-            "available": remaining_space,
-            "needed": total_members_needed
+            "error": f"Room has only {current_usage['available_slots']} family slot(s) available; the selection needs {slots_needed} slot(s).",
+            "limit": "family_slots",
+            "available_slots": current_usage['available_slots'],
+            "needed_slots": slots_needed,
+        }), 400
+    if current_usage['available_spaces'] < total_members_needed:
+        db.session.rollback()
+        return jsonify({
+            "error": f"Room has only {current_usage['available_spaces']} people space(s) available; the selection needs {total_members_needed} space(s).",
+            "limit": "people_spaces",
+            "available_spaces": current_usage['available_spaces'],
+            "needed_spaces": total_members_needed,
         }), 400
 
     # Create assignments
     for fam in families_to_assign:
-        for resident in family_residents_map[fam.id]:
+        residents = family_residents_map[fam.id]
+        if not residents:
+            # Ensure at least one resident record for a family without a roster.
+            name_parts = (fam.head_name or 'Head').split()
+            resident = Resident(
+                family_id=fam.id,
+                first_name=name_parts[0],
+                last_name=' '.join(name_parts[1:]),
+                household_head_name=fam.head_name,
+                barangay=fam.barangay.name if fam.barangay else '',
+                contact_number=fam.contact_number,
+            )
+            db.session.add(resident)
+            db.session.flush()
+            residents = [resident]
+        for resident in residents:
             assignment = EvacuationAssignment(
                 resident_id=resident.id,
                 room_id=room.id
             )
             db.session.add(assignment)
         fam.evacuation_status = "Assigned"
+
+    for resident in standalone_residents:
+        db.session.add(EvacuationAssignment(resident_id=resident.id, room_id=room.id))
 
     user_id = get_jwt_identity()
     db.session.add(
@@ -1041,12 +1094,13 @@ def assign_families(room_id):
     )
     db.session.commit()
 
-    new_assigned = current_occupied + total_members_needed
+    db.session.expire(room, ['assignments'])
+    new_usage = room.capacity_usage()
     current_checked_in = EvacuationAssignment.query.filter(
         EvacuationAssignment.room_id == room.id,
         EvacuationAssignment.checked_in_at.isnot(None)
     ).count()
-    is_assigned = new_assigned > 0
+    is_assigned = new_usage['used_spaces'] > 0
 
     return jsonify({
         "message": "Families assigned successfully",
@@ -1054,12 +1108,14 @@ def assign_families(room_id):
         "families_assigned": len(families_to_assign),
         "total_members": total_members_needed,
         "room_occupied": current_checked_in,
-        "room_assigned": new_assigned,
-        "room_capacity": room.capacity,
-        "room_available": max(room.capacity - new_assigned, 0),
-        "room_unassigned": max(room.capacity - new_assigned, 0),
+        "room_assigned": new_usage['used_spaces'],
+        "room_family_slots": room.family_slots,
+        "room_people_spaces": room.people_spaces,
+        **new_usage,
+        "room_available": new_usage['available_spaces'],
+        "room_unassigned": new_usage['available_spaces'],
         "is_assigned": is_assigned,
-        "is_fully_assigned": bool(room.capacity > 0 and new_assigned >= room.capacity),
+        "is_fully_assigned": new_usage['is_full'],
         "assignment_status": "Assigned" if is_assigned else "Unassigned"
     }), 201
 
@@ -1138,7 +1194,8 @@ def remove_family_from_room(room_id, resident_or_family_id):
     )
     db.session.commit()
 
-    current_assigned = EvacuationAssignment.query.filter_by(room_id=room.id).count()
+    current_usage = room.capacity_usage()
+    current_assigned = current_usage['used_spaces']
     current_occupied = EvacuationAssignment.query.filter(
         EvacuationAssignment.room_id == room.id,
         EvacuationAssignment.checked_in_at.isnot(None)
@@ -1149,9 +1206,12 @@ def remove_family_from_room(room_id, resident_or_family_id):
         "message": f"Family '{household_name}' unassigned from room successfully",
         "room_occupied": current_occupied,
         "room_assigned": current_assigned,
-        "room_available": max(room.capacity - current_assigned, 0),
-        "room_unassigned": max(room.capacity - current_assigned, 0),
+        "room_available": room.capacity_usage()['available_spaces'],
+        "room_unassigned": room.capacity_usage()['available_spaces'],
         "is_assigned": is_assigned,
-        "is_fully_assigned": bool(room.capacity > 0 and current_assigned >= room.capacity),
+        "is_fully_assigned": room.capacity_usage()['is_full'],
+        "family_slots": room.family_slots,
+        "people_spaces": room.people_spaces,
+        **room.capacity_usage(),
         "assignment_status": "Assigned" if is_assigned else "Unassigned"
     }), 200

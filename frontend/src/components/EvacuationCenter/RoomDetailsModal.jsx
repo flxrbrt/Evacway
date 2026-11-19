@@ -96,36 +96,35 @@ export default function RoomDetailsModal({
     : "Unnamed Room";
 
   const isClosed = room.is_active === false;
-  const capacity = Number(room.capacity || 0);
-  const occupied = Number(
-    roomFamiliesData?.occupied ?? room.occupied ?? 0
-  );
+  const familySlots = Math.max(1, Number(room.family_slots ?? 5));
+  const peopleSpaces = Math.max(1, Number(room.people_spaces ?? room.capacity ?? 25));
   const assigned = Number(
     roomFamiliesData?.assigned ?? room.assigned ?? 0
   );
-  const isFull = capacity > 0 && occupied >= capacity;
-  const isFullyAssigned = capacity > 0 && assigned >= capacity;
+  const families = Array.isArray(roomFamiliesData?.families)
+    ? roomFamiliesData.families
+    : [];
+  const usedSlots = Number(roomFamiliesData?.used_slots ?? room.used_slots ?? (families.length || room.assigned_households || 0));
+  const usedSpaces = Number(roomFamiliesData?.used_spaces ?? room.used_spaces ?? assigned);
+  const isOverCapacity = Boolean(roomFamiliesData?.is_over_capacity ?? room.is_over_capacity) || usedSlots > familySlots || usedSpaces > peopleSpaces;
+  const isFull = Boolean(roomFamiliesData?.is_full ?? room.is_full) || usedSlots >= familySlots || usedSpaces >= peopleSpaces;
+  const isFullyAssigned = isFull;
 
   const statusBadge = isClosed
     ? { label: "Closed", cls: "is-closed" }
+    : isOverCapacity
+    ? { label: "Over capacity", cls: "is-full" }
     : isFull
     ? { label: "Full", cls: "is-full" }
     : { label: "Available", cls: "is-available" };
 
-  const occPercent =
-    capacity > 0 ? Math.min(100, Math.round((occupied / capacity) * 100)) : 0;
-  const assignedPercent =
-    capacity > 0 ? Math.min(100, Math.round((assigned / capacity) * 100)) : 0;
+  const occPercent = Math.min(100, Math.round(Math.max(usedSlots / familySlots, usedSpaces / peopleSpaces) * 100));
+  const assignedPercent = occPercent;
   const occColor =
     isFull ? "#dc2626" : occPercent >= 70 ? "#d97706" : "#16a34a";
   const statusText =
     isFull ? "Full" : occPercent >= 70 ? "Near Capacity" : "Available";
-  const spacesLeftText =
-    capacity > occupied ? `${capacity - occupied} spaces left` : "No space left";
-
-  const families = Array.isArray(roomFamiliesData?.families)
-    ? roomFamiliesData.families
-    : [];
+  const spacesLeftText = `${Math.max(familySlots - usedSlots, 0)} family slots · ${Math.max(peopleSpaces - usedSpaces, 0)} people spaces left`;
 
   const sortedFamilies = [...families].sort((a, b) => {
     const nameA = String(a.head_name || a.household_head_name || "").trim();
@@ -200,7 +199,7 @@ export default function RoomDetailsModal({
           <div className="admin-map-detail-occ-header">
             <span className="admin-map-detail-label">Occupancy</span>
             <span className="admin-map-detail-occ-count">
-              {occupied} of {capacity} here · {assigned} assigned
+              Slots {usedSlots}/{familySlots} · Spaces {usedSpaces}/{peopleSpaces}
             </span>
           </div>
           <div
@@ -234,7 +233,7 @@ export default function RoomDetailsModal({
           </div>
           <div className="admin-map-detail-occ-sub">
             <span style={{ color: occColor, fontWeight: 600 }}>
-              {occPercent}% ({statusText})
+              {isOverCapacity ? "Over capacity" : `${occPercent}% (${statusText})`}
             </span>
             <span className="admin-map-detail-muted-text">
               {spacesLeftText}
@@ -298,7 +297,7 @@ export default function RoomDetailsModal({
                 const headName =
                   fam.head_name ||
                   fam.household_head_name ||
-                  "Unknown Household Head";
+                  "Unknown Family Head";
                 const memberCount =
                   famMembers.length ||
                   fam.family_members ||
@@ -427,7 +426,7 @@ export default function RoomDetailsModal({
                           const memName =
                             typeof mem === "string"
                               ? mem
-                              : mem.full_name || mem.name || "Household Member";
+                              : mem.full_name || mem.name || "Family Member";
                           const hasMemCheckin =
                             mem &&
                             typeof mem === "object" &&

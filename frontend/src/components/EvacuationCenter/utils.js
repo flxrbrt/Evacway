@@ -74,6 +74,18 @@ export function plusN(barangays = [], maxShow = 2) {
   return Math.max(0, names.length - maxShow)
 }
 
+/** Use family terminology for legacy relationship labels without changing stored values. */
+export function familyTerm(value) {
+  return String(value ?? '').replace(/\bhouseholds?\b/gi, (word) => {
+    const replacement = /s$/i.test(word) ? 'families' : 'family'
+    if (word === word.toUpperCase()) return replacement.toUpperCase()
+    if (word[0] === word[0].toUpperCase()) {
+      return replacement[0].toUpperCase() + replacement.slice(1)
+    }
+    return replacement
+  })
+}
+
 /** Strip digits from a name field. Name fields must not accept digits. */
 export function stripDigits(value = '') {
   return String(value).replace(/\d/g, '')
@@ -97,7 +109,7 @@ export function useEscapeKey(enabled, onEscape) {
 export const CENTER_TABS = [
   { key: 'overview', label: 'Overview', icon: 'faChartPie' },
   { key: 'structure', label: 'Structure', icon: 'faBuilding' },
-  { key: 'households', label: 'Households', icon: 'faPeopleGroup' },
+  { key: 'households', label: 'Families', icon: 'faPeopleGroup' },
   { key: 'activity', label: 'Activity', icon: 'faClockRotateLeft' },
 ]
 

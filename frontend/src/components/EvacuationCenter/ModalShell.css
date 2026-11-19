@@ -1781,6 +1781,18 @@
   gap: 20px;
 }
 
+.crm-room-capacity-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+@media (max-width: 640px) {
+  .crm-room-capacity-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .crm-dialog .crm-room-form .form-group {
   display: flex;
   flex-direction: column;
@@ -1844,6 +1856,12 @@
   flex: 0 0 auto;
   margin-top: 2px;
   color: #2563eb;
+}
+
+.crm-room-note-error {
+  border-color: #fecaca;
+  background: #fef2f2;
+  color: #b91c1c;
 }
 
 .crm-dialog .modal-shell-footer {
@@ -2095,7 +2113,8 @@
   box-shadow: 0 8px 20px rgba(15, 23, 42, 0.08);
 }
 
-.afm-household-option {
+.afm-family-option,
+.afm-room-option {
   display: flex;
   align-items: center;
   gap: 11px;
@@ -2111,12 +2130,15 @@
   transition: background-color 120ms ease;
 }
 
-.afm-household-option:hover,
-.afm-household-option.is-selected {
+.afm-family-option:hover,
+.afm-family-option.is-selected,
+.afm-room-option:hover,
+.afm-room-option.is-selected {
   background: #eff6ff;
 }
 
-.afm-household-option:focus-visible,
+.afm-family-option:focus-visible,
+.afm-room-option:focus-visible,
 .afm-picker-clear:focus-visible {
   outline: 2px solid #2563eb;
   outline-offset: 2px;
@@ -2162,6 +2184,38 @@
 }
 
 .afm-household-size {
+  flex: 0 0 auto;
+  color: #475569;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.afm-room-option-copy {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.afm-room-option-copy strong {
+  overflow: hidden;
+  color: #1e293b;
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.afm-room-option-copy > span {
+  overflow: hidden;
+  color: #64748b;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.afm-room-option-capacity {
   flex: 0 0 auto;
   color: #475569;
   font-size: 11px;

@@ -504,7 +504,7 @@ export default function BuildingDetailsModal({
                     );
                     const myHouseholdStatusLabel = isMyHouseholdCheckedIn
                       ? "Checked in"
-                      : "Reserved for your household";
+                      : "Reserved for your family";
                     const entrance =
                       (isMine &&
                         (userHousehold?.room?.recommended_entrance ||
@@ -741,7 +741,7 @@ export default function BuildingDetailsModal({
                                                 <div className="bldg-family-top">
                                                   <strong className="bldg-family-name">
                                                     {fam.head_name ||
-                                                      "Unknown Household Head"}
+                                                      "Unknown Family Head"}
                                                   </strong>
                                                   <div className="bldg-family-top-right">
                                                     <span
@@ -837,7 +837,7 @@ export default function BuildingDetailsModal({
                                                               ? mem
                                                               : mem.full_name ||
                                                                 mem.name ||
-                                                                "Household Member";
+                                                                "Family Member";
                                                           const hasMemCheckin =
                                                             mem &&
                                                             typeof mem ===

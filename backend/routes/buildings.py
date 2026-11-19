@@ -170,32 +170,29 @@ def get_center_buildings(center_id):
         ).order_by(EvacuationCenterRoom.room_number.asc()).all()
         room_ids = [r.id for r in rooms]
 
-        total_capacity = sum(r.capacity or 0 for r in rooms)
-        total_assigned = 0
+        total_family_slots = sum(int(r.family_slots or 0) for r in rooms)
+        total_people_spaces = sum(int(r.people_spaces or 0) for r in rooms)
+        total_used_slots = 0
+        total_used_spaces = 0
         total_occupied = 0
         room_stats_map = {}
-        if room_ids:
-            rows = (
-                db.session.query(
-                    EvacuationAssignment.room_id,
-                    func.count(EvacuationAssignment.id).label("assigned"),
-                    func.count(EvacuationAssignment.checked_in_at).label("occupied"),
-                )
-                .filter(EvacuationAssignment.room_id.in_(room_ids))
-                .group_by(EvacuationAssignment.room_id)
-                .all()
-            )
-            for row in rows:
-                r_ass = int(row.assigned or 0)
-                r_occ = int(row.occupied or 0)
-                room_stats_map[row.room_id] = (r_ass, r_occ)
-                total_assigned += r_ass
-                total_occupied += r_occ
+        full_room_count = 0
+        for room in rooms:
+            usage = room.capacity_usage()
+            occupied = EvacuationAssignment.query.filter(
+                EvacuationAssignment.room_id == room.id,
+                EvacuationAssignment.checked_in_at.isnot(None),
+            ).count()
+            room_stats_map[room.id] = (usage, occupied)
+            total_used_slots += usage['used_slots']
+            total_used_spaces += usage['used_spaces']
+            total_occupied += occupied
+            full_room_count += int(usage['is_full'])
 
-        if total_capacity > 0:
-            occ_rate = total_occupied / total_capacity
-            assigned_rate = total_assigned / total_capacity
-            if total_occupied >= total_capacity:
+        if total_people_spaces > 0:
+            occ_rate = total_occupied / total_people_spaces
+            assigned_rate = total_used_spaces / total_people_spaces
+            if rooms and full_room_count == len(rooms):
                 status = "Full"
                 fill_color = "#dc2626"  # Red
                 outline_color = "#991b1b"
@@ -221,9 +218,12 @@ def get_center_buildings(center_id):
                 "id": r.id,
                 "room_number": r.room_number,
                 "floor": r.floor,
-                "capacity": r.capacity,
-                "occupied": room_stats_map.get(r.id, (0, 0))[1],
-                "assigned": room_stats_map.get(r.id, (0, 0))[0],
+                "capacity": r.people_spaces,
+                "family_slots": r.family_slots,
+                "people_spaces": r.people_spaces,
+                **room_stats_map.get(r.id, ({}, 0))[0],
+                "occupied": room_stats_map.get(r.id, ({}, 0))[1],
+                "assigned": room_stats_map.get(r.id, ({}, 0))[0].get('used_spaces', 0),
                 "is_active": r.is_active,
             }
             for r in rooms
@@ -243,16 +243,22 @@ def get_center_buildings(center_id):
                 "evacuation_center_id": center_id,
                 "center_name": center.name,
                 "room_count": len(rooms),
-                "capacity": total_capacity,
+                "available_room_count": max(len(rooms) - full_room_count, 0),
+                "capacity": total_people_spaces,
+                "family_slots": total_family_slots,
+                "people_spaces": total_people_spaces,
+                "used_slots": total_used_slots,
+                "used_spaces": total_used_spaces,
+                "full_room_count": full_room_count,
                 "occupied": total_occupied,
-                "assigned": total_assigned,
-                "available": max(total_capacity - total_occupied, 0),
-                "unassigned": max(total_capacity - total_assigned, 0),
+                "assigned": total_used_spaces,
+                "available": max(total_people_spaces - total_occupied, 0),
+                "unassigned": max(total_people_spaces - total_used_spaces, 0),
                 "occupancy_rate": round(occ_rate, 2),
                 "occupancy_pct": min(100, round(occ_rate * 100)),
                 "assigned_rate": round(assigned_rate, 2),
                 "assigned_pct": min(100, round(assigned_rate * 100)),
-                "is_fully_assigned": bool(total_capacity > 0 and total_assigned >= total_capacity),
+                "is_fully_assigned": bool(rooms and full_room_count == len(rooms)),
                 "status": status,
                 "fill_color": fill_color,
                 "outline_color": outline_color,
@@ -637,7 +643,9 @@ def suggest_rooms_for_buildings(center_id):
                 "room_id": r.id,
                 "room_number": r.room_number,
                 "floor": r.floor,
-                "capacity": r.capacity,
+                "capacity": r.people_spaces,
+                "family_slots": r.family_slots,
+                "people_spaces": r.people_spaces,
                 "latitude": float(r.latitude),
                 "longitude": float(r.longitude),
                 "suggested_building_id": matched_building.id,
@@ -707,43 +715,68 @@ def get_building_details(building_id):
         assignments_by_room[a.room_id].append(a)
 
     detailed_rooms = []
-    total_capacity = 0
+    total_family_slots = 0
+    total_people_spaces = 0
+    total_used_slots = 0
+    total_used_spaces = 0
+    full_room_count = 0
     total_occupied = 0
-    total_assigned = 0
 
     for r in rooms:
         r_assignments = assignments_by_room.get(r.id, [])
-        r_capacity = r.capacity or 0
-        r_assigned = len(r_assignments)
+        r_family_slots = int(r.family_slots or 0)
+        r_people_spaces = int(r.people_spaces or 0)
+        r_used_spaces = len({a.resident_id for a in r_assignments})
+        household_keys = set()
+        for assignment in r_assignments:
+            resident = residents_by_id.get(assignment.resident_id)
+            household_keys.add(('family', resident.family_id) if resident and resident.family_id is not None else ('resident', assignment.resident_id))
+        r_used_slots = len(household_keys)
+        r_is_full = r_used_slots >= r_family_slots or r_used_spaces >= r_people_spaces
+        r_over_capacity = r_used_slots > r_family_slots or r_used_spaces > r_people_spaces
         r_occupied = sum(1 for a in r_assignments if a.checked_in_at is not None)
-        total_capacity += r_capacity
+        total_family_slots += r_family_slots
+        total_people_spaces += r_people_spaces
+        total_used_slots += r_used_slots
+        total_used_spaces += r_used_spaces
+        full_room_count += int(r_is_full)
         total_occupied += r_occupied
-        total_assigned += r_assigned
 
-        occ_pct = min(100, round((r_occupied / r_capacity * 100))) if r_capacity > 0 else 0
-        assigned_pct = min(100, round((r_assigned / r_capacity * 100))) if r_capacity > 0 else 0
-        if r_capacity > 0 and r_occupied >= r_capacity:
+        occ_pct = min(100, round((r_occupied / r_people_spaces * 100))) if r_people_spaces > 0 else 0
+        assigned_pct = max(
+            min(100, round((r_used_slots / r_family_slots * 100))) if r_family_slots > 0 else 0,
+            min(100, round((r_used_spaces / r_people_spaces * 100))) if r_people_spaces > 0 else 0,
+        )
+        if r_is_full:
             status = "Full"
             status_color = "#dc2626"
         elif occ_pct >= 70:
             status = "Near Capacity"
             status_color = "#d97706"
         else:
-            status = "Available" if r_capacity > 0 else "Closed"
-            status_color = "#16a34a" if r_capacity > 0 else "#94a3b8"
+            status = "Available" if r_people_spaces > 0 else "Closed"
+            status_color = "#16a34a" if r_people_spaces > 0 else "#94a3b8"
 
         room_data = {
             "id": r.id,
             "room_number": r.room_number,
             "floor": r.floor,
-            "capacity": r_capacity,
+            "capacity": r_people_spaces,
+            "family_slots": r_family_slots,
+            "people_spaces": r_people_spaces,
+            "used_slots": r_used_slots,
+            "used_spaces": r_used_spaces,
+            "available_slots": max(r_family_slots - r_used_slots, 0),
+            "available_spaces": max(r_people_spaces - r_used_spaces, 0),
+            "is_full": r_is_full,
+            "is_over_capacity": r_over_capacity,
             "occupied": r_occupied,
-            "assigned": r_assigned,
-            "available": max(r_capacity - r_occupied, 0),
-            "unassigned": max(r_capacity - r_assigned, 0),
+            "assigned": r_used_spaces,
+            "available": max(r_people_spaces - r_occupied, 0),
+            "unassigned": max(r_people_spaces - r_used_spaces, 0),
             "occupancy_pct": occ_pct,
             "assigned_pct": assigned_pct,
-            "is_fully_assigned": bool(r_capacity > 0 and r_assigned >= r_capacity),
+            "is_fully_assigned": r_is_full,
             "status": status,
             "status_color": status_color,
             "is_my_room": False,
@@ -805,7 +838,7 @@ def get_building_details(building_id):
                     "barangay": (matched_fam.barangay.name if matched_fam and matched_fam.barangay and hasattr(matched_fam.barangay, "name") else (str(matched_fam.barangay) if matched_fam and matched_fam.barangay else (str(matched_res.barangay) if matched_res.barangay else ""))),
                     "is_checked_in": matched_checked_in,
                     "checkin_status": "Checked in" if matched_checked_in else "Not yet arrived",
-                    "status": "Checked in" if matched_checked_in else "Reserved for your household",
+                    "status": "Checked in" if matched_checked_in else "Reserved for your family",
                     "members": my_members_list,
                 }
 
@@ -881,16 +914,19 @@ def get_building_details(building_id):
 
         detailed_rooms.append(room_data)
 
-    overall_occ_pct = min(100, round((total_occupied / total_capacity * 100))) if total_capacity > 0 else 0
-    overall_assigned_pct = min(100, round((total_assigned / total_capacity * 100))) if total_capacity > 0 else 0
-    if total_capacity > 0 and total_occupied >= total_capacity:
+    overall_occ_pct = min(100, round((total_occupied / total_people_spaces * 100))) if total_people_spaces > 0 else 0
+    overall_assigned_pct = max(
+        min(100, round((total_used_slots / total_family_slots * 100))) if total_family_slots > 0 else 0,
+        min(100, round((total_used_spaces / total_people_spaces * 100))) if total_people_spaces > 0 else 0,
+    )
+    if rooms and full_room_count == len(rooms):
         b_status = "Full"
         b_status_color = "#dc2626"
     elif overall_occ_pct >= 70:
         b_status = "Near Capacity"
         b_status_color = "#d97706"
     else:
-        b_status = "Available" if total_capacity > 0 else "Closed"
+        b_status = "Available" if total_people_spaces > 0 else "Closed"
         b_status_color = "#16a34a" if total_capacity > 0 else "#94a3b8"
 
     return jsonify({
@@ -901,14 +937,20 @@ def get_building_details(building_id):
         "evacuation_center_id": center.id,
         "center_name": center.name,
         "room_count": len(rooms),
-        "total_capacity": total_capacity,
+        "available_room_count": max(len(rooms) - full_room_count, 0),
+        "total_capacity": total_people_spaces,
+        "family_slots": total_family_slots,
+        "people_spaces": total_people_spaces,
+        "used_slots": total_used_slots,
+        "used_spaces": total_used_spaces,
+        "full_room_count": full_room_count,
         "total_occupied": total_occupied,
-        "total_assigned": total_assigned,
-        "available_spaces": max(total_capacity - total_occupied, 0),
-        "unassigned_spaces": max(total_capacity - total_assigned, 0),
+        "total_assigned": total_used_spaces,
+        "available_spaces": max(total_people_spaces - total_used_spaces, 0),
+        "unassigned_spaces": max(total_people_spaces - total_used_spaces, 0),
         "occupancy_pct": overall_occ_pct,
         "assigned_pct": overall_assigned_pct,
-        "is_fully_assigned": bool(total_capacity > 0 and total_assigned >= total_capacity),
+        "is_fully_assigned": bool(rooms and full_room_count == len(rooms)),
         "status": b_status,
         "status_color": b_status_color,
         "display_label": _format_room_range(rooms, building.name),

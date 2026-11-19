@@ -5168,7 +5168,7 @@ const ResidentHome = () => {
   function chooseMatch(match) {
     if (!match?.evacuation_center) {
       setLookupError(
-        "We found your household, but no evacuation center has been assigned yet. Please contact your barangay."
+        "We found your family, but no evacuation center has been assigned yet. Please contact your barangay."
       );
 
       setLookupMatches([]);
@@ -5264,7 +5264,7 @@ const ResidentHome = () => {
 
       if (matches.length === 0) {
         setLookupError(
-          "We couldn't find an assigned evacuation center for this household. Check with your barangay."
+          "We couldn't find an assigned evacuation center for this family. Check with your barangay."
         );
       } else if (matches.length === 1) {
         chooseMatch(matches[0]);
@@ -5342,7 +5342,7 @@ const ResidentHome = () => {
 
       if (matches.length === 0) {
         setLookupError(
-          "We couldn't find a household with that name. Check the spelling, or ask your barangay."
+          "We couldn't find a family with that name. Check the spelling, or ask your barangay."
         );
       } else if (matches.length === 1) {
         chooseMatch(matches[0]);
@@ -6091,7 +6091,7 @@ const ResidentHome = () => {
   const myCheckinStatus =
     myCenter?.is_checked_in || myCenter?.room?.is_checked_in
       ? "Checked in"
-      : "Reserved for your household";
+      : "Reserved for your family";
   const centerDisplayName =
     myCenter?.evacuation_center?.name || "Sogod Central School";
   const roomTitle = hasRoom
@@ -7657,7 +7657,7 @@ const ResidentHome = () => {
                   </div>
                 )}
                 <p className="mc-hint">
-                  Enter the full name of the head of your household to find the
+                  Enter the full name of the head of your family to find the
                   evacuation center assigned to you.
                 </p>
 
@@ -7712,7 +7712,7 @@ const ResidentHome = () => {
                             spin
                             className="mc-autosuggest-spinner"
                           />
-                          <span>Searching households...</span>
+                          <span>Searching families...</span>
                         </div>
                       ) : autosuggestList.length === 0 ? (
                         <div className="mc-autosuggest-empty">
@@ -7754,7 +7754,7 @@ const ResidentHome = () => {
                 {lookupMatches.length > 0 && (
                   <div className="mc-matches">
                     <div className="mc-hint">
-                      More than one household matches. Which one is yours?
+                      More than one family matches. Which one is yours?
                     </div>
 
                     {lookupMatches.map((match, index) => (
