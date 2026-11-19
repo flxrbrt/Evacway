@@ -3,7 +3,7 @@ import { api } from '../../services/api';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faCircleNotch, faXmark, faTriangleExclamation, faTrash, faCheck, faCircleInfo, faSearch, faDoorOpen, faBuilding, faBuildingColumns } from '@fortawesome/free-solid-svg-icons';
 import { stripDigits, centerNeedsMapping, resolveCenterStructureMode } from './utils';
-import { formatRoomLabel } from '../../utils/formatRoomLabel';
+import { formatRoomLabel, formatFloorLabel } from '../../utils/formatRoomLabel';
 import { displayEntityName } from '../../utils/displayEntityName';
 import BarangaysServedPicker from '../BarangaysServedPicker/BarangaysServedPicker';
 import './ModalShell.css';
@@ -1079,6 +1079,15 @@ export function CenterRoomModal({
     } else {
       clearFieldError('capacity');
     }
+    const selectedBuilding = buildingOptions.find((building) => String(building.id) === String(roomForm.building_id));
+    const floorCount = Number(selectedBuilding?.floors || 1);
+    const hasFloor = roomForm.floor !== '' && roomForm.floor != null;
+    if (roomForm.building_id && floorCount >= 2 && (!hasFloor || !Number.isInteger(Number(roomForm.floor)) || Number(roomForm.floor) < 1 || Number(roomForm.floor) > floorCount)) {
+      setFieldError('floor', `Choose a floor from 1 to ${floorCount}.`);
+      valid = false;
+    } else {
+      clearFieldError('floor');
+    }
     if (!valid) return;
     onSubmit(e);
   }
@@ -1091,11 +1100,13 @@ export function CenterRoomModal({
       const props = item?.properties || item || {};
       const id = props.id ?? item?.id;
       const name = props.name || props.display_label || `Building #${id}`;
-      return { id, name };
+      return { id, name, floors: props.floors ?? item?.floors ?? null };
     });
   }, [buildings]);
 
   const hasBuildings = resolveCenterStructureMode(selectedCenter) === 'buildings_and_rooms';
+  const selectedBuilding = buildingOptions.find((building) => String(building.id) === String(roomForm.building_id));
+  const selectedFloorCount = Number(selectedBuilding?.floors || 1);
 
   const modalFooter = (
     <div className="crm-footer">
@@ -1210,11 +1221,15 @@ export function CenterRoomModal({
             <label htmlFor="room-building">Building</label>
             <select
               id="room-building"
-              className={fieldErrors.building_id ? 'form-input is-invalid' : 'form-input'}
+              className={`form-input crm-room-select ${fieldErrors.building_id ? 'is-invalid' : ''}`}
               value={roomForm.building_id ?? ''}
               onChange={(e) => {
                 clearFieldError('building_id');
-                onChange({ ...roomForm, building_id: e.target.value });
+                clearFieldError('floor');
+                const nextBuilding = buildingOptions.find((building) => String(building.id) === String(e.target.value));
+                const nextFloors = Number(nextBuilding?.floors || 1);
+                const currentFloor = Number(roomForm.floor);
+                onChange({ ...roomForm, building_id: e.target.value, floor: e.target.value ? String(Number.isInteger(currentFloor) && currentFloor >= 1 && currentFloor <= nextFloors ? currentFloor : 1) : '' });
               }}
             >
               <option value="">No building (unassigned)</option>
@@ -1226,6 +1241,24 @@ export function CenterRoomModal({
             </select>
             {fieldErrors.building_id && <p className="field-error">{fieldErrors.building_id}</p>}
           </div>
+        )}
+        {selectedBuilding && selectedFloorCount >= 2 && (
+        <div className="form-group">
+          <label htmlFor="room-floor" className="crm-room-label">Floor <span className="crm-room-required">*</span></label>
+            <select
+              id="room-floor"
+              required
+              className={`form-input crm-room-select ${fieldErrors.floor ? 'is-invalid' : ''}`}
+              value={roomForm.floor ?? ''}
+              onChange={(e) => { clearFieldError('floor'); onChange({ ...roomForm, floor: e.target.value }); }}
+            >
+              <option value="">Select floor</option>
+              {Array.from({ length: selectedFloorCount }, (_, index) => index + 1).map((floor) => (
+                <option key={floor} value={String(floor)}>{formatFloorLabel(floor)}</option>
+              ))}
+            </select>
+          {fieldErrors.floor && <p className="field-error">{fieldErrors.floor}</p>}
+        </div>
         )}
       </form>
     </ModalShell>
@@ -1288,11 +1321,13 @@ export function BuildingFormModal({
     }
 
     if (
-      buildingForm.floors !== null &&
-      buildingForm.floors !== '' &&
-      Number(buildingForm.floors) < 1
+      buildingForm.floors == null ||
+      buildingForm.floors === '' ||
+      !Number.isInteger(Number(buildingForm.floors)) ||
+      Number(buildingForm.floors) < 1 ||
+      Number(buildingForm.floors) > 20
     ) {
-      setFieldError('floors', 'Floors must be at least 1.');
+      setFieldError('floors', 'Number of floors must be from 1 to 20.');
       valid = false;
     } else {
       clearFieldError('floors');
@@ -1403,25 +1438,35 @@ export function BuildingFormModal({
 
           <div className="bfm-field">
             <label htmlFor="building-floors" className="bfm-label">
-              Floors
+              Number of floors
             </label>
             <input
               id="building-floors"
               type="number"
               min="1"
+              max="20"
+              step="1"
               className={`bfm-input ${fieldErrors.floors ? 'is-invalid' : ''}`}
-              placeholder="e.g. 2 (optional)"
-              value={buildingForm.floors ?? ''}
+              value={buildingForm.floors ?? 1}
+              onKeyDown={(e) => {
+                if (['e', 'E', '+', '-', '.'].includes(e.key)) e.preventDefault();
+              }}
+              onPaste={(e) => {
+                const pasted = e.clipboardData.getData('text');
+                if (!/^\d+$/.test(pasted)) e.preventDefault();
+              }}
               onChange={(e) => {
+                const value = e.target.value;
+                if (value !== '' && !/^\d+$/.test(value)) return;
                 clearFieldError('floors');
                 onChange({
                   ...buildingForm,
-                  floors: e.target.value !== '' ? Number(e.target.value) : null,
+                  floors: value !== '' ? Number(value) : '',
                 });
               }}
             />
             {fieldErrors.floors && <p className="bfm-field-error">{fieldErrors.floors}</p>}
-            <p className="bfm-helper-text">Number of floors or levels in this building (optional)</p>
+            <p className="bfm-helper-text">Rooms can then be placed on these floors.</p>
           </div>
         </div>
 
@@ -1485,12 +1530,14 @@ export function EditBuildingModal(props) {
 export function AssignFamilyModal({ open = false, selectedCenter, selectedRoom, rooms = [], buildings = [], allowRoomSelection = false, availableFamilies = [], loadingAvailableFamilies = false, selectedFamilyIdToAssign = '', assigningFamily = false, onClose, onFamilyChange, onRoomChange, onConfirm }) {
   const isSingleVenue = resolveCenterStructureMode(selectedCenter) === 'open_area';
   const [householdSearch, setHouseholdSearch] = useState('');
+  const [roomSearch, setRoomSearch] = useState('');
   const [householdPickerOpen, setHouseholdPickerOpen] = useState(false);
   const householdPickerRef = useRef(null);
 
   useEffect(() => {
     if (open) return;
     setHouseholdSearch('');
+    setRoomSearch('');
     setHouseholdPickerOpen(false);
   }, [open]);
 
@@ -1691,6 +1738,7 @@ export function AssignFamilyModal({ open = false, selectedCenter, selectedRoom, 
         {allowRoomSelection && (
           <div className="afm-room-picker">
             <label className="afm-label" htmlFor="assign-household-room">Available room</label>
+            <input className="form-input" aria-label="Search rooms by name, building, or floor" placeholder="Search rooms by name, building, or floor..." value={roomSearch} onChange={(event) => setRoomSearch(event.target.value)} />
             <select
               id="assign-household-room"
               className="afm-room-select"
@@ -1706,7 +1754,11 @@ export function AssignFamilyModal({ open = false, selectedCenter, selectedRoom, 
                   ? (selectedFamily ? 'No room has enough remaining capacity' : 'No available rooms')
                   : 'Choose an available room...'}
               </option>
-              {roomOptions.map((room) => {
+              {roomOptions.filter((room) => {
+                const query = roomSearch.trim().toLowerCase();
+                const building = room.building_name || room.building?.name || buildings.find((item) => String(item.id) === String(room.building_id))?.name || '';
+                return !query || [room.room_number, building, formatFloorLabel(room.floor)].filter(Boolean).join(' ').toLowerCase().includes(query);
+              }).map((room) => {
                 const capacity = Number(room.capacity || 0);
                 const assigned = Number(room.assigned ?? (
                   room.unassigned != null
@@ -1715,7 +1767,8 @@ export function AssignFamilyModal({ open = false, selectedCenter, selectedRoom, 
                 ));
                 const remainingSpace = Math.max(capacity - assigned, 0);
                 const buildingName = room.building_name || room.building?.name || buildings.find((building) => String(building.id) === String(room.building_id))?.name;
-                const label = [formatRoomLabel(room.room_number), buildingName, `${remainingSpace} ${remainingSpace === 1 ? 'space' : 'spaces'} left`].filter(Boolean).join(' · ');
+                const floorLabel = Number(room.building_floors || buildings.find((item) => String(item.id) === String(room.building_id))?.floors || 1) > 1 ? formatFloorLabel(room.floor) : '';
+                const label = [formatRoomLabel(room.room_number), buildingName, floorLabel, `${remainingSpace} ${remainingSpace === 1 ? 'space' : 'spaces'} left`].filter(Boolean).join(' · ');
                 return <option key={room.id} value={room.id}>{label}</option>;
               })}
             </select>
@@ -1786,6 +1839,7 @@ export function AssignFamilyModal({ open = false, selectedCenter, selectedRoom, 
 
 export function MoveFamilyModal({ open = false, movingFamily, selectedRoom, centers = [], targetCenterRooms = [], targetCenterBuildings = [], targetCenterId = '', targetRoomId = '', loadingTargetRooms = false, moving = false, onClose, onTargetCenterChange, onTargetRoomChange, onConfirmMove }) {
   const [selectedBuildingId, setSelectedBuildingId] = useState('');
+  const [roomSearch, setRoomSearch] = useState('');
 
   if (!open || !movingFamily) return null;
   const needed = movingFamily.assigned_members || movingFamily.family_members || movingFamily.member_count || 1;
@@ -1883,15 +1937,20 @@ export function MoveFamilyModal({ open = false, movingFamily, selectedRoom, cent
       {!isTargetOpenArea && (
         <div className="form-group">
           <label htmlFor="move-target-room">Target Room</label>
+          <input className="form-input" aria-label="Search target rooms by name or floor" placeholder="Search by room, building, or floor..." value={roomSearch} onChange={(event) => setRoomSearch(event.target.value)} />
           <select id="move-target-room" className="form-select" value={targetRoomId} onChange={(e) => onTargetRoomChange(e.target.value)} disabled={!targetCenterId || loadingTargetRooms || moving}>
             <option value="">Select target room...</option>
-            {roomsForDropdown.map((r) => {
+            {roomsForDropdown.filter((r) => {
+              const query = roomSearch.trim().toLowerCase();
+              const building = r.building_name || targetCenterBuildings.find((item) => String(item.id ?? item.properties?.id) === String(r.building_id))?.name || '';
+              return !query || [r.room_number, building, formatFloorLabel(r.floor)].filter(Boolean).join(' ').toLowerCase().includes(query);
+            }).map((r) => {
               const isCurrent = selectedRoom && String(r.id) === String(selectedRoom.id);
               const rRem = r.available ?? Math.max((r.capacity || 0) - (r.occupied || r.assigned || 0), 0);
               const isRoomFull = (r.capacity || 0) <= 0 || rRem <= 0;
               return (
                 <option key={r.id} value={r.id} disabled={isRoomFull || isCurrent}>
-                  {formatRoomLabel(r.room_number)} &middot; Cap: {r.capacity} &middot; {isRoomFull ? 'Full' : `Space left: ${rRem}`}{isCurrent ? ' (Current)' : ''}
+                  {[formatRoomLabel(r.room_number), r.building_name || targetCenterBuildings.find((item) => String(item.id ?? item.properties?.id) === String(r.building_id))?.name, Number(r.building_floors || targetCenterBuildings.find((item) => String(item.id ?? item.properties?.id) === String(r.building_id))?.floors || 1) > 1 ? formatFloorLabel(r.floor) : '', `Cap: ${r.capacity}`, isRoomFull ? 'Full' : `Space left: ${rRem}`].filter(Boolean).join(' · ')}{isCurrent ? ' (Current)' : ''}
                 </option>
               );
             })}

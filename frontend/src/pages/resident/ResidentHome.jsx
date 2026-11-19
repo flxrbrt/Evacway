@@ -26,6 +26,7 @@ import { useEvacuationData } from "../../hooks/useEvacuationData";
 import { usePublicHazardReports, useRoadSegments, useSogodBoundary, queryKeys } from "../../hooks/useEvacuationQueries";
 import { useRouting } from "../../hooks/useRouting";
 import { displayEntityName } from "../../utils/displayEntityName";
+import { formatFloorLabel } from "../../utils/formatRoomLabel";
 import BuildingDetailsModal from "../../components/BuildingDetailsModal/BuildingDetailsModal";
 import {
   initBuildingLayers,
@@ -5651,7 +5652,7 @@ const ResidentHome = () => {
       return;
     }
     setSelectedCenter(centerFeature);
-    const room = person.room ? { id: person.room.id, room_number: person.room.room_number } : null;
+    const room = person.room ? { id: person.room.id, room_number: person.room.room_number, floor: person.room.floor, building_name: person.room.building_name || building?.name } : null;
     setFoundPersonLocation({ centerId, buildingId: building?.id ?? null, room });
     if (building) {
       setPrivateBuildingView(true);
@@ -6096,11 +6097,12 @@ const ResidentHome = () => {
   const roomTitle = hasRoom
     ? (myCenter?.room?.room_name || roomNum)
     : (hasBuilding ? myCenter.room.building_name : "General Shelter");
+  const roomFloorLabel = Number(myCenter?.room?.building_floors || 1) > 1 ? formatFloorLabel(myCenter?.room?.floor) : "";
   const roomSubtitle = hasBuilding
-    ? `${myCenter.room.building_name} · ${centerDisplayName}`
+    ? [myCenter.room.building_name, roomFloorLabel, centerDisplayName].filter(Boolean).join(" · ")
     : centerDisplayName;
   const roomSubtitleContent = isMobile && hasBuilding
-    ? <><span>{myCenter.room.building_name}</span><span>{centerDisplayName}</span></>
+    ? <><span>{myCenter.room.building_name}{roomFloorLabel ? ` · ${roomFloorLabel}` : ""}</span><span>{centerDisplayName}</span></>
     : roomSubtitle;
   const roomLabel = `${roomTitle} · ${roomSubtitle}`;
   const fullCenterRoomLabel = roomLabel;
@@ -6461,7 +6463,7 @@ const ResidentHome = () => {
                   {" · "}
                   {hasRoom && myCenter.room ? (
                     <>
-                      {myCenter.room.floor ? `Floor/area: ${myCenter.room.floor}. ` : ""}
+                      {roomFloorLabel ? `Floor: ${roomFloorLabel}. ` : ""}
                       Enter via {myCenter.room.recommended_entrance || "Entrance 3"}.
                     </>
                   ) : (
@@ -6523,7 +6525,7 @@ const ResidentHome = () => {
                 {" · "}
                 {hasRoom && myCenter.room ? (
                   <>
-                    {myCenter.room.floor ? `Floor/area: ${myCenter.room.floor}. ` : ""}
+                    {roomFloorLabel ? `Floor: ${roomFloorLabel}. ` : ""}
                     Enter via {myCenter.room.recommended_entrance || "Entrance 3"}.
                   </>
                 ) : (
@@ -6740,7 +6742,7 @@ const ResidentHome = () => {
                 <span>
                   {myCenter?.room?.room_number ? (
                     <>
-                      Your assigned room: <strong>{myCenter.room.room_number}</strong> · {myCheckinStatus}
+                      Your assigned room: <strong>{myCenter.room.room_number}</strong>{roomFloorLabel ? ` · ${roomFloorLabel}` : ""} · {myCheckinStatus}
                     </>
                   ) : (
                     <>
@@ -6752,9 +6754,9 @@ const ResidentHome = () => {
             )}
 
             {/* Primary Action Button: Navigate to this Center */}
-            {foundPersonLocation?.room && foundPersonLocation.buildingId == null && (
+            {foundPersonLocation?.room && (
               <div className="cd-your-room found-person-room-text">
-                Assigned room: {foundPersonLocation.room.room_number || "Room assigned"}
+                {[foundPersonLocation.room.building_name, formatFloorLabel(foundPersonLocation.room.floor), foundPersonLocation.room.room_number || "Room assigned"].filter(Boolean).join(" · ")}
               </div>
             )}
             <div className="center-card-actions">

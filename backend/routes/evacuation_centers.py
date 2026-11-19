@@ -1105,6 +1105,7 @@ def get_evacuation_center_details(center_id):
             Family.evacuation_status,
             EvacuationCenterRoom.id.label('room_id'),
             EvacuationCenterRoom.room_number,
+            EvacuationCenterRoom.floor,
             EvacuationCenterRoom.building_id,
             EvacuationCenterBuilding.name.label('building_name'),
             func.count(EvacuationAssignment.id).label('assigned_members'),
@@ -1124,6 +1125,7 @@ def get_evacuation_center_details(center_id):
             Family.evacuation_status,
             EvacuationCenterRoom.id,
             EvacuationCenterRoom.room_number,
+            EvacuationCenterRoom.floor,
             EvacuationCenterRoom.building_id,
             EvacuationCenterBuilding.name,
         )
@@ -1180,6 +1182,7 @@ def get_evacuation_center_details(center_id):
             "is_assigned": True,
             "room_id": row.room_id,
             "room_number": row.room_number,
+            "floor": row.floor,
             "building_id": row.building_id,
             "building_name": (row.building_name or f"Building #{row.building_id}") if row.building_id else None,
             "assigned_members": row.assigned_members,
@@ -2112,19 +2115,22 @@ def auto_geofence_check_in():
     # Find assigned room if any
     first_room_assignment = next((a for a in assignments if a.room_id is not None), None)
     room_number = None
+    room_floor = None
     if first_room_assignment:
         room_obj = EvacuationCenterRoom.query.get(first_room_assignment.room_id)
         if room_obj:
             room_number = room_obj.room_number
+            room_floor = room_obj.floor
 
     return jsonify({
         "success": True,
         "already_checked_in": already_checked_in,
-        "message": f"Welcome! You have arrived at {center.name}." + (f" Your assigned room is {room_number}." if room_number else ""),
+        "message": f"Welcome! You have arrived at {center.name}." + (f" Your assigned room is {room_number}" + (f", floor {room_floor}" if room_floor is not None else "") + "." if room_number else ""),
         "is_checked_in": True,
         "checked_in_at": now.isoformat(),
         "center_name": center.name,
-        "room_number": room_number
+        "room_number": room_number,
+        "floor": room_floor
     }), 200
 
 
@@ -2335,6 +2341,7 @@ def _get_checkin_dataset(center_id_param=None, search_query='', status_filter='a
             CenterType.structure_mode.label('center_structure_mode'),
             EvacuationCenterRoom.id.label('room_id'),
             EvacuationCenterRoom.room_number,
+            EvacuationCenterRoom.floor,
             EvacuationCenterBuilding.name.label('building_name'),
             func.count(EvacuationAssignment.id).label('assigned_members'),
             func.count(EvacuationAssignment.checked_in_at).label('checked_in_members'),
@@ -2375,6 +2382,7 @@ def _get_checkin_dataset(center_id_param=None, search_query='', status_filter='a
             CenterType.structure_mode,
             EvacuationCenterRoom.id,
             EvacuationCenterRoom.room_number,
+            EvacuationCenterRoom.floor,
             EvacuationCenterBuilding.name,
         )
         .order_by(Family.head_name.asc())
@@ -2557,6 +2565,7 @@ def _get_checkin_dataset(center_id_param=None, search_query='', status_filter='a
             "structure_mode": resolved_mode,
             "room_id": r.room_id,
             "room_number": r.room_number,
+            "floor": r.floor,
             "building_name": r.building_name if resolved_mode == 'buildings_and_rooms' else None,
             "assigned_members": m_count,
             "checked_in_members": chk_count,
@@ -3147,6 +3156,8 @@ def export_check_in_report():
             parts = []
             if ev.get("building_name"):
                 parts.append(ev.get("building_name"))
+            if ev.get("floor") is not None:
+                parts.append(f"Floor {ev.get('floor')}")
             if ev.get("room_number"):
                 parts.append(f"Room {ev.get('room_number')}")
             bldg_room = " · ".join(parts)

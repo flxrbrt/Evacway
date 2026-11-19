@@ -1031,3 +1031,7 @@
   font-size: 11px;
   font-weight: 600;
 }
+.bldg-floor-chips { display:flex; gap:8px; flex-wrap:wrap; margin:12px 0; }
+.bldg-floor-chips button { border:1px solid #dbe3ef; border-radius:999px; background:#fff; color:#475569; padding:6px 12px; font:inherit; cursor:pointer; }
+.bldg-floor-chips button.is-active { border-color:#2563eb; background:#eff6ff; color:#1d4ed8; }
+.bldg-floor-group-header { width:100%; display:flex; align-items:center; justify-content:space-between; margin:8px 0; padding:10px 12px; border:0; border-radius:8px; background:#f8fafc; color:#475569; font-weight:600; cursor:pointer; }

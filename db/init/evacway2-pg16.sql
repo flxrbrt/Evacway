@@ -4644,10 +4644,10 @@ CREATE TABLE public.evacuation_center_buildings (
     created_at timestamp without time zone,
     updated_at timestamp without time zone,
     max_rooms integer,
-    floors integer,
+    floors integer DEFAULT 1 NOT NULL,
     status character varying(20) DEFAULT 'open'::character varying NOT NULL,
     notes text,
-    CONSTRAINT chk_building_floors CHECK (((floors IS NULL) OR (floors >= 1))),
+    CONSTRAINT chk_building_floors CHECK ((floors BETWEEN 1 AND 20)),
     CONSTRAINT chk_building_max_rooms CHECK (((max_rooms IS NULL) OR (max_rooms >= 1))),
     CONSTRAINT chk_building_status CHECK (((status)::text = ANY (ARRAY[('open'::character varying)::text, ('closed'::character varying)::text, ('under_repair'::character varying)::text])))
 );
@@ -4684,7 +4684,8 @@ CREATE TABLE public.evacuation_center_rooms (
     capacity integer NOT NULL,
     created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
     is_active boolean DEFAULT true NOT NULL,
-    building_id integer
+    building_id integer,
+    floor integer CHECK (floor IS NULL OR floor >= 1)
 );
 
 
@@ -7265,12 +7266,12 @@ COPY public.evacuation_assignments (id, resident_id, room_id, assigned_at, check
 --
 
 COPY public.evacuation_center_buildings (id, evacuation_center_id, name, geom, created_at, updated_at, max_rooms, floors, status, notes) FROM stdin;
-2	2	South Wing	\N	2026-10-26 19:36:32.534991	2026-11-09 13:50:16.018203	\N	\N	open	\N
-4	2	North Wing	\N	2026-10-26 19:36:32.534991	2026-11-09 13:50:16.018203	\N	\N	open	\N
-5	2	East Wing	\N	2026-10-26 19:36:32.534991	2026-11-09 13:50:16.018203	\N	\N	open	\N
-7	2	sample	\N	2026-10-30 20:33:20.091099	2026-11-09 14:06:54.026921	5	\N	open	Test note
-3	2	Central Building	0103000020E610000001000000050000002087A3E7B43E5F40284B057361C624400487E362BD3E5F4010DABE8F64C624403C87A357BD3E5F4010E9BEBA56C62440148723FEB43E5F40E016124F54C624402087A3E7B43E5F40284B057361C62440	2026-10-26 19:36:32.534991	2026-11-09 14:36:41.17181	\N	\N	open	\N
-1	2	West Wing	0103000020E610000001000000050000004C86E317AE3E5F40F0C7B7F678C624402086A309B13E5F40387664627BC624404C86A3DCB03E5F40D814C5D26BC624401C86E344AE3E5F4008BB9EBF69C624404C86E317AE3E5F40F0C7B7F678C62440	2026-10-26 19:36:32.534991	2026-11-09 16:38:46.031463	\N	\N	open	\N
+2	2	South Wing	\N	2026-10-26 19:36:32.534991	2026-11-09 13:50:16.018203	\N	1	open	\N
+4	2	North Wing	\N	2026-10-26 19:36:32.534991	2026-11-09 13:50:16.018203	\N	1	open	\N
+5	2	East Wing	\N	2026-10-26 19:36:32.534991	2026-11-09 13:50:16.018203	\N	1	open	\N
+7	2	sample	\N	2026-10-30 20:33:20.091099	2026-11-09 14:06:54.026921	5	1	open	Test note
+3	2	Central Building	0103000020E610000001000000050000002087A3E7B43E5F40284B057361C624400487E362BD3E5F4010DABE8F64C624403C87A357BD3E5F4010E9BEBA56C62440148723FEB43E5F40E016124F54C624402087A3E7B43E5F40284B057361C62440	2026-10-26 19:36:32.534991	2026-11-09 14:36:41.17181	\N	1	open	\N
+1	2	West Wing	0103000020E610000001000000050000004C86E317AE3E5F40F0C7B7F678C624402086A309B13E5F40387664627BC624404C86A3DCB03E5F40D814C5D26BC624401C86E344AE3E5F4008BB9EBF69C624404C86E317AE3E5F40F0C7B7F678C62440	2026-10-26 19:36:32.534991	2026-11-09 16:38:46.031463	\N	1	open	\N
 \.
 
 

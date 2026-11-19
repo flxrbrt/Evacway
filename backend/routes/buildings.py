@@ -25,6 +25,14 @@ from utils import role_required
 buildings_bp = Blueprint('buildings', __name__)
 
 
+def _room_link_floor_error(room, floors):
+    if room.floor is None:
+        return f"Room {room.room_number} has no floor selected. Edit the room and choose a floor before linking it to a building."
+    if room.floor < 1 or room.floor > floors:
+        return f"Room {room.room_number} is on floor {room.floor}, outside this building's 1 to {floors} floor range."
+    return None
+
+
 def _format_room_range(rooms, building_name=None):
     if not rooms:
         return building_name or "Building"
@@ -212,6 +220,7 @@ def get_center_buildings(center_id):
             {
                 "id": r.id,
                 "room_number": r.room_number,
+                "floor": r.floor,
                 "capacity": r.capacity,
                 "occupied": room_stats_map.get(r.id, (0, 0))[1],
                 "assigned": room_stats_map.get(r.id, (0, 0))[0],
@@ -227,6 +236,8 @@ def get_center_buildings(center_id):
             "properties": {
                 "id": b.id,
                 "name": b.name,
+                "floors": b.floors,
+                "floor_summary": b.to_dict().get("floor_summary", []),
                 "operational_status": b.status or "open",
                 "display_label": display_label,
                 "evacuation_center_id": center_id,
@@ -289,16 +300,27 @@ def create_building(center_id):
     else:
         max_rooms = None
 
-    floors = data.get('floors')
-    if floors is not None and str(floors).strip() != "":
-        try:
-            floors = int(floors)
-            if floors < 1:
-                return jsonify({"error": "floors must be 1 or greater"}), 400
-        except (ValueError, TypeError):
-            return jsonify({"error": "floors must be a number"}), 400
-    else:
-        floors = None
+    try:
+        raw_floors = data.get('floors', 1)
+        if raw_floors is None or str(raw_floors).strip() == "":
+            raw_floors = 1
+        floors = int(raw_floors)
+        if isinstance(raw_floors, float) and not raw_floors.is_integer():
+            raise ValueError
+    except (ValueError, TypeError):
+        return jsonify({"error": "Number of floors must be an integer from 1 to 20."}), 400
+    if not 1 <= floors <= 20:
+        return jsonify({"error": "Number of floors must be from 1 to 20."}), 400
+
+    if room_ids:
+        rooms_to_link = EvacuationCenterRoom.query.filter(
+            EvacuationCenterRoom.id.in_(room_ids),
+            EvacuationCenterRoom.evacuation_center_id == center_id,
+        ).all()
+        for room in rooms_to_link:
+            error = _room_link_floor_error(room, floors)
+            if error:
+                return jsonify({"error": error}), 400
 
     status = data.get('status', 'open')
     if status not in ('open', 'closed', 'under_repair'):
@@ -428,22 +450,54 @@ def update_building(building_id):
         # Unlink rooms currently in this building not in new_room_ids
         EvacuationCenterRoom.query.filter_by(building_id=building.id).filter(
             ~EvacuationCenterRoom.id.in_(new_room_ids)
-        ).update({EvacuationCenterRoom.building_id: None}, synchronize_session=False)
+        ).update({EvacuationCenterRoom.building_id: None, EvacuationCenterRoom.floor: None}, synchronize_session=False)
 
         # Link rooms in new_room_ids to this building
         if new_room_ids:
-            EvacuationCenterRoom.query.filter(
+            rooms_to_link = EvacuationCenterRoom.query.filter(
                 EvacuationCenterRoom.id.in_(new_room_ids),
                 EvacuationCenterRoom.evacuation_center_id == building.evacuation_center_id
-            ).update({EvacuationCenterRoom.building_id: building.id}, synchronize_session=False)
+            ).all()
+            target_floors = building.floors
+            try:
+                raw_target_floors = data.get('floors', target_floors)
+                target_floors = int(raw_target_floors)
+                if isinstance(raw_target_floors, float) and not raw_target_floors.is_integer():
+                    target_floors = building.floors
+                if not 1 <= target_floors <= 20:
+                    target_floors = building.floors
+            except (TypeError, ValueError):
+                target_floors = building.floors
+            for room in rooms_to_link:
+                if room.building_id != building.id:
+                    error = _room_link_floor_error(room, target_floors)
+                    if error:
+                        return jsonify({"error": error}), 400
+                room.building_id = building.id
 
     if 'add_room_ids' in data:
         add_ids = set(data['add_room_ids'] or [])
         if add_ids:
-            EvacuationCenterRoom.query.filter(
+            rooms_to_link = EvacuationCenterRoom.query.filter(
                 EvacuationCenterRoom.id.in_(add_ids),
                 EvacuationCenterRoom.evacuation_center_id == building.evacuation_center_id
-            ).update({EvacuationCenterRoom.building_id: building.id}, synchronize_session=False)
+            ).all()
+            target_floors = building.floors
+            try:
+                raw_target_floors = data.get('floors', target_floors)
+                target_floors = int(raw_target_floors)
+                if isinstance(raw_target_floors, float) and not raw_target_floors.is_integer():
+                    target_floors = building.floors
+                if not 1 <= target_floors <= 20:
+                    target_floors = building.floors
+            except (TypeError, ValueError):
+                target_floors = building.floors
+            for room in rooms_to_link:
+                if room.building_id != building.id:
+                    error = _room_link_floor_error(room, target_floors)
+                    if error:
+                        return jsonify({"error": error}), 400
+                room.building_id = building.id
 
     if 'remove_room_ids' in data:
         rem_ids = set(data['remove_room_ids'] or [])
@@ -451,7 +505,7 @@ def update_building(building_id):
             EvacuationCenterRoom.query.filter(
                 EvacuationCenterRoom.id.in_(rem_ids),
                 EvacuationCenterRoom.building_id == building.id
-            ).update({EvacuationCenterRoom.building_id: None}, synchronize_session=False)
+            ).update({EvacuationCenterRoom.building_id: None, EvacuationCenterRoom.floor: None}, synchronize_session=False)
 
     db.session.flush()
 
@@ -481,16 +535,21 @@ def update_building(building_id):
 
     # Update floors with validation
     if 'floors' in data:
-        floors = data.get('floors')
-        if floors is not None and str(floors).strip() != "":
-            try:
-                floors = int(floors)
-                if floors < 1:
-                    return jsonify({"error": "floors must be 1 or greater"}), 400
-            except (ValueError, TypeError):
-                return jsonify({"error": "floors must be a number"}), 400
-        else:
-            floors = None
+        try:
+            raw_floors = data.get('floors')
+            floors = int(raw_floors)
+            if isinstance(raw_floors, float) and not raw_floors.is_integer():
+                raise ValueError
+        except (ValueError, TypeError):
+            return jsonify({"error": "Number of floors must be an integer from 1 to 20."}), 400
+        if not 1 <= floors <= 20:
+            return jsonify({"error": "Number of floors must be from 1 to 20."}), 400
+        highest_floor = db.session.query(func.max(EvacuationCenterRoom.floor)).filter(
+            EvacuationCenterRoom.building_id == building.id,
+            EvacuationCenterRoom.floor.isnot(None),
+        ).scalar()
+        if highest_floor is not None and floors < highest_floor:
+            return jsonify({"error": f"Rooms are on floor {highest_floor}. Move them first."}), 400
         building.floors = floors
 
     # Update status with validation
@@ -525,7 +584,7 @@ def delete_building(building_id):
 
     # Unlink all rooms linked to this building so they remain safe as unassigned rooms in this center
     EvacuationCenterRoom.query.filter_by(building_id=building.id).update(
-        {EvacuationCenterRoom.building_id: None},
+        {EvacuationCenterRoom.building_id: None, EvacuationCenterRoom.floor: None},
         synchronize_session=False
     )
     db.session.flush()
@@ -577,6 +636,7 @@ def suggest_rooms_for_buildings(center_id):
             suggestions.append({
                 "room_id": r.id,
                 "room_number": r.room_number,
+                "floor": r.floor,
                 "capacity": r.capacity,
                 "latitude": float(r.latitude),
                 "longitude": float(r.longitude),
@@ -675,6 +735,7 @@ def get_building_details(building_id):
         room_data = {
             "id": r.id,
             "room_number": r.room_number,
+            "floor": r.floor,
             "capacity": r_capacity,
             "occupied": r_occupied,
             "assigned": r_assigned,
@@ -833,6 +894,8 @@ def get_building_details(building_id):
         b_status_color = "#16a34a" if total_capacity > 0 else "#94a3b8"
 
     return jsonify({
+        "floors": building.floors,
+        "floor_summary": building.to_dict().get("floor_summary", []),
         "id": building.id,
         "name": building.name or f"Building #{building.id}",
         "evacuation_center_id": center.id,

@@ -86,6 +86,38 @@ function App() {
               </ProtectedRoute>
             }
           />
+          <Route
+            path="/admin/evacuation-centers/:centerId/buildings/:buildingId"
+            element={
+              <ProtectedRoute allowedRoles={["admin"]}>
+                <AdminDashboard />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin/evacuation-centers/:centerId/rooms/:roomId"
+            element={
+              <ProtectedRoute allowedRoles={["admin"]}>
+                <AdminDashboard />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/lgu/evacuation-centers/:centerId/buildings/:buildingId"
+            element={
+              <ProtectedRoute allowedRoles={["lgu_personnel"]}>
+                <LguDashboard />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/lgu/evacuation-centers/:centerId/rooms/:roomId"
+            element={
+              <ProtectedRoute allowedRoles={["lgu_personnel"]}>
+                <LguDashboard />
+              </ProtectedRoute>
+            }
+          />
         </Routes>
         </ErrorBoundary>
       </AuthProvider>

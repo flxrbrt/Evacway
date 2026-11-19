@@ -1505,6 +1505,9 @@ class ResidentRegistrationRequest(BaseModel):
 # ---------------------------------------------------------
 class EvacuationCenterBuilding(BaseModel):
     __tablename__ = 'evacuation_center_buildings'
+    __table_args__ = (
+        db.CheckConstraint('floors BETWEEN 1 AND 20', name='ck_ec_building_floors_range'),
+    )
 
     id = db.Column(
         db.Integer,
@@ -1530,7 +1533,9 @@ class EvacuationCenterBuilding(BaseModel):
 
     floors = db.Column(
         db.Integer,
-        nullable=True
+        nullable=False,
+        default=1,
+        server_default='1'
     )
 
     status = db.Column(
@@ -1574,12 +1579,30 @@ class EvacuationCenterBuilding(BaseModel):
     )
 
     def to_dict(self):
+        floor_summary = []
+        for floor in range(1, int(self.floors or 1) + 1):
+            floor_rooms = [room for room in self.rooms if room.is_active and room.floor == floor]
+            assigned_households = set()
+            for room in floor_rooms:
+                for assignment in room.assignments:
+                    resident = assignment.resident
+                    assigned_households.add(
+                        ("family", resident.family_id) if resident and resident.family_id
+                        else ("resident", assignment.resident_id)
+                    )
+            floor_summary.append({
+                "floor": floor,
+                "room_count": len(floor_rooms),
+                "assigned": len(assigned_households),
+                "capacity": sum(room.capacity or 0 for room in floor_rooms),
+            })
         return {
             "id": self.id,
             "evacuation_center_id": self.evacuation_center_id,
             "name": self.name,
             "max_rooms": self.max_rooms,
             "floors": self.floors,
+            "floor_summary": floor_summary,
             "status": self.status,
             "notes": self.notes,
             "created_at": self.created_at.isoformat() if self.created_at else None,
@@ -1599,6 +1622,9 @@ class EvacuationCenterBuilding(BaseModel):
 # ---------------------------------------------------------
 class EvacuationCenterRoom(BaseModel):
     __tablename__ = 'evacuation_center_rooms'
+    __table_args__ = (
+        db.CheckConstraint('floor IS NULL OR floor >= 1', name='ck_ec_room_floor_positive'),
+    )
 
     id = db.Column(
         db.Integer,
@@ -1627,6 +1653,8 @@ class EvacuationCenterRoom(BaseModel):
         db.Integer,
         nullable=False
     )
+
+    floor = db.Column(db.Integer, nullable=True)
 
     @property
     def latitude(self):
@@ -1673,8 +1701,10 @@ class EvacuationCenterRoom(BaseModel):
                 if self.building is not None
                 else None
             ),
+            "building_floors": self.building.floors if self.building is not None else None,
             "room_number": self.room_number,
             "capacity": self.capacity,
+            "floor": self.floor,
             "is_active": self.is_active,
 
             "latitude": None,

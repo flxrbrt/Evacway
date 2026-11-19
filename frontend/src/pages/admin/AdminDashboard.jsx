@@ -21,7 +21,7 @@ const ADMIN_TABS = ["centers", "barangays", "reports", "rescue", "checkin", "reg
 function AdminDashboard() {
   const location = useLocation();
   const searchParams = new URLSearchParams(location.search);
-  const requestedTab = searchParams.get("tab");
+  const requestedTab = searchParams.get("tab") || (location.pathname.startsWith("/admin/evacuation-centers/") ? "centers" : null);
   const notificationId = searchParams.get("notificationId");
   const resourceTypeParam = searchParams.get("resourceType");
   const resourceIdParam = searchParams.get("resourceId");

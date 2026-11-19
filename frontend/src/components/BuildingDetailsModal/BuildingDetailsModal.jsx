@@ -14,6 +14,7 @@ import {
 } from "@fortawesome/free-solid-svg-icons";
 import { api } from "../../services/api";
 import { findAssignedRoom } from "../../utils/resolveRoomBuilding";
+import { formatFloorLabel } from "../../utils/formatRoomLabel";
 import "./BuildingDetailsModal.css";
 
 export default function BuildingDetailsModal({
@@ -36,6 +37,7 @@ export default function BuildingDetailsModal({
   const [error, setError] = useState(null);
   const [data, setData] = useState(null);
   const [selectedRoomId, setSelectedRoomId] = useState(null);
+  const [expandedFloor, setExpandedFloor] = useState(null);
   const [expandedFamilyKeys, setExpandedFamilyKeys] = useState({});
   const [isScrolled, setIsScrolled] = useState(false);
 
@@ -151,7 +153,7 @@ export default function BuildingDetailsModal({
       assignedRoomRef.current?.scrollIntoView({ block: "nearest", behavior: "instant" });
     });
     return () => cancelAnimationFrame(frame);
-  }, [isOpen, loading, data, highlightedRoom]);
+  }, [isOpen, loading, data, highlightedRoom, expandedFloor]);
 
   const building =
     data?.building || (data?.id ? data : null) || initialBuildingData || {};
@@ -196,6 +198,25 @@ export default function BuildingDetailsModal({
 
     return [...myRooms, ...otherRooms];
   }, [rooms, isCurrentBuildingUserBuilding, buildingId, userHousehold]);
+
+  const buildingFloors = Number(data?.floors || data?.building?.floors || initialBuildingData?.floors || 1);
+  const floorGroups = useMemo(() => {
+    const floors = [...new Set(sortedRooms.map((room) => room.floor).filter((floor) => floor != null))].sort((a, b) => a - b);
+    return [...floors.map((floor) => ({ floor, rooms: sortedRooms.filter((room) => Number(room.floor) === Number(floor)) })),
+      ...(sortedRooms.some((room) => room.floor == null) ? [{ floor: null, rooms: sortedRooms.filter((room) => room.floor == null) }] : [])];
+  }, [sortedRooms]);
+  const displayRooms = buildingFloors >= 2
+    ? floorGroups.flatMap((group) => [
+        ...(group.floor != null ? [{ __floorHeader: true, floor: group.floor, count: group.rooms.length }] : []),
+        ...(group.floor == null || expandedFloor == null || expandedFloor === Number(group.floor) ? group.rooms : []),
+      ])
+    : sortedRooms;
+
+  useEffect(() => {
+    if (!isOpen || buildingFloors < 2) return;
+    const foundRoom = findAssignedRoom(rooms, highlightedRoom) || sortedRooms.find((room) => String(room.id) === String(selectedRoomId));
+    setExpandedFloor(foundRoom?.floor ?? floorGroups.find((group) => group.floor != null)?.floor ?? null);
+  }, [isOpen, buildingFloors, rooms, highlightedRoom, floorGroups, sortedRooms, selectedRoomId]);
 
   const activeRoom = useMemo(() => {
     if (!sortedRooms.length) return null;
@@ -406,6 +427,18 @@ export default function BuildingDetailsModal({
                 </span>
               </div>
 
+              {buildingFloors >= 2 && (
+                <div className="bldg-floor-chips" aria-label="Jump to floor">
+                  <button type="button" className={expandedFloor == null ? 'is-active' : ''} onClick={() => setExpandedFloor(null)}>All</button>
+                  {floorGroups.filter((group) => group.floor != null).map(({ floor }) => (
+                    <button type="button" key={floor} className={Number(expandedFloor) === Number(floor) ? 'is-active' : ''} onClick={() => {
+                      setExpandedFloor(Number(floor));
+                      requestAnimationFrame(() => document.getElementById(`bldg-floor-${floor}`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }));
+                    }}>{formatFloorLabel(floor).replace(' floor', '')}</button>
+                  ))}
+                </div>
+              )}
+
               <div
                 className="bldg-modal-rooms-accordion-list"
                 role="list"
@@ -416,7 +449,12 @@ export default function BuildingDetailsModal({
                     No rooms mapped in this building yet.
                   </div>
                 ) : (
-                  sortedRooms.map((r) => {
+                  displayRooms.map((r) => {
+                    if (r.__floorHeader) return (
+                      <button type="button" id={`bldg-floor-${r.floor}`} key={`floor-header-${r.floor}`} className="bldg-floor-group-header" onClick={() => setExpandedFloor((current) => Number(current) === Number(r.floor) ? null : Number(r.floor))} aria-expanded={Number(expandedFloor) === Number(r.floor)}>
+                        <span>{formatFloorLabel(r.floor)} · {r.count} {r.count === 1 ? 'room' : 'rooms'}</span><FontAwesomeIcon icon={faChevronDown} />
+                      </button>
+                    );
                     const isExpanded = selectedRoomId === r.id;
                     const isFoundRoom = findAssignedRoom(rooms, highlightedRoom)?.id === r.id;
                     const rOcc = r.occupied || 0;

@@ -1,4 +1,5 @@
-import { useState, useCallback, useEffect, useMemo } from 'react'
+import { useState, useCallback, useEffect, useMemo, Fragment } from 'react'
+import { Link } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faBuilding,
@@ -26,11 +27,12 @@ import {
   faXmark,
   faRightLeft,
   faUserMinus,
+  faEllipsisVertical,
 } from '@fortawesome/free-solid-svg-icons'
 import { api } from '../../services/api'
 import { useAuth } from '../../context/AuthContext'
 import { useCenterDetails, useFamily } from '../../hooks/useEvacuationQueries'
-import { formatRoomLabel } from '../../utils/formatRoomLabel'
+import { formatRoomLabel, formatFloorLabel } from '../../utils/formatRoomLabel'
 import {
   centerStatus,
   CENTER_TABS,
@@ -147,13 +149,9 @@ export default function CenterDetail({
   onAddRooms,
   onAddBuilding,
   onOpenRoom,
-  onEditBuilding,
-  onDeleteBuilding,
-  onAddRoomToBuilding,
+  onOpenBuilding,
   onAddRoom,
   onEditRoom,
-  onViewBuildingMap,
-  onPlaceBuilding,
   onMove,
   onUnassign,
   onDeactivate,
@@ -321,15 +319,9 @@ export default function CenterDetail({
               centerFamilies={centerFamilies}
               onAddBuilding={isAdmin ? onAddBuilding : undefined}
               onOpenRoom={onOpenRoom}
-              onEditBuilding={isAdmin ? onEditBuilding : undefined}
-              onDeleteBuilding={isAdmin ? onDeleteBuilding : undefined}
-              onAddRoomToBuilding={isAdmin ? onAddRoomToBuilding : undefined}
               onAddRoom={structureMode === 'rooms_only' ? onAddRoom : undefined}
-              onAssignHousehold={onAssignHousehold}
-              onEditCenter={onEditCenter}
               onEditRoom={onEditRoom}
-              onViewBuildingMap={onViewBuildingMap}
-              onPlaceBuilding={onPlaceBuilding}
+              onOpenBuilding={onOpenBuilding}
             />
           </section>
         )}
@@ -828,10 +820,10 @@ export function OverviewTab({
   )
 }
 
-const STRUCTURE_VIEW_STORAGE_KEY = 'evacway_structure_view_mode'
+const STRUCTURE_VIEW_STORAGE_KEY = 'evacway_structure_view_mode_v2'
 
 function getInitialStructureViewMode() {
-  if (typeof window === 'undefined') return 'list'
+  if (typeof window === 'undefined') return 'grid'
   try {
     const saved = localStorage.getItem(STRUCTURE_VIEW_STORAGE_KEY)
     if (saved === 'list' || saved === 'grid') return saved
@@ -839,7 +831,7 @@ function getInitialStructureViewMode() {
   } catch (err) {
     // ignore
   }
-  return 'list'
+  return 'grid'
 }
 
 function getRoomHouseholdCount(room, averageHouseholdSize = null) {
@@ -910,6 +902,7 @@ function RoomCard({
       <h4 className="ec-room-card-name" title={roomName}>
         {roomName}
       </h4>
+      {formatFloorLabel(room?.floor) && <span className="ec-room-floor-label">{formatFloorLabel(room.floor)}</span>}
 
       <div className={`ec-room-bar-track ${isFull ? 'is-full-track' : ''}`}>
         <div
@@ -950,12 +943,19 @@ function RoomCard({
 export function RoomDetailPage({
   center,
   room,
+  building,
   buildingName,
+  buildingFloors,
   families = [],
   loading = false,
   error = null,
+  notFound = false,
   onBack,
   onBackToList,
+  listHref,
+  centerHref,
+  buildingHref,
+  onOpenBuilding,
   onAddHousehold,
   onUnassignHousehold,
   onEditRoom,
@@ -982,18 +982,31 @@ export function RoomDetailPage({
   const isInactive = room?.is_active === false
   const isFull = householdCapacity > 0 && householdAssigned >= householdCapacity
 
+  if (notFound) {
+    return <main className="ec-room-detail-page"><div className="ec-room-households-state"><h1>Room not found</h1><p>This room may have been deleted or is unavailable.</p></div></main>
+  }
+  if (!room && loading) {
+    return <main className="ec-room-detail-page"><div className="ec-room-households-state" role="status">Loading room details…</div></main>
+  }
+
   return (
     <main className="ec-room-detail-page">
       <div className="ec-room-detail-topbar">
         <nav className="ec-breadcrumb" aria-label="Breadcrumb">
-          <button type="button" className="ec-breadcrumb-link" onClick={onBackToList}>
+          <Link to={listHref || '#'} className="ec-breadcrumb-link" onClick={listHref ? undefined : onBackToList}>
             <FontAwesomeIcon icon={faBuildingColumns} className="ec-breadcrumb-icon" />
             <span>Evacuation Centers</span>
-          </button>
+          </Link>
           <span className="ec-breadcrumb-separator">›</span>
-          <button type="button" className="ec-breadcrumb-link" onClick={onBack}>
+          <Link to={centerHref || '#'} className="ec-breadcrumb-link" onClick={centerHref ? undefined : onBack}>
             {center?.name || 'Evacuation Center'}
-          </button>
+          </Link>
+          {(building || room?.building_id != null) && <>
+            <span className="ec-breadcrumb-separator">›</span>
+            <Link to={buildingHref || '#'} className="ec-breadcrumb-link" onClick={buildingHref ? undefined : () => onOpenBuilding?.(building)}>
+              {buildingName || building?.name || 'Building'}
+            </Link>
+          </>}
           <span className="ec-breadcrumb-separator">›</span>
           <span className="ec-breadcrumb-current">{roomTitle}</span>
         </nav>
@@ -1006,8 +1019,7 @@ export function RoomDetailPage({
             <HeaderStatusPill status={isInactive ? 'Inactive' : isFull ? 'Full' : 'Available'} />
           </div>
           <div className="ec-title-meta-line">
-            <span>{buildingName || 'Unassigned building'}</span>
-            {room?.floor && <span>Floor {room.floor}</span>}
+            <span>{[buildingName || 'Unassigned building', Number(buildingFloors ?? room?.building_floors ?? 1) > 1 ? formatFloorLabel(room?.floor) : ''].filter(Boolean).join(' · ')}</span>
           </div>
         </div>
         <div className="ec-title-actions ec-room-detail-actions">
@@ -1229,16 +1241,10 @@ export function StructureTab({
   buildings = [],
   centerFamilies = [],
   onAddBuilding,
-  onEditBuilding,
-  onDeleteBuilding,
-  onAddRoomToBuilding,
   onAddRoom,
   onOpenRoom,
   onEditRoom,
-  onViewBuildingMap,
-  onPlaceBuilding,
-  onAssignHousehold,
-  onEditCenter,
+  onOpenBuilding,
 }) {
   const structureMode = resolveCenterStructureMode(center)
   const isSingleVenue = structureMode === 'open_area'
@@ -1246,11 +1252,12 @@ export function StructureTab({
   const canAddBuilding = structureMode === 'buildings_and_rooms'
   const canAddRoom = !isSingleVenue
 
-  const [collapsedGroups, setCollapsedGroups] = useState({})
   const [viewMode, setViewModeState] = useState(getInitialStructureViewMode)
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState('all') // 'all' | 'available' | 'full'
   const [buildingFilter, setBuildingFilter] = useState('all')
+  const [floorFilter, setFloorFilter] = useState('all')
+  const [addMenuOpen, setAddMenuOpen] = useState(false)
 
   const setViewMode = useCallback((mode) => {
     setViewModeState(mode)
@@ -1260,13 +1267,6 @@ export function StructureTab({
       // ignore
     }
   }, [])
-
-  const toggleGroup = (key) => {
-    setCollapsedGroups((prev) => ({
-      ...prev,
-      [key]: !prev[key],
-    }))
-  }
 
   const centerAssigned = Number(
     center?.assigned ?? center?.total_assigned ?? center?.occupied ?? 0
@@ -1318,8 +1318,11 @@ export function StructureTab({
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase().trim()
         const name = String(room?.room_number || `Room #${room?.id || ''}`).toLowerCase()
-        if (!name.includes(q)) return false
+        const floorName = formatFloorLabel(room?.floor).toLowerCase()
+        if (!name.includes(q) && !floorName.includes(q)) return false
       }
+      if (floorFilter === 'unset' && room?.floor != null) return false
+      if (floorFilter !== 'all' && floorFilter !== 'unset' && String(room?.floor ?? '') !== floorFilter) return false
       if (statusFilter !== 'all') {
         const capacity = roomHouseholdCapacity(room)
         const familyRecords = familiesByRoom.get(String(room?.id))
@@ -1332,7 +1335,7 @@ export function StructureTab({
       }
       return true
     },
-    [searchQuery, statusFilter, averageHouseholdSize, familiesByRoom]
+    [searchQuery, statusFilter, floorFilter, averageHouseholdSize, familiesByRoom]
   )
 
   const groups = useMemo(() => {
@@ -1372,9 +1375,9 @@ export function StructureTab({
       String(building?.id ?? 'unassigned') === buildingFilter
     )
   }, [groups, buildingFilter])
-  const selectedRooms = buildingFilter === 'all'
+  const selectedRooms = (buildingFilter === 'all'
     ? rooms
-    : filteredGroups.flatMap((group) => group.rooms)
+    : filteredGroups.flatMap((group) => group.rooms)).filter((room) => floorFilter === 'all' || String(room.floor ?? '') === floorFilter)
   const roomCapacityEstimates = selectedRooms.map(roomHouseholdCapacity)
   const displayedCapacity = roomCapacityEstimates.some((capacity) => capacity == null)
     ? null
@@ -1457,445 +1460,60 @@ export function StructureTab({
 
   return (
     <div className="ec-structure-card">
-      <div className="ec-structure-header">
-        <h3 className="ec-structure-title">Center Structure</h3>
-
-        <div className="ec-structure-actions">
-          {canAddBuilding && onAddBuilding && (
-            <button type="button" className="ec-btn-secondary" onClick={onAddBuilding}>
-              <FontAwesomeIcon icon={faBuilding} size="xs" />
-              <span>Add building</span>
-            </button>
-          )}
-          {isPrivateProperty && onAddRoom && (
-            <button type="button" className="ec-btn-primary" onClick={onAddRoom}>
-              <FontAwesomeIcon icon={faPlus} size="xs" />
-              <span>Add room</span>
-            </button>
-          )}
-        </div>
+      <div className="ec-structure-header"><h3 className="ec-structure-title">Center Structure</h3>
+        <div className="ec-structure-actions">{((canAddBuilding && onAddBuilding) || (isPrivateProperty && onAddRoom)) && <div className="ec-add-menu-wrap"><button className="ec-btn-primary" type="button" onClick={() => setAddMenuOpen(!addMenuOpen)}><FontAwesomeIcon icon={faPlus} /> Add <FontAwesomeIcon icon={faChevronDown} /></button>{addMenuOpen && <div className="ec-add-menu" role="menu">{canAddBuilding && onAddBuilding && <button type="button" role="menuitem" onClick={() => { setAddMenuOpen(false); onAddBuilding() }}><FontAwesomeIcon icon={faBuilding} />Add building</button>}{isPrivateProperty && onAddRoom && <button type="button" role="menuitem" onClick={() => { setAddMenuOpen(false); onAddRoom() }}><FontAwesomeIcon icon={faDoorOpen} />Add room</button>}</div>}</div>}</div>
       </div>
-
-      {/* Summary Tiles */}
-      <div className="ec-structure-summary-strip">
-        <div className="ec-ss-tile">
-          <span className="ec-ss-label">Total Rooms</span>
-          <span className="ec-ss-value">{selectedRooms.length}</span>
-        </div>
-        <div className="ec-ss-tile">
-          <span className="ec-ss-label">Estimated Household Capacity</span>
-          <span className="ec-ss-value">{householdCapacityForView ?? '—'}</span>
-          {householdCapacityForView == null && (
-            <span className="ec-ss-hint">Estimate needs assigned household sizes</span>
-          )}
-        </div>
-        <div className="ec-ss-tile">
-          <span className="ec-ss-label">Assigned Households</span>
-          <span className="ec-ss-value">{householdAssignedForView}</span>
-        </div>
-        <div className="ec-ss-tile">
-          <span className="ec-ss-label">Available Households</span>
-          <span className="ec-ss-value is-available">
-            {householdsAvailableForView ?? '—'}
-          </span>
-        </div>
+      <div className="ec-structure-summary-strip"><div className="ec-ss-tile"><span className="ec-ss-label">Total rooms</span><span className="ec-ss-value">{selectedRooms.length}</span></div><div className="ec-ss-tile"><span className="ec-ss-label">Assigned households</span><span className="ec-ss-value">{householdAssignedForView}</span></div><div className="ec-ss-tile"><span className="ec-ss-label">Available households</span><span className="ec-ss-value is-available">{householdsAvailableForView ?? '—'}</span></div></div>
+      <div className="ec-structure-toolbar ec-structure-toolbar-sticky">
+        <div className="ec-toolbar-left"><div className="ec-search-box"><FontAwesomeIcon icon={faSearch} className="ec-search-icon" /><input className="ec-search-input" placeholder="Search rooms..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} aria-label="Search rooms" /></div>
+          {buildings.length > 0 && <label className="ec-building-filter"><span>Building</span><select value={buildingFilter} onChange={(e) => { setBuildingFilter(e.target.value); setFloorFilter('all') }}><option value="all">All buildings</option>{buildings.map(b => <option key={b.id} value={String(b.id)}>{b.name}</option>)}{rooms.some(r=>r.building_id==null)&&<option value="unassigned">Unassigned rooms</option>}</select></label>}
+          {buildings.some(b=>Number(b.floors||1)>1)&&<label className="ec-building-filter"><span>Floor</span><select value={floorFilter} onChange={e=>setFloorFilter(e.target.value)}><option value="all">All floors</option>{Array.from(new Set([...buildings.flatMap(b=>Array.from({length:Number(b.floors||1)},(_,i)=>i+1)),...rooms.map(r=>r.floor).filter(f=>f!=null)])).sort((a,b)=>a-b).map(f=><option key={f} value={String(f)}>{formatFloorLabel(f)}</option>)}</select></label>}
+          <div className="ec-status-filter-group">{[['all','All',selectedRooms.length],['available','Available',availableCount],['full','Full',fullCount]].map(([v,l,n])=><button key={v} type="button" className={'ec-filter-pill '+(statusFilter===v?'is-active':'')} onClick={()=>setStatusFilter(v)}>{l}<span className="ec-filter-count">{n}</span></button>)}</div>
+        </div><div className="ec-view-toggle"><button type="button" className={'ec-view-toggle-btn '+(viewMode==='list'?'is-active':'')} onClick={()=>setViewMode('list')} aria-label="Table view"><FontAwesomeIcon icon={faList}/></button><button type="button" className={'ec-view-toggle-btn '+(viewMode==='grid'?'is-active':'')} onClick={()=>setViewMode('grid')} aria-label="Tile view"><FontAwesomeIcon icon={faTableCellsLarge}/></button></div>
       </div>
-
-      {/* Toolbar: Search, Filters, and List/Grid Toggle */}
-      <div className="ec-structure-toolbar">
-        <div className="ec-toolbar-left">
-          <div className="ec-search-box">
-            <FontAwesomeIcon icon={faSearch} className="ec-search-icon" />
-            <input
-              type="text"
-              className="ec-search-input"
-              placeholder="Search room..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              aria-label="Search room"
-            />
-            {searchQuery && (
-              <button
-                type="button"
-                className="ec-search-clear"
-                onClick={() => setSearchQuery('')}
-                aria-label="Clear search"
-              >
-                <FontAwesomeIcon icon={faXmark} />
-              </button>
-            )}
-          </div>
-
-          {buildings.length > 0 && (
-            <label className="ec-building-filter">
-              <span>Building</span>
-              <select
-                value={buildingFilter}
-                onChange={(event) => setBuildingFilter(event.target.value)}
-                aria-label="Filter by building"
-              >
-                <option value="all">All buildings</option>
-                {buildings.map((building) => (
-                  <option key={building.id} value={String(building.id)}>{building.name}</option>
-                ))}
-                {rooms.some((room) => room.building_id == null) && (
-                  <option value="unassigned">Unassigned rooms</option>
-                )}
-              </select>
-            </label>
-          )}
-
-          <div className="ec-status-filter-group" role="group" aria-label="Filter by room status">
-            <button
-              type="button"
-              className={`ec-filter-pill ${statusFilter === 'all' ? 'is-active' : ''}`}
-              onClick={() => setStatusFilter('all')}
-              aria-pressed={statusFilter === 'all'}
-            >
-              All <span className="ec-filter-count">{selectedRooms.length}</span>
-            </button>
-            <button
-              type="button"
-              className={`ec-filter-pill ${statusFilter === 'available' ? 'is-active' : ''}`}
-              onClick={() => setStatusFilter('available')}
-              aria-pressed={statusFilter === 'available'}
-            >
-              Available <span className="ec-filter-count">{availableCount}</span>
-            </button>
-            <button
-              type="button"
-              className={`ec-filter-pill ${statusFilter === 'full' ? 'is-active' : ''}`}
-              onClick={() => setStatusFilter('full')}
-              aria-pressed={statusFilter === 'full'}
-            >
-              Full <span className="ec-filter-count">{fullCount}</span>
-            </button>
-          </div>
-        </div>
-
-        <div className="ec-view-toggle" role="group" aria-label="View mode">
-          <button
-            type="button"
-            className={`ec-view-toggle-btn ${viewMode === 'list' ? 'is-active' : ''}`}
-            onClick={() => setViewMode('list')}
-            title="List view"
-            aria-label="List view"
-            aria-pressed={viewMode === 'list'}
-          >
-            <FontAwesomeIcon icon={faList} />
-          </button>
-          <button
-            type="button"
-            className={`ec-view-toggle-btn ${viewMode === 'grid' ? 'is-active' : ''}`}
-            onClick={() => setViewMode('grid')}
-            title="Grid view"
-            aria-label="Grid view"
-            aria-pressed={viewMode === 'grid'}
-          >
-            <FontAwesomeIcon icon={faTableCellsLarge} />
-          </button>
-        </div>
-      </div>
-
-          {selectedRooms.length === 0 ? (
-        <EmptyState
-          icon={faDoorOpen}
-          title="No rooms yet"
-          text={canAddBuilding
-            ? 'Add a building first, then add rooms from that building.'
-            : canAddRoom
-              ? "Click 'Add room' above to add your first room."
-              : 'No rooms configured.'}
-        />
-          ) : totalMatchingRooms === 0 ? (
-        <EmptyState
-          icon={faSearch}
-          title="No rooms found."
-          text="No rooms match your search query or filter."
-        />
-      ) : buildings.length === 0 ? (
-        /* Flat list or grid when there are no buildings */
-        <div key={viewMode} className="ec-view-animated">
-          {viewMode === 'list' ? (
-            <table className="ec-structure-table">
-              <thead>
-                <tr>
-                  <th scope="col" className="ec-col-room" style={{ width: '25%', textAlign: 'left' }}>Room</th>
-                  <th scope="col" className="ec-col-capacity" style={{ width: '25%', textAlign: 'center' }}>Household capacity</th>
-                  <th scope="col" className="ec-col-assigned" style={{ width: '25%', textAlign: 'center' }}>Households assigned</th>
-                  <th scope="col" className="ec-col-arrived" style={{ width: '25%', textAlign: 'center' }}>Households arrived</th>
-                </tr>
-              </thead>
-              <tbody>
-                {selectedRooms.filter(isRoomMatching).map((room) => (
-                  <tr
-                    key={room.id}
-                    className="ec-room-row"
-                    tabIndex={0}
-                    role="row"
-                    onClick={() => (onOpenRoom || onEditRoom)?.(room)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault()
-                        if (onOpenRoom) onOpenRoom(room)
-                        else onEditRoom?.(room)
-                      }
-                    }}
-                    style={{ cursor: onOpenRoom || onEditRoom ? 'pointer' : 'default' }}
-                  >
-                    <td className="ec-col-room" data-label="Room" style={{ textAlign: 'left' }}>{room.room_number || 'Room #' + (room.id || '')}</td>
-                    <td className="ec-num ec-col-capacity" data-label="Household capacity" style={{ textAlign: 'center' }} title={roomHouseholdCapacity(room) == null ? 'Estimate needs assigned household sizes' : undefined}>{roomHouseholdCapacity(room) ?? '—'}</td>
-                    <td className="ec-num ec-col-assigned" data-label="Households assigned" style={{ textAlign: 'center' }}>{roomHouseholdAssigned(room)}</td>
-                    <td className="ec-num ec-col-arrived" data-label="Households arrived" style={{ textAlign: 'center' }}>{roomHouseholdArrived(room)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          ) : (
-            <div className="ec-rooms-grid" role="list">
-              {selectedRooms.filter(isRoomMatching).map((room, idx) => (
-                <RoomCard
-                  key={room.id}
-                  room={room}
-                  averageHouseholdSize={averageHouseholdSize}
-                  householdAssigned={roomHouseholdAssigned(room)}
-                  householdArrived={roomHouseholdArrived(room)}
-                  index={idx}
-                  onEditRoom={onEditRoom}
-                  onOpenRoom={onOpenRoom}
-                />
-              ))}
-            </div>
-          )}
-        </div>
-      ) : (
-        /* Building groups */
-        <div key={viewMode} className="ec-structure-groups ec-view-animated">
-          {filteredGroups.map(({ building, rooms: groupRooms }) => {
-            const isUnassigned = !building || !building.id
-            const operationalStatus = building?.status || 'open'
-            const statusLabel = operationalStatus === 'under_repair'
-              ? 'Under repair'
-              : operationalStatus === 'closed'
-                ? 'Closed'
-                : 'Open'
-            const groupKey = building?.id != null ? String(building.id) : 'unassigned'
-            const isCollapsed = Boolean(collapsedGroups[groupKey])
-            const isMapped =
-              !isUnassigned &&
-              Boolean(
-                building.is_mapped ||
-                building.properties?.is_mapped ||
-                (building.geometry &&
-                  building.geometry.coordinates &&
-                  building.geometry.coordinates.length > 0)
+      {canAddBuilding ? (
+        <div className="ec-structure-building-overview">
+          <div className="ec-building-cards">
+            {filteredGroups.filter(({ building }) => Boolean(building)).map(({ building, rooms: groupRooms }) => {
+              const matching = groupRooms.filter(isRoomMatching)
+              if (!matching.length && (searchQuery.trim() || statusFilter !== 'all' || floorFilter !== 'all')) return null
+              const assigned = matching.reduce((sum, room) => sum + roomHouseholdAssigned(room), 0)
+              const capacities = matching.map(roomHouseholdCapacity)
+              const capacity = capacities.some((value) => value == null) ? null : capacities.reduce((sum, value) => sum + value, 0)
+              const availableRooms = matching.filter((room) => roomStatus(room) !== 'full').length
+              const progress = capacity > 0 ? Math.min(100, Math.round((assigned / capacity) * 100)) : 0
+              const status = building.status || 'open'
+              const statusLabel = status === 'under_repair' ? 'Under repair' : status === 'closed' ? 'Closed' : 'Open'
+              return (
+                <article className="ec-building-card" key={building.id}>
+                  <button type="button" className="ec-building-card-main" onClick={() => onOpenBuilding?.(building)}>
+                    <span className="ec-building-card-top"><strong className="ec-building-card-title">{building.name}</strong><span className={'ec-sb-status-pill is-' + status}><span className="ec-sb-status-dot" />{statusLabel}</span></span>
+                    <span className="ec-building-card-meta">{Number(building.floors || 1)} {Number(building.floors || 1) === 1 ? 'floor' : 'floors'} · {matching.length} {matching.length === 1 ? 'room' : 'rooms'} · {assigned} of {capacity ?? '—'} households</span>
+                    <span className="ec-building-card-progress"><span style={{ width: progress + '%' }} /></span>
+                    <span className="ec-building-card-footer"><span>{availableRooms} {availableRooms === 1 ? 'room' : 'rooms'} available</span><span>Capacity {capacity ?? '—'}</span></span>
+                  </button>
+                </article>
               )
-            const groupAssigned = groupRooms.reduce(
-              (sum, room) => sum + roomHouseholdAssigned(room),
-              0
-            )
-            const groupCapacityEstimates = groupRooms.map(roomHouseholdCapacity)
-            const groupCapacity = groupCapacityEstimates.some((capacity) => capacity == null)
-              ? null
-              : groupCapacityEstimates.reduce((sum, capacity) => sum + capacity, 0)
-            const groupPct = groupCapacity > 0 ? Math.min(100, Math.round((groupAssigned / groupCapacity) * 100)) : 0
-
-            const filteredGroupRooms = groupRooms.filter(isRoomMatching)
-
-            // If searching or filtering and no rooms match this group, hide group
-            if (filteredGroupRooms.length === 0 && (searchQuery.trim() || statusFilter !== 'all')) {
-              return null
-            }
-
-            return (
-              <div key={groupKey} className="ec-structure-group">
-                <div
-                  className="ec-structure-building-header"
-                  onClick={() => toggleGroup(groupKey)}
-                  role="button"
-                  tabIndex={0}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault()
-                      toggleGroup(groupKey)
-                    }
-                  }}
-                >
-                  <div className="ec-sb-header-left">
-                    <FontAwesomeIcon
-                      icon={isCollapsed ? faChevronRight : faChevronDown}
-                      className="ec-sb-chevron"
-                    />
-                    <h3 className="ec-sb-title">{building?.name || 'Unassigned rooms'}</h3>
-                    {!isUnassigned && (
-                      <span className={`ec-sb-status-pill is-${operationalStatus}`} aria-label={`Building status: ${statusLabel}`}>
-                        <span className="ec-sb-status-dot" aria-hidden="true" />
-                        {statusLabel}
-                      </span>
-                    )}
-                    <span className="ec-sb-meta">
-                      {groupRooms.length} {groupRooms.length === 1 ? 'room' : 'rooms'} · {groupAssigned} households assigned
-                    </span>
-                    {groupCapacity > 0 && (
-                      <div
-                        className="ec-sb-bar-wrap"
-                        title={`${groupAssigned} / ${groupCapacity} households assigned (${groupPct}%)`}
-                        aria-label={`${groupAssigned} of ${groupCapacity} households assigned`}
-                      >
-                        <div
-                          className="ec-sb-bar-fill"
-                          style={{ width: `${groupPct}%` }}
-                        />
-                      </div>
-                    )}
-                    {!isUnassigned && isMapped && (
-                      <span className="ec-sb-mapped-pill">Mapped</span>
-                    )}
-                  </div>
-
-                  {!isUnassigned && (
-                    <div
-                      className="ec-sb-header-actions"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      {onAddRoomToBuilding && (
-                        <button
-                          type="button"
-                          className="ec-btn-building-action"
-                          onClick={() => onAddRoomToBuilding(building)}
-                          title={`Add room to ${building.name}`}
-                        >
-                          <FontAwesomeIcon icon={faPlus} size="xs" />
-                          <span>Add room</span>
-                        </button>
-                      )}
-                      {onEditBuilding && (
-                        <button
-                          type="button"
-                          className="ec-btn-building-action"
-                          onClick={() => onEditBuilding(building)}
-                          title={`Edit ${building.name}`}
-                        >
-                          <FontAwesomeIcon icon={faPen} size="xs" />
-                          <span>Edit</span>
-                        </button>
-                      )}
-                      {isMapped ? (
-                        <>
-                          {onViewBuildingMap && (
-                            <button
-                              type="button"
-                              className="ec-btn-building-action"
-                              onClick={() => onViewBuildingMap(building)}
-                              title={`View ${building.name} on the map`}
-                            >
-                              <FontAwesomeIcon icon={faLocationDot} size="xs" />
-                              <span>View on map</span>
-                            </button>
-                          )}
-                          {onPlaceBuilding && (
-                            <button
-                              type="button"
-                              className="ec-btn-building-action"
-                              onClick={() => onPlaceBuilding(building, 'remap')}
-                              title={`Remap polygon for ${building.name}`}
-                            >
-                              <FontAwesomeIcon icon={faArrowsRotate} size="xs" />
-                              <span>Remap</span>
-                            </button>
-                          )}
-                        </>
-                      ) : (
-                        onPlaceBuilding && (
-                          <button
-                            type="button"
-                            className="ec-btn-building-action"
-                            onClick={() => onPlaceBuilding(building, 'place_building')}
-                            title={`Place ${building.name} footprint on map`}
-                          >
-                            <FontAwesomeIcon icon={faDrawPolygon} size="xs" />
-                            <span>Place building</span>
-                          </button>
-                        )
-                      )}
-                      {onDeleteBuilding && (
-                        <button
-                          type="button"
-                          className="ec-btn-building-action is-delete"
-                          onClick={() => onDeleteBuilding(building)}
-                          title={`Delete ${building.name}`}
-                        >
-                          <FontAwesomeIcon icon={faTrash} size="xs" />
-                          <span>Delete</span>
-                        </button>
-                      )}
-                    </div>
-                  )}
-                </div>
-
-                {!isCollapsed && (
-                  filteredGroupRooms.length === 0 ? (
-                    <p className="ec-empty-note">
-                      {groupRooms.length === 0
-                        ? 'No rooms in this building yet.'
-                        : 'No matching rooms found in this building.'}
-                    </p>
-                  ) : viewMode === 'list' ? (
-                    <table className="ec-structure-table">
-                      <thead>
-                        <tr>
-                          <th scope="col" className="ec-col-room" style={{ width: '25%', textAlign: 'left' }}>Room</th>
-                          <th scope="col" className="ec-col-capacity" style={{ width: '25%', textAlign: 'center' }}>Household capacity</th>
-                          <th scope="col" className="ec-col-assigned" style={{ width: '25%', textAlign: 'center' }}>Households assigned</th>
-                          <th scope="col" className="ec-col-arrived" style={{ width: '25%', textAlign: 'center' }}>Households arrived</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {filteredGroupRooms.map((room) => (
-                          <tr
-                            key={room.id}
-                            className="ec-room-row"
-                            tabIndex={0}
-                            role="row"
-                            onClick={() => (onOpenRoom || onEditRoom)?.(room)}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter' || e.key === ' ') {
-                                e.preventDefault()
-                                if (onOpenRoom) onOpenRoom(room)
-                                else onEditRoom?.(room)
-                              }
-                            }}
-                            style={{ cursor: onOpenRoom || onEditRoom ? 'pointer' : 'default' }}
-                          >
-                            <td className="ec-col-room" data-label="Room" style={{ textAlign: 'left' }}>{room.room_number || 'Room #' + (room.id || '')}</td>
-                            <td className="ec-num ec-col-capacity" data-label="Household capacity" style={{ textAlign: 'center' }} title={roomHouseholdCapacity(room) == null ? 'Estimate needs assigned household sizes' : undefined}>{roomHouseholdCapacity(room) ?? '—'}</td>
-                            <td className="ec-num ec-col-assigned" data-label="Households assigned" style={{ textAlign: 'center' }}>{roomHouseholdAssigned(room)}</td>
-                            <td className="ec-num ec-col-arrived" data-label="Households arrived" style={{ textAlign: 'center' }}>{roomHouseholdArrived(room)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  ) : (
-                    <div className="ec-rooms-grid ec-rooms-grid-grouped" role="list">
-                      {filteredGroupRooms.map((room, idx) => (
-                        <RoomCard
-                          key={room.id}
-                          room={room}
-                          averageHouseholdSize={averageHouseholdSize}
-                          householdAssigned={roomHouseholdAssigned(room)}
-                          householdArrived={roomHouseholdArrived(room)}
-                          index={idx}
-                          onEditRoom={onEditRoom}
-                          onOpenRoom={onOpenRoom}
-                        />
-                      ))}
-                    </div>
-                  )
-                )}
-              </div>
-            )
+            })}
+          </div>
+          {filteredGroups.filter(({ building }) => !building).map(({ rooms: unassignedRooms }) => {
+            const visibleRooms = unassignedRooms.filter(isRoomMatching)
+            if (!visibleRooms.length) return null
+            return <section className="ec-unassigned-rooms-section" key="unassigned"><h3>Unassigned rooms · {visibleRooms.length}</h3><div className="ec-room-tile-grid">{visibleRooms.map((room, index) => <RoomCard key={room.id} room={room} averageHouseholdSize={averageHouseholdSize} householdAssigned={roomHouseholdAssigned(room)} householdArrived={roomHouseholdArrived(room)} index={index} onEditRoom={onEditRoom} onOpenRoom={onOpenRoom} />)}</div></section>
           })}
+          {filteredGroups.filter(({ building }) => Boolean(building)).length === 0 && <EmptyState icon={faBuilding} title="No buildings yet" text="Add a building first, then add rooms inside it." />}
         </div>
+      ) : !selectedRooms.length ? <EmptyState icon={faDoorOpen} title="No rooms yet" text="Use Add to create the first room." /> : !totalMatchingRooms ? <EmptyState icon={faSearch} title="No rooms found" text="No rooms match your filters." /> : viewMode === 'grid' ? (
+        <div className="ec-room-tile-grid">{selectedRooms.filter(isRoomMatching).sort((a, b) => Number(roomStatus(a) === 'full') - Number(roomStatus(b) === 'full')).map((room, index) => <RoomCard key={room.id} room={room} averageHouseholdSize={averageHouseholdSize} householdAssigned={roomHouseholdAssigned(room)} householdArrived={roomHouseholdArrived(room)} index={index} onEditRoom={onEditRoom} onOpenRoom={onOpenRoom} />)}</div>
+      ) : (
+        <div className="ec-room-table-wrap"><table className="ec-structure-table ec-structure-table-occupancy"><thead><tr><th>Room</th><th title="Capacity and assigned households">Occupancy</th><th title="Households arrived">Arrived</th><th>Status</th></tr></thead><tbody>
+          {selectedRooms.filter(isRoomMatching).sort((a, b) => Number(roomStatus(a) === 'full') - Number(roomStatus(b) === 'full')).map((room) => {
+            const capacity = roomHouseholdCapacity(room), assigned = roomHouseholdAssigned(room), state = roomStatus(room)
+            return <tr key={room.id} className="ec-room-row" tabIndex={0} role="button" onClick={() => (onOpenRoom || onEditRoom)?.(room)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); (onOpenRoom || onEditRoom)?.(room) } }}>
+              <td>{formatRoomLabel(room.room_number)}</td><td><span className="ec-table-occupancy"><span className="ec-room-occupancy"><span style={{ width: capacity > 0 ? Math.min(100, assigned / capacity * 100) + '%' : '0%' }} /></span><strong>{assigned} / {capacity ?? '—'}</strong></span></td><td title="Households arrived">{roomHouseholdArrived(room)}</td><td><span className={'ec-room-tile-status is-' + state}>{state === 'full' ? 'Full' : state === 'empty' ? 'Empty' : 'Available'}</span></td>
+            </tr>
+          })}
+        </tbody></table></div>
       )}
     </div>
   )
@@ -1924,16 +1542,17 @@ export function HouseholdsTab({
   const roomBuildingMap = useMemo(() => {
     const map = new Map()
     rooms.forEach((r) => {
-      const bName =
-        r.building?.name ||
-        (r.building_id != null ? buildingById.get(String(r.building_id)) : null)
-      if (bName) {
-        if (r.id != null) map.set(String(r.id), bName)
-        if (r.room_number) map.set(String(r.room_number).toLowerCase(), bName)
+      const building = buildings.find((item) => String(item.id) === String(r.building_id))
+      const bName = r.building?.name || building?.name || (r.building_id != null ? buildingById.get(String(r.building_id)) : null)
+      const floorLabel = Number(building?.floors || r.building?.floors || 1) > 1 ? formatFloorLabel(r.floor) : ''
+      const locationLabel = [bName, floorLabel].filter(Boolean).join(' · ')
+      if (locationLabel) {
+        if (r.id != null) map.set(String(r.id), locationLabel)
+        if (r.room_number) map.set(String(r.room_number).toLowerCase(), locationLabel)
       }
     })
     return map
-  }, [rooms, buildingById])
+  }, [rooms, buildings, buildingById])
 
   const totalMembers = centerFamilies.reduce(
     (sum, f) => sum + Number(f.member_count || f.family_members || 1),

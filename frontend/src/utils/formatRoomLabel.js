@@ -25,4 +25,17 @@ export function formatRoomLabel(value) {
   return str;
 }
 
+/** Returns a display label for a floor number, or an empty string for NULL/invalid values. */
+export function formatFloorLabel(value) {
+  if (value == null || value === "") return "";
+  const floor = Number(value);
+  if (!Number.isInteger(floor) || floor < 1) return "";
+  if (floor === 1) return "Ground floor";
+  const lastTwo = floor % 100;
+  const suffix = lastTwo >= 11 && lastTwo <= 13
+    ? "th"
+    : ({ 1: "st", 2: "nd", 3: "rd" }[floor % 10] || "th");
+  return `${floor}${suffix} floor`;
+}
+
 export default formatRoomLabel;

@@ -1183,6 +1183,12 @@
   text-align: center;
 }
 
+.ec-structure-table th.ec-col-floor,
+.ec-structure-table td.ec-col-floor { color: #64748b; text-align: left; }
+.ec-room-mobile-floor { display: none; color: #64748b; font-size: 12px; font-weight: 400; margin-top: 3px; }
+.ec-floor-subheader td { height: 34px !important; padding: 0 16px !important; background: #f8fafc; color: #64748b !important; font-size: 12px !important; font-weight: 600; }
+.ec-floor-cards-heading { margin: 12px 0 8px; color: #64748b; font-size: 12px; font-weight: 600; }
+
 .ec-structure-table tbody tr:last-child td {
   border-bottom: none;
 }
@@ -2416,6 +2422,8 @@
     height: auto;
   }
 
+  .ec-floor-subheader td { display: table-cell !important; width: auto !important; }
+
   .ec-structure-table tbody td::before,
   .ec-modern-table tbody td::before {
     content: attr(data-label);
@@ -2721,4 +2729,237 @@
   .ec-household-members-footer-actions { gap: 6px; }
   .ec-household-reassign-btn { gap: 5px; padding: 0 9px; font-size: 12px; }
   .ec-household-unassign-btn { padding: 0 9px; font-size: 12px; }
+}
+.ec-room-floor-label { display:block; margin-top:3px; color:#64748b; font-size:12px; font-weight:400; }
+@media (max-width: 640px) {
+  .ec-structure-table thead th.ec-col-floor,
+  .ec-structure-table tbody td.ec-col-floor { display: none; }
+  .ec-room-mobile-floor { display: block; }
+}
+
+/* Building overview and room occupancy views */
+.ec-structure-summary-strip { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.ec-structure-toolbar-sticky {
+  position: sticky;
+  top: 0;
+  z-index: 12;
+  background: #fff;
+  padding: 10px 0;
+}
+.ec-add-menu-wrap,
+.ec-building-menu-wrap { position: relative; }
+.ec-add-menu,
+.ec-building-actions-menu {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 8px);
+  right: 0;
+  min-width: 180px;
+  padding: 6px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 12px 28px rgba(15, 23, 42, .14);
+}
+.ec-add-menu button,
+.ec-building-actions-menu button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 38px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #1e293b;
+  text-align: left;
+  cursor: pointer;
+}
+.ec-add-menu button:hover,
+.ec-building-actions-menu button:hover { background: #f1f5f9; }
+.ec-building-actions-menu button.is-danger { color: #dc2626; }
+.ec-building-cards {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  padding-top: 4px;
+}
+.ec-building-card {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid #dbe4f0;
+  border-radius: 12px;
+  background: #fff;
+  transition: border-color .16s ease, box-shadow .16s ease, transform .16s ease;
+}
+.ec-building-card:hover {
+  transform: translateY(-1px);
+  border-color: #93c5fd;
+  box-shadow: 0 8px 20px rgba(37, 99, 235, .08);
+}
+.ec-building-card-main {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  padding: 16px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.ec-building-card-main:focus-visible,
+.ec-room-tile:focus-visible { outline: 2px solid #2563eb; outline-offset: -2px; }
+.ec-building-card-top,
+.ec-building-card-footer,
+.ec-building-detail-title-row,
+.ec-building-detail-meta { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.ec-building-card-title { overflow: hidden; color: #0f172a; font-size: 15px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.ec-building-card-meta,
+.ec-building-card-footer { color: #64748b; font-size: 12px; }
+.ec-building-card-progress,
+.ec-room-occupancy {
+  display: block;
+  height: 7px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e8eef6;
+}
+.ec-building-card-progress > span,
+.ec-room-occupancy > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #2563eb;
+  transition: width .2s ease;
+}
+.ec-building-detail { padding-top: 4px; }
+.ec-building-detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 0 16px;
+  border-bottom: 1px solid #e2e8f0;
+}
+.ec-building-detail-heading { flex: 1; min-width: 0; }
+.ec-building-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 10px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #2563eb;
+  font-size: 13px;
+  cursor: pointer;
+}
+.ec-building-back svg { transform: rotate(180deg); }
+.ec-building-detail-title-row h3 { margin: 0; color: #0f172a; font-size: 18px; }
+.ec-building-detail-title-row p { margin: 5px 0 0; color: #64748b; font-size: 12px; }
+.ec-building-detail-meta { justify-content: flex-start; margin-top: 12px; color: #64748b; font-size: 12px; }
+.ec-building-detail-meta .ec-building-card-progress { width: min(220px, 35%); }
+.ec-building-detail-actions { display: flex; align-items: center; gap: 8px; }
+.ec-building-menu-trigger {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border: 1px solid #dbe4f0;
+  border-radius: 9px;
+  background: #fff;
+  color: #475569;
+  cursor: pointer;
+}
+.ec-building-menu-trigger:hover { background: #f8fafc; }
+.ec-floor-tabs {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 14px 0 12px;
+  border-bottom: 1px solid #e8eef6;
+}
+.ec-floor-tabs button {
+  flex: 0 0 auto;
+  padding: 7px 12px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: #64748b;
+  font-size: 13px;
+  cursor: pointer;
+}
+.ec-floor-tabs button.is-active { border-color: #bfdbfe; background: #eff6ff; color: #1d4ed8; font-weight: 600; }
+.ec-room-floor-groups { display: flex; flex-direction: column; gap: 18px; padding-top: 16px; }
+.ec-floor-cards-heading { margin: 0 0 10px; color: #475569; font-size: 13px; font-weight: 600; }
+.ec-room-tile-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.ec-room-tile {
+  display: flex;
+  min-width: 0;
+  min-height: 116px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #dbe4f0;
+  border-radius: 10px;
+  background: #fff;
+  color: #0f172a;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+.ec-room-tile:hover { border-color: #93c5fd; box-shadow: 0 5px 14px rgba(15, 23, 42, .08); }
+.ec-room-tile.is-empty { background: #f8fafc; }
+.ec-room-tile.is-full { border-color: #fecaca; }
+.ec-room-tile.is-available .ec-room-occupancy > span { background: #16a34a; }
+.ec-room-tile.is-full .ec-room-occupancy > span { background: #dc2626; }
+.ec-room-tile-top { display: flex; align-items: center; justify-content: space-between; gap: 7px; }
+.ec-room-tile-top strong { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.ec-room-tile-ratio { color: #0f172a; font-size: 17px; font-weight: 700; }
+.ec-room-tile-arrived { color: #64748b; font-size: 11px; }
+.ec-room-tile-status { display: inline-flex; align-items: center; width: fit-content; padding: 3px 7px; border-radius: 999px; background: #f1f5f9; color: #64748b; font-size: 10px; font-weight: 600; white-space: nowrap; }
+.ec-room-tile-status.is-available { background: #ecfdf5; color: #15803d; }
+.ec-room-tile-status.is-full { background: #fef2f2; color: #b91c1c; }
+.ec-table-occupancy { display: flex; align-items: center; justify-content: center; gap: 10px; min-width: 150px; }
+.ec-table-occupancy .ec-room-occupancy { flex: 1; max-width: 110px; }
+.ec-table-occupancy strong { min-width: 35px; color: #334155; font-variant-numeric: tabular-nums; }
+.ec-structure-table-occupancy th,
+.ec-structure-table-occupancy td { text-align: center; }
+.ec-structure-table-occupancy th:first-child,
+.ec-structure-table-occupancy td:first-child { text-align: left; }
+.ec-structure-table-occupancy td { vertical-align: middle; }
+.ec-room-table-wrap > section + section { margin-top: 16px; }
+.ec-building-detail-actions .ec-btn-primary:disabled {
+  border-color: #cbd5e1;
+  background: #e2e8f0;
+  color: #64748b;
+  cursor: not-allowed;
+  opacity: 1;
+}
+.ec-building-action-note {
+  color: #92400e;
+  font-size: 12px;
+}
+
+@media (max-width: 1000px) {
+  .ec-building-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ec-room-tile-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 700px) {
+  .ec-structure-summary-strip { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+  .ec-structure-toolbar-sticky { top: 0; }
+  .ec-structure-toolbar { align-items: stretch; flex-direction: column; }
+  .ec-toolbar-left { align-items: stretch; flex-direction: column; }
+  .ec-toolbar-left > * { width: 100%; }
+  .ec-status-filter-group { overflow-x: auto; }
+  .ec-view-toggle { align-self: flex-end; }
+  .ec-building-cards { grid-template-columns: 1fr; }
+  .ec-room-tile-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ec-building-detail-header { align-items: flex-start; flex-direction: column; }
+  .ec-building-detail-actions { width: 100%; justify-content: flex-end; }
+  .ec-building-card-main { padding: 13px; }
 }

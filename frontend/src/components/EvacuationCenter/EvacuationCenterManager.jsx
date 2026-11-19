@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from "react";
-import { useNavigate, useLocation } from "react-router-dom";
+import { useNavigate, useLocation, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../services/api";
 import {
@@ -23,6 +23,7 @@ import "./EvacuationCenterManager.css";
 
 import CenterList from "./CenterList";
 import CenterDetailPage, { RoomDetailPage } from "./CenterDetail";
+import BuildingDetail from "./BuildingDetail";
 import { CenterFormModal, CenterRoomModal, AddBuildingModal, EditBuildingModal, BuildingFormModal, AssignFamilyModal, MoveFamilyModal, ConfirmCenterDialog } from "./CenterModals";
 
 function isCenterMapped(item) {
@@ -56,8 +57,10 @@ export default function EvacuationCenterManager({
 }) {
   const navigate = useNavigate();
   const location = useLocation();
+  const { centerId: routeCenterId, buildingId: routeBuildingId, roomId: routeRoomId } = useParams();
   const isLgu = location.pathname.startsWith("/lgu");
   const mapBasePath = isLgu ? "/lgu/map" : "/admin/map";
+  const appBasePath = isLgu ? "/lgu" : "/admin";
 
   const [centerSection, setCenterSection] = useState("overview");
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
@@ -94,6 +97,8 @@ export default function EvacuationCenterManager({
       return {
         id,
         name,
+        floors: props?.floors != null ? Number(props.floors) : 1,
+        max_rooms: props?.max_rooms ?? props?.room_capacity_limit ?? null,
         status: ['open', 'closed', 'under_repair'].includes(props?.operational_status)
           ? props.operational_status
           : ['open', 'closed', 'under_repair'].includes(props?.building_status)
@@ -116,9 +121,18 @@ export default function EvacuationCenterManager({
     return () => window.cancelAnimationFrame(frameId);
   }, [roomDetail?.id, selectedCenter?.id]);
   const roomFamiliesQuery = useRoomFamilies(
-    selectedRoom?.id && selectedRoom?.id !== "all" ? selectedRoom.id : null
+    routeRoomId || (selectedRoom?.id && selectedRoom?.id !== "all" ? selectedRoom.id : null)
   );
   const roomFamilies = roomFamiliesQuery.data?.families || [];
+  const routedRoom = routeRoomId
+    ? centerRooms.find((room) => String(room.id) === String(routeRoomId)) || null
+    : null;
+  const routedBuilding = routeBuildingId
+    ? buildings.find((building) => String(building.id) === String(routeBuildingId)) || null
+    : null;
+  const routedRoomBuilding = routedRoom?.building_id != null
+    ? buildings.find((building) => String(building.id) === String(routedRoom.building_id)) || null
+    : null;
 
   // Center details query to fetch assigned_families across the whole center
   const centerDetailsQuery = useQuery({
@@ -171,6 +185,7 @@ export default function EvacuationCenterManager({
     room_number: "",
     capacity: "",
     building_id: "",
+    floor: "",
   });
   const [savingRoom, setSavingRoom] = useState(false);
 
@@ -181,7 +196,7 @@ export default function EvacuationCenterManager({
   const [buildingForm, setBuildingForm] = useState({
     name: '',
     max_rooms: null,
-    floors: null,
+    floors: 1,
     status: 'open',
     notes: '',
   });
@@ -232,9 +247,12 @@ export default function EvacuationCenterManager({
   // Open a center directly when arriving from the map or a refreshed detail URL.
   useEffect(() => {
     const params = new URLSearchParams(location.search);
-    const requestedCenterId = params.get("center");
+    const requestedCenterId = routeCenterId || params.get("center");
     if (!requestedCenterId) {
       handledUrlRef.current = "";
+      setSelectedCenter(null);
+      setSelectedRoom(null);
+      setRoomDetail(null);
       return;
     }
     if (!Array.isArray(centers?.features)) return;
@@ -252,8 +270,8 @@ export default function EvacuationCenterManager({
     setSelectedCenter(normalizeCenter(requestedCenter));
     setSelectedRoom(null);
     setRoomDetail(null);
-    setCenterSection(params.get("subtab") === "rooms" ? "structure" : "overview");
-  }, [centers, location.pathname, location.search]);
+    setCenterSection(routeBuildingId || routeRoomId || params.get("subtab") === "rooms" ? "structure" : "overview");
+  }, [centers, location.pathname, location.search, routeCenterId, routeBuildingId, routeRoomId]);
 
   // Active building (kept for handleBack parity with previous behavior)
 
@@ -281,6 +299,8 @@ export default function EvacuationCenterManager({
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ["families"] }),
       queryClient.invalidateQueries({ queryKey: ["rooms"] }),
+      queryClient.invalidateQueries({ queryKey: ["buildings"] }),
+      queryClient.invalidateQueries({ queryKey: ["building-details"] }),
       queryClient.invalidateQueries({ queryKey: ["room-families"] }),
       queryClient.invalidateQueries({ queryKey: ["evacuation-centers"] }),
       queryClient.invalidateQueries({ queryKey: ["evacuation-center-details"] }),
@@ -495,6 +515,7 @@ export default function EvacuationCenterManager({
       room_number: room.room_number || "",
       capacity: String(room.capacity || ""),
       building_id: room.building_id != null ? String(room.building_id) : "",
+      floor: room.floor != null ? String(room.floor) : "",
     });
     setSelectedRoom(room);
     setRoomModalMode("edit");
@@ -523,6 +544,14 @@ export default function EvacuationCenterManager({
         building_id: parsedBuildingId,
       };
 
+      if (roomForm.floor !== "") {
+        payload.floor = Number(roomForm.floor);
+      } else if (roomModalMode === "add" && parsedBuildingId != null) {
+        payload.floor = 1;
+      } else if (!(roomModalMode === "edit" && selectedRoom?.floor == null && String(selectedRoom?.building_id ?? "") === String(parsedBuildingId ?? ""))) {
+        payload.floor = null;
+      }
+
       if (roomModalMode === "add") {
         const result = await api.addRoom(selectedCenter.id, payload);
         const createdRoomId = result?.room?.id ?? result?.id;
@@ -549,6 +578,9 @@ export default function EvacuationCenterManager({
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: queryKeys.rooms(selectedCenter.id) }),
         queryClient.invalidateQueries({ queryKey: queryKeys.buildings(selectedCenter.id) }),
+        queryClient.invalidateQueries({ queryKey: ["building-details"] }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.centerDetails(selectedCenter.id) }),
+        queryClient.invalidateQueries({ queryKey: ["evacuation-centers"] }),
       ]);
     } catch (err) {
       setError(err.message || "Failed to save room.");
@@ -562,7 +594,7 @@ export default function EvacuationCenterManager({
     setBuildingForm({
       name: '',
       max_rooms: null,
-      floors: null,
+      floors: 1,
       status: 'open',
       notes: '',
     });
@@ -576,7 +608,7 @@ export default function EvacuationCenterManager({
     setBuildingForm({
       name: building.name || '',
       max_rooms: building.max_rooms != null ? Number(building.max_rooms) : null,
-      floors: building.floors != null ? Number(building.floors) : null,
+      floors: building.floors != null ? Number(building.floors) : 1,
       status: building.status || 'open',
       notes: building.notes || '',
     });
@@ -590,6 +622,7 @@ export default function EvacuationCenterManager({
       room_number: '',
       capacity: '',
       building_id: building?.id != null ? String(building.id) : '',
+      floor: building?.id != null ? '1' : '',
     });
     setSelectedRoom(null);
     setRoomModalMode('add');
@@ -613,7 +646,7 @@ export default function EvacuationCenterManager({
       const payload = {
         name: buildingForm.name.trim(),
         max_rooms: buildingForm.max_rooms !== null && buildingForm.max_rooms !== '' ? Number(buildingForm.max_rooms) : null,
-        floors: buildingForm.floors !== null && buildingForm.floors !== '' ? Number(buildingForm.floors) : null,
+        floors: Number(buildingForm.floors || 1),
         status: buildingForm.status || 'open',
         notes: buildingForm.notes?.trim() || null,
       };
@@ -631,6 +664,8 @@ export default function EvacuationCenterManager({
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: queryKeys.buildings(cId) }),
         queryClient.invalidateQueries({ queryKey: queryKeys.rooms(cId) }),
+        queryClient.invalidateQueries({ queryKey: ["building-details"] }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.centerDetails(cId) }),
         queryClient.invalidateQueries({ queryKey: ["evacuation-centers"] }),
         queryClient.invalidateQueries({ queryKey: ["evacuation-center-details"] }),
       ]);
@@ -667,6 +702,9 @@ export default function EvacuationCenterManager({
           setConfirmDialog(null);
           setNotice(`Building "${bldName}" deleted successfully.`);
           await refreshCenterStructure();
+          if (String(routeBuildingId) === String(buildingId)) {
+            navigate(centerStructureHref);
+          }
         } catch (err) {
           if (err.status === 404) {
             await refreshCenterStructure();
@@ -1023,17 +1061,16 @@ export default function EvacuationCenterManager({
     setSelectedRoom(null);
     setCenterSection("buildings");
     handledUrlRef.current = "";
-    const nextSearch = new URLSearchParams(location.search);
-    nextSearch.delete("center");
-    nextSearch.delete("subtab");
-    nextSearch.delete("view");
-    nextSearch.delete("building");
-    const query = nextSearch.toString();
-    navigate(
-      `${location.pathname}${query ? "?" + query : ""}`,
-      { replace: true }
-    );
+    navigate(`${appBasePath}?tab=centers`, { replace: true });
   }
+
+  const selectedCenterId = selectedCenter?.id || selectedCenter?.properties?.id;
+  const centersListHref = `${appBasePath}?tab=centers`;
+  const centerStructureHref = selectedCenterId
+    ? `${centersListHref}&center=${encodeURIComponent(selectedCenterId)}&subtab=structure`
+    : centersListHref;
+  const buildingDetailHref = (buildingId) => `${appBasePath}/evacuation-centers/${selectedCenterId}/buildings/${buildingId}`;
+  const roomDetailHref = (roomId) => `${appBasePath}/evacuation-centers/${selectedCenterId}/rooms/${roomId}`;
 
   return (
     <div className="ecm-container in-list-view">
@@ -1074,22 +1111,43 @@ export default function EvacuationCenterManager({
 
       {/* EVACUATION CENTERS DIRECTORY (List / Details) */}
       {selectedCenter ? (
-        roomDetail ? (
+        routeBuildingId ? (
+          <BuildingDetail
+            center={selectedCenter}
+            building={routedBuilding}
+            rooms={centerRooms}
+            families={allCenterFamilies}
+            loading={centerBuildingsQuery.isLoading || centerRoomsQuery.isLoading || centerDetailsQuery.isLoading}
+            notFound={!centerBuildingsQuery.isLoading && !centerRoomsQuery.isLoading && !centerDetailsQuery.isLoading && !routedBuilding}
+            listHref={centersListHref}
+            centerHref={centerStructureHref}
+            onAddRoom={() => routedBuilding && openAddRoomForBuilding(routedBuilding)}
+            onEditBuilding={openEditBuildingModal}
+            onDeleteBuilding={confirmDeleteBuilding}
+            onViewBuildingMap={(building) => navigate(`${mapBasePath}?center=${selectedCenterId}&building=${building.id}`)}
+            onPlaceBuilding={(building, mode) => navigate(`${mapBasePath}?center=${selectedCenterId}&building=${building.id}&mode=${mode}`)}
+            onOpenRoom={(room) => navigate(roomDetailHref(room.id))}
+          />
+        ) : routeRoomId || roomDetail ? (
           <RoomDetailPage
             center={selectedCenter}
-            room={centerRooms.find((room) => String(room.id) === String(roomDetail.id)) || roomDetail}
-            buildingName={buildings.find((building) => String(building.id) === String(roomDetail.building_id))?.name}
+            room={routedRoom || roomDetail}
+            building={routedRoomBuilding}
+            buildingName={routedRoomBuilding?.name}
+            buildingFloors={routedRoomBuilding?.floors}
+            buildingHref={routedRoomBuilding ? buildingDetailHref(routedRoomBuilding.id) : null}
             families={roomFamilies}
-            loading={roomFamiliesQuery.isLoading}
+            loading={roomFamiliesQuery.isLoading || (Boolean(routeRoomId) && centerRoomsQuery.isLoading)}
+            notFound={Boolean(routeRoomId) && !centerRoomsQuery.isLoading && !routedRoom}
             error={roomFamiliesQuery.error}
             onRetry={() => roomFamiliesQuery.refetch()}
             onBack={() => {
-              setRoomDetail(null);
-              setSelectedRoom(null);
-              setCenterSection("structure");
+              if (routedRoomBuilding) navigate(buildingDetailHref(routedRoomBuilding.id));
+              else navigate(centerStructureHref);
             }}
-            onBackToList={handleBack}
-            onAddHousehold={() => openAssignModal(roomDetail)}
+            onBackToList={() => navigate(centersListHref)}
+            onOpenBuilding={(building) => navigate(buildingDetailHref(building.id))}
+            onAddHousehold={() => openAssignModal(routedRoom || roomDetail)}
             onUnassignHousehold={confirmUnassignFamily}
             onEditRoom={openEditRoomModal}
           />
@@ -1127,32 +1185,13 @@ export default function EvacuationCenterManager({
             setError("");
           }}
           onAddBuilding={openAddBuildingModal}
-          onEditBuilding={openEditBuildingModal}
-          onDeleteBuilding={confirmDeleteBuilding}
-          onAddRoomToBuilding={openAddRoomForBuilding}
           onAddRoom={() => {
             setRoomModalMode("add");
             setError("");
           }}
           onEditRoom={(room) => openEditRoomModal(room)}
-          onOpenRoom={(room) => {
-            setSelectedRoom(room);
-            setRoomDetail(room);
-            setCenterSection("structure");
-          }}
-          onViewBuildingMap={(building) => {
-            const cId = selectedCenter?.id || selectedCenter?.properties?.id;
-            if (cId && building?.id) {
-              navigate(`${mapBasePath}?center=${cId}&building=${building.id}`);
-            }
-          }}
-          onPlaceBuilding={(building, mode) => {
-            const cId = selectedCenter?.id || selectedCenter?.properties?.id;
-            if (cId && building?.id) {
-              const action = typeof mode === 'string' ? mode : (mode ? 'edit_polygon' : 'place_building');
-              navigate(`${mapBasePath}?center=${cId}&building=${building.id}&mode=${action}`);
-            }
-          }}
+          onOpenRoom={(room) => navigate(roomDetailHref(room.id))}
+          onOpenBuilding={(building) => navigate(buildingDetailHref(building.id))}
           onMove={(family) => openMoveModal(family)}
           onUnassign={(family) => confirmUnassignFamily(family)}
           canDeactivate={canDeactivate}
@@ -1162,6 +1201,14 @@ export default function EvacuationCenterManager({
           }}
         />
         )
+      ) : routeCenterId ? (
+        <main className="ec-room-detail-page">
+          <div className="ec-room-households-state" role="status">
+            {Array.isArray(centers?.features) ? (
+              <><h1>Evacuation center not found</h1><p>This center may have been removed or is unavailable.</p></>
+            ) : 'Loading evacuation center…'}
+          </div>
+        </main>
       ) : (
         <CenterList
           centers={centers}
@@ -1179,10 +1226,8 @@ export default function EvacuationCenterManager({
             setError("");
           }}
           onRowOpen={(feature) => {
-            setRoomDetail(null);
-            setSelectedRoom(null);
-            setSelectedCenter(normalizeCenter(feature));
-            setCenterSection("overview");
+            const centerId = feature?.properties?.id ?? feature?.id;
+            navigate(`${appBasePath}?tab=centers&center=${encodeURIComponent(centerId)}`);
           }}
           onDeactivate={(f) => confirmToggleCenterActive(f)}
           onPlaceOnMap={(f) => {

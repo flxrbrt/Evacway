@@ -2286,6 +2286,7 @@ def find_my_evacuation_center():
                 building = room.building
                 building_id = room.building_id
                 building_name = building.name if building else None
+                building_floors = building.floors if building else None
 
                 # If building not linked, find nearest building in the center
                 from geoalchemy2.shape import to_shape
@@ -2304,10 +2305,12 @@ def find_my_evacuation_center():
                             )
                             building_id = closest_b.id
                             building_name = closest_b.name
+                            building_floors = closest_b.floors
                         else:
                             closest_b = center_buildings[0]
                             building_id = closest_b.id
                             building_name = closest_b.name
+                            building_floors = closest_b.floors
 
                 # Determine recommended entrance
                 recommended_entrance = "Entrance 1"
@@ -2346,6 +2349,8 @@ def find_my_evacuation_center():
                     "room_number": room.room_number,
                     "building_id": building_id,
                     "building_name": building_name,
+                    "building_floors": building_floors,
+                    "floor": room.floor,
                     "floor_area": None,
                     "recommended_entrance": recommended_entrance,
                     "latitude": float(room.latitude) if room.latitude is not None else None,

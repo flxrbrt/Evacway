@@ -360,6 +360,7 @@ def _family_list_rows(families):
             EvacuationCenter.name,
             EvacuationCenterRoom.id.label('room_id'),
             EvacuationCenterRoom.room_number,
+            EvacuationCenterRoom.floor,
             EvacuationCenterRoom.capacity,
             EvacuationCenterRoom.building_id,
             EvacuationCenterBuilding.name.label('building_name'),
@@ -389,6 +390,7 @@ def _family_list_rows(families):
             EvacuationCenter.name,
             EvacuationCenterRoom.id,
             EvacuationCenterRoom.room_number,
+            EvacuationCenterRoom.floor,
             EvacuationCenterRoom.capacity,
             EvacuationCenterRoom.building_id,
             EvacuationCenterBuilding.name,
@@ -406,6 +408,7 @@ def _family_list_rows(families):
         center_name,
         room_id,
         room_number,
+        room_floor,
         room_capacity,
         building_id,
         building_name,
@@ -445,6 +448,7 @@ def _family_list_rows(families):
             'building_name': resolved_b_name,
             'room_id': room_id if resolved_mode != 'open_area' else None,
             'room': room_number if resolved_mode != 'open_area' else None,
+            'room_floor': room_floor if resolved_mode != 'open_area' else None,
             'room_capacity': room_capacity,
             'assigned_members': assigned_count,
             'checked_in_members': c_in,
@@ -480,7 +484,10 @@ def _family_list_rows(families):
                 for item in assignments
                 if item.get('structure_mode') == 'buildings_and_rooms' and (item.get('building') or item.get('center'))
             )) or None,
-            'rooms': ', '.join(dict.fromkeys(str(item['room']) for item in assignments if item.get('room'))) or None,
+            'rooms': ', '.join(dict.fromkeys(
+                f"{item['room']} (floor {item['room_floor']})" if item.get('room_floor') is not None else str(item['room'])
+                for item in assignments if item.get('room')
+            )) or None,
             'current_center_id': primary_assignment['center_id'] if primary_assignment else None,
             'current_center_type': primary_assignment['center_type'] if primary_assignment else None,
             'current_structure_mode': primary_assignment['structure_mode'] if primary_assignment else None,
@@ -1963,6 +1970,7 @@ def _serialize_family_detail(family):
                     'assignment_id': assignment.id,
                     'room_id': room.id,
                     'room_number': room.room_number,
+                    'floor': room.floor,
                     'center_id': center.id,
                     'center_name': center.name,
                     'assigned_at': assignment.assigned_at.isoformat() if assignment.assigned_at else None,
@@ -2808,7 +2816,7 @@ def assign_family(family_id):
 
     family.evacuation_status = "Assigned"
     user_id = get_jwt_identity()
-    target_desc = f"{center.name} - Room {room.room_number}" if room else center.name
+    target_desc = f"{center.name} - Room {room.room_number}" + (f" (floor {room.floor})" if room and room.floor is not None else "") if room else center.name
     db.session.add(SystemLog(
         user_id=user_id,
         action=f"Assigned family '{family.head_name}' ({family.family_code}) to {target_desc}"
@@ -2822,6 +2830,7 @@ def assign_family(family_id):
         "center_name": center.name,
         "room_id": room.id if room else None,
         "room_number": room.room_number if room else None,
+        "floor": room.floor if room else None,
         "is_assigned": True,
         "assignment_status": "Assigned"
     }), 200
@@ -2936,8 +2945,8 @@ def move_family(family_id):
 
     family.evacuation_status = "Assigned"
     user_id = get_jwt_identity()
-    old_desc = f"{old_center.name} - Room {old_room.room_number}" if (old_center and old_room) else (f"Room {old_room.room_number}" if old_room else (old_center.name if old_center else "previous shelter"))
-    new_desc = f"{target_center.name} - Room {new_room.room_number}" if new_room else target_center.name
+    old_desc = (f"{old_center.name} - Room {old_room.room_number}" + (f" (floor {old_room.floor})" if old_room.floor is not None else "")) if (old_center and old_room) else ((f"Room {old_room.room_number}" + (f" (floor {old_room.floor})" if old_room.floor is not None else "")) if old_room else (old_center.name if old_center else "previous shelter"))
+    new_desc = (f"{target_center.name} - Room {new_room.room_number}" + (f" (floor {new_room.floor})" if new_room and new_room.floor is not None else "")) if new_room else target_center.name
     db.session.add(SystemLog(
         user_id=user_id,
         action=f"Moved family '{family.head_name}' ({family.family_code}) from {old_desc} to {new_desc}"
@@ -2951,6 +2960,7 @@ def move_family(family_id):
         "center_name": target_center.name,
         "room_id": new_room.id if new_room else None,
         "room_number": new_room.room_number if new_room else None,
+        "floor": new_room.floor if new_room else None,
         "is_assigned": True,
         "assignment_status": "Assigned"
     }), 200
@@ -2978,7 +2988,7 @@ def unassign_family(family_id):
     center_id = current_assignments[0].evacuation_center_id
     room = EvacuationCenterRoom.query.get(room_id) if room_id else None
     center = EvacuationCenter.query.get(center_id) if center_id else (room.evacuation_center if room else None)
-    shelter_desc = f"{center.name} - Room {room.room_number}" if (center and room) else (f"Room {room.room_number}" if room else (center.name if center else "assigned shelter"))
+    shelter_desc = (f"{center.name} - Room {room.room_number}" + (f" (floor {room.floor})" if room.floor is not None else "")) if (center and room) else ((f"Room {room.room_number}" + (f" (floor {room.floor})" if room.floor is not None else "")) if room else (center.name if center else "assigned shelter"))
 
     for assignment in current_assignments:
         db.session.delete(assignment)

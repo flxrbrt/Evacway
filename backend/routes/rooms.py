@@ -115,6 +115,7 @@ def create_room(center_id):
 
     room_number = data.get('room_number')
     capacity = data.get('capacity')
+    raw_floor = data.get('floor')
     if data.get('barangay_id') is not None and str(data.get('barangay_id')).strip() != "":
         try:
             barangay_id = int(data.get('barangay_id'))
@@ -224,11 +225,31 @@ def create_room(center_id):
         else:
             parsed_building_id = None
 
+    parsed_floor = None
+    if raw_floor is not None and str(raw_floor).strip() != "":
+        try:
+            parsed_floor = int(raw_floor)
+            if isinstance(raw_floor, float) and not raw_floor.is_integer():
+                raise ValueError
+        except (TypeError, ValueError):
+            return jsonify({"error": "Floor must be a whole number"}), 400
+        if parsed_floor < 1:
+            return jsonify({"error": "Floor must be 1 or greater"}), 400
+    floor_building = db.session.get(EvacuationCenterBuilding, parsed_building_id) if parsed_building_id else None
+    if floor_building:
+        if parsed_floor is None:
+            return jsonify({"error": "Choose a floor for this room."}), 400
+        if parsed_floor > (floor_building.floors or 1):
+            return jsonify({"error": f"Floor {parsed_floor} is outside this building's 1 to {floor_building.floors} floor range."}), 400
+    elif parsed_floor is not None:
+        return jsonify({"error": "A room without a building cannot have a floor assigned."}), 400
+
     room = EvacuationCenterRoom(
         evacuation_center_id=center_id,
         building_id=parsed_building_id,
         room_number=room_number,
         capacity=capacity,
+        floor=parsed_floor,
         latitude=parsed_lat,
         longitude=parsed_lng,
         is_active=True
@@ -248,7 +269,7 @@ def create_room(center_id):
     db.session.add(
         SystemLog(
             user_id=user_id,
-            action=f"Added room {room.room_number} to evacuation center: {center.name}"
+            action=f"Added room {room.room_number}" + (f", floor {room.floor}" if room.floor is not None else "") + f" to evacuation center: {center.name}"
         )
     )
     db.session.commit()
@@ -278,6 +299,7 @@ def update_room(room_id):
     if not room:
         return jsonify({"error": "Room not found"}), 404
 
+    original_building_id = room.building_id
     data = request.get_json() or {}
 
     current_assigned = EvacuationAssignment.query.filter_by(room_id=room.id).count()
@@ -355,6 +377,37 @@ def update_room(room_id):
 
                 room.building_id = building.id
 
+    building_changed = 'building_id' in data and original_building_id != room.building_id
+    raw_floor = data.get(
+        'floor',
+        (1 if room.building_id else None) if building_changed else room.floor
+    )
+    if raw_floor is None or str(raw_floor).strip() == "":
+        parsed_floor = None
+    else:
+        try:
+            parsed_floor = int(raw_floor)
+            if isinstance(raw_floor, float) and not raw_floor.is_integer():
+                raise ValueError
+        except (TypeError, ValueError):
+            return jsonify({"error": "Floor must be a whole number"}), 400
+        if parsed_floor < 1:
+            return jsonify({"error": "Floor must be 1 or greater"}), 400
+    floor_building = db.session.get(EvacuationCenterBuilding, room.building_id) if room.building_id else None
+    preserve_legacy_null = bool(
+        floor_building and parsed_floor is None and room.floor is None
+        and not building_changed and 'floor' not in data
+    )
+    if floor_building and not preserve_legacy_null:
+        if parsed_floor is None:
+            return jsonify({"error": "Choose a floor for this room."}), 400
+        if parsed_floor > (floor_building.floors or 1):
+            return jsonify({"error": f"Floor {parsed_floor} is outside this building's 1 to {floor_building.floors} floor range."}), 400
+    elif not floor_building and parsed_floor is not None:
+        return jsonify({"error": "A room without a building cannot have a floor assigned."}), 400
+    if not preserve_legacy_null:
+        room.floor = parsed_floor
+
 # Room coordinates are deprecated in favor of building mapping
 
     db.session.commit()
@@ -370,7 +423,7 @@ def update_room(room_id):
     db.session.add(
         SystemLog(
             user_id=user_id,
-            action=f"Updated room {room.room_number} (ID: {room.id})"
+            action=f"Updated room {room.room_number}" + (f", floor {room.floor}" if room.floor is not None else "") + f" (ID: {room.id})"
         )
     )
     db.session.commit()
@@ -417,7 +470,7 @@ def update_room_location(room_id):
         db.session.add(
             SystemLog(
                 user_id=user_id,
-                action=f"Removed room {room.room_number} location in center: {center.name if center else room.evacuation_center_id}"
+                action=f"Removed room {room.room_number}" + (f" (floor {room.floor})" if room.floor is not None else "") + f" location in center: {center.name if center else room.evacuation_center_id}"
             )
         )
         db.session.commit()
@@ -465,7 +518,7 @@ def update_room_location(room_id):
     db.session.add(
         SystemLog(
             user_id=user_id,
-            action=f"Mapped room {room.room_number} location in center: {center.name if center else room.evacuation_center_id}"
+        action=f"Mapped room {room.room_number}" + (f" (floor {room.floor})" if room.floor is not None else "") + f" location in center: {center.name if center else room.evacuation_center_id}"
         )
     )
     db.session.commit()
@@ -515,7 +568,7 @@ def toggle_room_active(room_id):
 
     user_id = get_jwt_identity()
     action = "Reactivated" if room.is_active else "Deactivated"
-    db.session.add(SystemLog(user_id=user_id, action=f"{action} room: {room.room_number} (ID: {room.id})"))
+    db.session.add(SystemLog(user_id=user_id, action=f"{action} room: {room.room_number}" + (f" (floor {room.floor})" if room.floor is not None else "") + f" (ID: {room.id})"))
     db.session.commit()
 
     assigned = EvacuationAssignment.query.filter_by(room_id=room.id).count()
@@ -569,7 +622,7 @@ def delete_room(room_id):
         center.capacity = sum(r.capacity or 0 for r in active_rooms)
 
     user_id = get_jwt_identity()
-    db.session.add(SystemLog(user_id=user_id, action=f"Deleted room: {room_number} (ID: {room_id})"))
+    db.session.add(SystemLog(user_id=user_id, action=f"Deleted room: {room_number}" + (f" (floor {room.floor})" if room.floor is not None else "") + f" (ID: {room_id})"))
     db.session.commit()
 
     return jsonify({
@@ -589,11 +642,13 @@ def delete_room(room_id):
 def unlink_room_building(room_id):
     room = EvacuationCenterRoom.query.get_or_404(room_id)
     old_building_id = room.building_id
+    old_floor = room.floor
     room.building_id = None
+    room.floor = None
     db.session.commit()
 
     user_id = get_jwt_identity()
-    db.session.add(SystemLog(user_id=user_id, action=f"Unlinked room '{room.room_number}' (ID: {room.id}) from building (ID: {old_building_id})"))
+    db.session.add(SystemLog(user_id=user_id, action=f"Unlinked room '{room.room_number}'" + (f" (floor {old_floor})" if old_floor is not None else "") + f" (ID: {room.id}) from building (ID: {old_building_id})"))
     db.session.commit()
 
     return jsonify({
@@ -752,6 +807,8 @@ def get_room_families(room_id):
         "room_number": room.room_number,
         "building_id": room.building_id,
         "building_name": (room.building.name or f"Building #{room.building.id}") if room.building else None,
+        "building_floors": room.building.floors if room.building else None,
+        "floor": room.floor,
         "center_id": room.evacuation_center_id,
         "center_name": center.name if center else "Unknown",
         "capacity": room.capacity,
@@ -979,7 +1036,7 @@ def assign_families(room_id):
     db.session.add(
         SystemLog(
             user_id=user_id,
-            action=f"Assigned {len(families_to_assign)} families ({total_members_needed} members) to {center.name} - Room {room.room_number}"
+            action=f"Assigned {len(families_to_assign)} families ({total_members_needed} members) to {center.name} - Room {room.room_number}" + (f" (floor {room.floor})" if room.floor is not None else "")
         )
     )
     db.session.commit()
@@ -1076,7 +1133,7 @@ def remove_family_from_room(room_id, resident_or_family_id):
     db.session.add(
         SystemLog(
             user_id=user_id,
-            action=f"Removed family '{household_name}' from Room {room.room_number}"
+            action=f"Removed family '{household_name}' from Room {room.room_number}" + (f" (floor {room.floor})" if room.floor is not None else "")
         )
     )
     db.session.commit()
