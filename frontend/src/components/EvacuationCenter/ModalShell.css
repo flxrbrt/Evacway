@@ -1181,12 +1181,127 @@
    BuildingFormModal Clean Modern Redesign (§Admin Modal)
    ========================================================= */
 .modal-shell-dialog.bfm-dialog {
-  max-width: 560px;
+  max-width: 600px;
   border-radius: 16px;
   box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
   background-color: #ffffff;
   border: 1px solid #e2e8f0;
   overflow: hidden;
+}
+
+.bfm-dialog--add .modal-shell-body {
+  padding: 22px 26px 24px;
+}
+
+.bfm-dialog--add .bfm-form {
+  gap: 18px;
+}
+
+.bfm-add-intro {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 1px solid #bfdbfe;
+  border-radius: 12px;
+  background: #eff6ff;
+}
+
+.bfm-add-intro-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  flex: 0 0 auto;
+  border-radius: 10px;
+  background: #ffffff;
+  color: #2563eb;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+}
+
+.bfm-add-intro-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.bfm-add-intro-copy strong {
+  color: #1e3a8a;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.bfm-add-intro-copy span {
+  color: #475569;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.bfm-section-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: -10px;
+}
+
+.bfm-section-heading > :first-child {
+  color: #334155;
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.035em;
+  text-transform: uppercase;
+}
+
+.bfm-section-heading > :last-child {
+  color: #64748b;
+  font-size: 11px;
+}
+
+.bfm-optional-grid {
+  padding: 14px 16px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  background: #f8fafc;
+}
+
+.bfm-optional-grid .bfm-field {
+  min-width: 0;
+}
+
+.bfm-dialog--add .bfm-label {
+  font-weight: 600;
+}
+
+.bfm-dialog--add .bfm-textarea {
+  min-height: 96px;
+  height: 96px;
+}
+
+.bfm-status-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid #fcd34d;
+  border-radius: 9px;
+  background: #fffbeb;
+  color: #92400e;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.bfm-status-warning > svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: #d97706;
+}
+
+.bfm-status-warning strong {
+  font-weight: 650;
 }
 
 .bfm-dialog .modal-shell-header {
@@ -1857,6 +1972,42 @@
   color: #334155;
   font-size: 13px;
   font-weight: 600;
+}
+
+.afm-room-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.afm-room-select {
+  width: 100%;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 9px;
+  background: #ffffff;
+  color: #0f172a;
+  font: inherit;
+  font-size: 14px;
+}
+
+.afm-room-select:focus-visible {
+  border-color: #2563eb;
+  outline: 3px solid rgba(37, 99, 235, 0.15);
+}
+
+.afm-room-select:disabled {
+  background: #f8fafc;
+  color: #94a3b8;
+  cursor: not-allowed;
+}
+
+.afm-room-hint {
+  margin: 0;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .afm-picker-control {

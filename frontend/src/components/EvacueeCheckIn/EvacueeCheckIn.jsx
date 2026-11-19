@@ -1245,13 +1245,6 @@ export default function EvacueeCheckIn() {
 
       {/* Evacuee List Section */}
       <section className="checkin-table-card" aria-label="Evacuee arrival list">
-        {(filterStatus === 'non_registered' || (filterStatus === 'all' && (nonRegisteredQuery.data?.total > 0 || nonRegisteredQuery.error))) && <NonRegisteredGroups
-          result={nonRegisteredQuery.data} loading={nonRegisteredQuery.isLoading} error={nonRegisteredQuery.error} retry={nonRegisteredQuery.refetch}
-          status={nonRegisteredStatus} setStatus={setNonRegisteredStatus} page={nonRegisteredPage} setPage={setNonRegisteredPage}
-          canEdit={canAddNonRegistered} isAdmin={isAdmin} onChanged={refreshArrivals}
-          onEdit={(person, group) => setNonRegisteredModal({ kind: 'edit', person, group })}
-          onMember={(group) => setNonRegisteredModal({ kind: 'member', group })}
-          onAdd={() => setNonRegisteredModal({ kind: 'create' })} addDisabled={!canAddNonRegistered} />}
         {filterStatus === 'non_registered' ? null : isLoading ? (
           <div className="checkin-loading-spinner" role="status">
             <FontAwesomeIcon icon={faSpinner} spin />
@@ -1778,6 +1771,13 @@ export default function EvacueeCheckIn() {
             )}
           </>
         )}
+        {filterStatus === 'non_registered' && <NonRegisteredGroups
+          result={nonRegisteredQuery.data} loading={nonRegisteredQuery.isLoading} error={nonRegisteredQuery.error} retry={nonRegisteredQuery.refetch}
+          status={nonRegisteredStatus} setStatus={setNonRegisteredStatus} page={nonRegisteredPage} setPage={setNonRegisteredPage}
+          canEdit={canAddNonRegistered} isAdmin={isAdmin} onChanged={refreshArrivals}
+          onEdit={(person, group) => setNonRegisteredModal({ kind: 'edit', person, group })}
+          onMember={(group) => setNonRegisteredModal({ kind: 'member', group })}
+          onAdd={() => setNonRegisteredModal({ kind: 'create' })} addDisabled={!canAddNonRegistered} />}
       </section>
 
       {/* Member Checklist Modal (For Partial / Individual Arrival) */}

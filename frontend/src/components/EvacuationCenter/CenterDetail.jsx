@@ -24,10 +24,12 @@ import {
   faList,
   faTableCellsLarge,
   faXmark,
+  faRightLeft,
+  faUserMinus,
 } from '@fortawesome/free-solid-svg-icons'
 import { api } from '../../services/api'
 import { useAuth } from '../../context/AuthContext'
-import { useCenterDetails } from '../../hooks/useEvacuationQueries'
+import { useCenterDetails, useFamily } from '../../hooks/useEvacuationQueries'
 import { formatRoomLabel } from '../../utils/formatRoomLabel'
 import {
   centerStatus,
@@ -415,17 +417,14 @@ export function CenterHeader({
 
   const structureMode = resolveCenterStructureMode(center)
   const isSingleVenue = structureMode === 'open_area'
-  const isPrivateProperty = structureMode === 'rooms_only'
-  const hasBuildings = structureMode === 'buildings_and_rooms'
-  const canAddBuilding = hasBuildings
   const canAddRoom = !isSingleVenue
 
   const kebabItems = []
   if (canAddRoom && onAddRooms) {
     kebabItems.push({ label: 'Add rooms', icon: faPlus, onClick: onAddRooms })
   }
-  if (isAdmin && canAddBuilding && onAddBuilding) {
-    kebabItems.push({ label: 'Add building', icon: faBuilding, onClick: onAddBuilding })
+  if (isAdmin && onEditCenter) {
+    kebabItems.push({ label: 'Edit center', icon: faPen, onClick: onEditCenter })
   }
   if (kebabItems.length > 0 && isAdmin && canDeactivate && onDeactivate) {
     kebabItems.push({ divider: true })
@@ -534,16 +533,6 @@ export function CenterHeader({
                 <span>View on map</span>
               </button>
             )}
-            {isAdmin && onEditCenter && (
-              <button
-                type="button"
-                className="ec-btn-secondary-action"
-                onClick={onEditCenter}
-              >
-                <FontAwesomeIcon icon={faPen} />
-                <span>Edit center</span>
-              </button>
-            )}
             {kebabItems.length > 0 && (
               <FloatingMenuTrigger
                 items={kebabItems}
@@ -589,13 +578,13 @@ export function KpiStrip({
     <div className="ec-kpi-strip">
       <div className="ec-kpi-card">
         <div className="ec-kpi-card-header">
-          <span className="ec-kpi-label">Capacity</span>
+          <span className="ec-kpi-label">Household capacity</span>
           {isOpenArea && onEditCapacity ? (
             <button
               type="button"
               className="ec-info-edit-btn"
               onClick={onEditCapacity}
-              title="Edit center capacity"
+              title="Edit the individual people limit used to estimate household capacity"
             >
               <FontAwesomeIcon icon={faPen} size="xs" />
               <span>Edit</span>
@@ -606,7 +595,7 @@ export function KpiStrip({
         </div>
         <div className="ec-kpi-val">{householdCap > 0 ? householdCap : '—'}</div>
         <div className="ec-kpi-helper">
-          {isOpenArea ? 'Estimated household capacity' : 'Estimated household capacity'}
+          Estimated from average household size in the served barangays
         </div>
       </div>
 
@@ -972,6 +961,7 @@ export function RoomDetailPage({
   onEditRoom,
   onRetry,
 }) {
+  const [familyToView, setFamilyToView] = useState(null)
   const assignedPeople = Number(center?.assigned ?? center?.total_assigned ?? 0)
   const assignedHouseholds = Number(center?.household_assigned ?? families.length ?? 0)
   const averageHouseholdSize = assignedHouseholds > 0
@@ -1092,13 +1082,20 @@ export function RoomDetailPage({
               const arrived = Boolean(family.is_checked_in)
               return (
                 <article className="ec-room-household-row" key={id}>
-                  <div className="ec-room-household-avatar" aria-hidden="true">
-                    {name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0].toUpperCase()).join('') || 'HH'}
-                  </div>
-                  <div className="ec-room-household-info">
-                    <strong>{name}</strong>
-                    <span>{members} {members === 1 ? 'member' : 'members'} · {arrived ? 'Arrived' : 'Not arrived'}</span>
-                  </div>
+                  <button
+                    type="button"
+                    className="ec-room-household-trigger"
+                    onClick={() => setFamilyToView(family)}
+                    aria-label={`View members of ${name}`}
+                  >
+                    <span className="ec-room-household-avatar" aria-hidden="true">
+                      {name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0].toUpperCase()).join('') || 'HH'}
+                    </span>
+                    <span className="ec-room-household-info">
+                      <strong>{name}</strong>
+                      <span>{members} {members === 1 ? 'member' : 'members'} · {arrived ? 'Arrived' : 'Not arrived'}</span>
+                    </span>
+                  </button>
                   {arrived && <span className="ec-room-household-arrived">Arrived</span>}
                   {onUnassignHousehold && (
                     <button
@@ -1116,7 +1113,113 @@ export function RoomDetailPage({
           </div>
         )}
       </section>
+      {familyToView && (
+        <HouseholdMembersModal
+          family={familyToView}
+          onClose={() => setFamilyToView(null)}
+          onUnassign={onUnassignHousehold ? () => {
+            setFamilyToView(null)
+            onUnassignHousehold(familyToView)
+          } : undefined}
+        />
+      )}
     </main>
+  )
+}
+
+function HouseholdMembersModal({ family, onClose, onReassign, onUnassign }) {
+  const familyId = family?.family_id ?? family?.id
+  const hasNumericId = familyId != null && Number.isFinite(Number(familyId))
+  const familyQuery = useFamily(hasNumericId ? familyId : null, { enabled: hasNumericId })
+  const details = familyQuery.data?.family || familyQuery.data || family
+  const members = Array.isArray(details?.members) ? details.members : []
+  const householdName = family.household_head_name || family.head_name || 'Household'
+
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.body.style.overflow = previousOverflow
+      window.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [onClose])
+
+  return (
+    <div
+      className="ec-household-modal-backdrop"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose()
+      }}
+    >
+      <section
+        className="ec-household-members-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="ec-household-members-title"
+      >
+        <header className="ec-household-members-header">
+          <div>
+            <h2 id="ec-household-members-title">{householdName}</h2>
+            <p>Household members</p>
+          </div>
+          <button type="button" className="ec-household-modal-close" onClick={onClose} aria-label="Close members dialog">
+            <FontAwesomeIcon icon={faXmark} />
+          </button>
+        </header>
+        <div className="ec-household-members-content">
+          {familyQuery.isLoading ? (
+            <p className="ec-household-members-state" role="status">Loading members…</p>
+          ) : familyQuery.isError ? (
+            <p className="ec-household-members-state" role="alert">Could not load this household’s members. Close and try again.</p>
+          ) : members.length === 0 ? (
+            <p className="ec-household-members-state">No member details are available for this household.</p>
+          ) : (
+            <ul className="ec-household-members-list">
+              {members.map((member, index) => {
+                const memberName = [member.first_name, member.middle_name, member.last_name, member.suffix]
+                  .filter(Boolean)
+                  .join(' ') || member.name || `Member ${index + 1}`
+                const relationship = member.is_head_of_family
+                  ? 'Household head'
+                  : member.relationship_to_head || 'Household member'
+                return (
+                  <li className="ec-household-member-item" key={member.id ?? `${memberName}-${index}`}>
+                    <span className="ec-household-member-avatar" aria-hidden="true">
+                      {memberName.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0].toUpperCase()).join('') || 'M'}
+                    </span>
+                    <span className="ec-household-member-copy">
+                      <strong>{memberName}</strong>
+                      <span>{relationship}{member.gender ? ` · ${member.gender}` : ''}</span>
+                    </span>
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+        </div>
+        <footer className="ec-household-members-footer">
+          <span>{members.length} {members.length === 1 ? 'member' : 'members'}</span>
+          <div className="ec-household-members-footer-actions">
+            {onReassign && (
+              <button type="button" className="ec-household-reassign-btn" onClick={onReassign}>
+                <FontAwesomeIcon icon={faRightLeft} />
+                Reassign
+              </button>
+            )}
+            {onUnassign && (
+              <button type="button" className="ec-household-unassign-btn" onClick={onUnassign}>
+                Unassign household
+              </button>
+            )}
+            <button type="button" className="ec-btn-secondary-action" onClick={onClose}>Close</button>
+          </div>
+        </footer>
+      </section>
+    </div>
   )
 }
 
@@ -1570,6 +1673,12 @@ export function StructureTab({
         <div key={viewMode} className="ec-structure-groups ec-view-animated">
           {filteredGroups.map(({ building, rooms: groupRooms }) => {
             const isUnassigned = !building || !building.id
+            const operationalStatus = building?.status || 'open'
+            const statusLabel = operationalStatus === 'under_repair'
+              ? 'Under repair'
+              : operationalStatus === 'closed'
+                ? 'Closed'
+                : 'Open'
             const groupKey = building?.id != null ? String(building.id) : 'unassigned'
             const isCollapsed = Boolean(collapsedGroups[groupKey])
             const isMapped =
@@ -1618,6 +1727,12 @@ export function StructureTab({
                       className="ec-sb-chevron"
                     />
                     <h3 className="ec-sb-title">{building?.name || 'Unassigned rooms'}</h3>
+                    {!isUnassigned && (
+                      <span className={`ec-sb-status-pill is-${operationalStatus}`} aria-label={`Building status: ${statusLabel}`}>
+                        <span className="ec-sb-status-dot" aria-hidden="true" />
+                        {statusLabel}
+                      </span>
+                    )}
                     <span className="ec-sb-meta">
                       {groupRooms.length} {groupRooms.length === 1 ? 'room' : 'rooms'} · {groupAssigned} households assigned
                     </span>
@@ -1791,11 +1906,14 @@ export function HouseholdsTab({
   centerFamilies = [],
   rooms = [],
   buildings = [],
+  onMove,
+  onUnassign,
 }) {
   const structureMode = resolveCenterStructureMode(center)
   const isOpenArea = structureMode === 'open_area'
   const showBuildingSub = structureMode === 'buildings_and_rooms'
   const [searchTerm, setSearchTerm] = useState('')
+  const [familyToView, setFamilyToView] = useState(null)
 
   const buildingById = useMemo(() => {
     const map = new Map()
@@ -1868,10 +1986,11 @@ export function HouseholdsTab({
         <table className="ec-modern-table">
           <thead>
             <tr>
-              <th scope="col" style={{ width: '38%' }}>HOUSEHOLD</th>
-              <th scope="col" style={{ width: '22%' }}>{isOpenArea ? 'CENTER' : 'ROOM'}</th>
-              <th scope="col" style={{ width: '18%' }}>MEMBERS</th>
-              <th scope="col" style={{ width: '22%' }}>STATUS</th>
+              <th scope="col" style={{ width: '30%' }}>HOUSEHOLD</th>
+              <th scope="col" style={{ width: '21%' }}>{isOpenArea ? 'CENTER' : 'ROOM'}</th>
+              <th scope="col" style={{ width: '12%' }}>MEMBERS</th>
+              <th scope="col" style={{ width: '14%' }}>STATUS</th>
+              <th scope="col" style={{ width: '23%' }}>ACTIONS</th>
             </tr>
           </thead>
           <tbody>
@@ -1901,17 +2020,37 @@ export function HouseholdsTab({
               }
 
               return (
-                <tr key={famKey} className="ec-table-row">
+                <tr
+                  key={famKey}
+                  className="ec-table-row ec-household-click-row"
+                  tabIndex={0}
+                  aria-label={`View members of ${headName}`}
+                  onClick={() => setFamilyToView(fam)}
+                  onKeyDown={(event) => {
+                    if (event.target !== event.currentTarget) return
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault()
+                      setFamilyToView(fam)
+                    }
+                  }}
+                >
                   <td data-label="HOUSEHOLD">
-                    <div className="ec-household-user-cell">
-                      <div className="ec-avatar-circle" aria-hidden="true">
-                        {initials}
+                    <button
+                      type="button"
+                      className="ec-household-view-btn"
+                      onClick={() => setFamilyToView(fam)}
+                      aria-label={`View members of ${headName}`}
+                    >
+                      <div className="ec-household-user-cell">
+                        <div className="ec-avatar-circle" aria-hidden="true">
+                          {initials}
+                        </div>
+                        <div className="ec-household-text">
+                          <span className="ec-household-name">{headName}</span>
+                          <span className="ec-household-role">Household Head</span>
+                        </div>
                       </div>
-                      <div className="ec-household-text">
-                        <span className="ec-household-name">{headName}</span>
-                        <span className="ec-household-role">Household Head</span>
-                      </div>
-                    </div>
+                    </button>
                   </td>
                   <td data-label={isOpenArea ? 'CENTER' : 'ROOM'}>
                     {isOpenArea ? (
@@ -1946,11 +2085,59 @@ export function HouseholdsTab({
                       </span>
                     )}
                   </td>
+                  <td data-label="ACTIONS">
+                    {fam.family_id != null && (
+                      <div className="ec-household-actions">
+                        {onMove && (
+                          <button
+                            type="button"
+                            className="ec-household-action-btn"
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              onMove(fam)
+                            }}
+                            aria-label={`Reassign ${headName}`}
+                          >
+                            <FontAwesomeIcon icon={faRightLeft} />
+                            <span>Reassign</span>
+                          </button>
+                        )}
+                        {onUnassign && (
+                          <button
+                            type="button"
+                            className="ec-household-action-btn is-danger"
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              onUnassign(fam)
+                            }}
+                            aria-label={`Unassign ${headName}`}
+                          >
+                            <FontAwesomeIcon icon={faUserMinus} />
+                            <span>Unassign</span>
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </td>
                 </tr>
               )
             })}
           </tbody>
         </table>
+      )}
+      {familyToView && (
+        <HouseholdMembersModal
+          family={familyToView}
+          onClose={() => setFamilyToView(null)}
+          onReassign={onMove ? () => {
+            setFamilyToView(null)
+            onMove(familyToView)
+          } : undefined}
+          onUnassign={onUnassign ? () => {
+            setFamilyToView(null)
+            onUnassign(familyToView)
+          } : undefined}
+        />
       )}
     </div>
   )

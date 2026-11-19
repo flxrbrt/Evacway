@@ -21,6 +21,7 @@ export function FloatingMenu({
 }) {
   const menuRef = useRef(null)
   const previousFocusRef = useRef(null)
+  const restoreFocusOnCloseRef = useRef(true)
 
   // Filter out falsy items (dividers, null, undefined) but keep items with label
   const validItems = items.filter((item) => item && item.label)
@@ -64,30 +65,62 @@ export function FloatingMenu({
     setPosition({ top, left, right: 'auto', bottom: 'auto', flipped })
   }, [triggerRef, align])
 
-  // Update position when open, on scroll, resize
+  const handleScroll = useCallback(() => {
+    const trigger = triggerRef.current
+    if (!trigger) {
+      restoreFocusOnCloseRef.current = false
+      onClose()
+      return
+    }
+
+    const triggerRect = trigger.getBoundingClientRect()
+    const triggerIsVisible =
+      triggerRect.bottom > 0 &&
+      triggerRect.top < window.innerHeight &&
+      triggerRect.right > 0 &&
+      triggerRect.left < window.innerWidth
+
+    if (!triggerIsVisible) {
+      // Don't refocus an offscreen trigger, which would jump the page back up.
+      restoreFocusOnCloseRef.current = false
+      onClose()
+      return
+    }
+
+    updatePosition()
+  }, [triggerRef, onClose, updatePosition])
+
+  // Keep the menu anchored while scrolling, and dismiss it once its trigger
+  // leaves the viewport.
   useEffect(() => {
     if (!open) return
     updatePosition()
-    window.addEventListener('scroll', updatePosition, { passive: true })
+    document.addEventListener('scroll', handleScroll, { passive: true, capture: true })
+    window.addEventListener('scroll', handleScroll, { passive: true })
     window.addEventListener('resize', updatePosition)
     return () => {
-      window.removeEventListener('scroll', updatePosition)
+      document.removeEventListener('scroll', handleScroll, true)
+      window.removeEventListener('scroll', handleScroll)
       window.removeEventListener('resize', updatePosition)
     }
-  }, [open, updatePosition])
+  }, [open, handleScroll, updatePosition])
 
   // Focus management and keyboard navigation
   useEffect(() => {
     if (open) {
       previousFocusRef.current = document.activeElement
+      restoreFocusOnCloseRef.current = true
       // Focus first menu item after render
       setTimeout(() => {
         menuRef.current?.querySelector('[role="menuitem"]')?.focus()
       }, 0)
     } else if (previousFocusRef.current) {
       // Return focus to trigger
-      previousFocusRef.current.focus()
+      if (restoreFocusOnCloseRef.current) {
+        previousFocusRef.current.focus()
+      }
       previousFocusRef.current = null
+      restoreFocusOnCloseRef.current = true
     }
   }, [open])
 

@@ -226,13 +226,23 @@ def _center_metrics(center):
     center_available = max(effective_capacity - total_occupied, 0)
     center_unassigned = max(effective_capacity - total_assigned, 0)
 
-    average_household_size = (
-        total_assigned / total_assigned_households
-        if total_assigned_households > 0
-        else None
-    )
+    linked_barangay_ids = [item["id"] for item in linked_barangays]
+    average_household_size = None
+    if linked_barangay_ids:
+        average_household_size = (
+            db.session.query(func.avg(Family.member_count))
+            .filter(
+                Family.barangay_id.in_(linked_barangay_ids),
+                Family.member_count > 0,
+            )
+            .scalar()
+        )
+    # If no registered household sizes exist in the served barangays, fall
+    # back to the actual average size of households already assigned here.
+    if average_household_size is None and total_assigned_households > 0:
+        average_household_size = total_assigned / total_assigned_households
     household_capacity = (
-        int(effective_capacity // average_household_size)
+        int(effective_capacity // float(average_household_size))
         if effective_capacity > 0 and average_household_size is not None
         else None
     )

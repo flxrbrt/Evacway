@@ -27,7 +27,7 @@ def staff_endpoint(function):
     @wraps(function)
     def wrapped(*args, **kwargs):
         if not table_ready():
-            return jsonify(error='Apply the non-registered evacuees migration first.'), 503
+            return jsonify(error='Apply the non-registered evacuees table migration and support flags migration first.'), 503
         try:
             return function(*args, **kwargs)
         except InvalidInput as error:
@@ -314,7 +314,8 @@ def add_export_sheet(workbook, operation_id=None, center_id=None, search='', sta
     operation = resolve_operation(operation_id, int(center_id) if str(center_id).isdigit() else None)
     sheet = workbook.create_sheet('Non-registered arrivals')
     sheet.append(['Category', 'First name', 'Middle name', 'Last name', 'Sex', 'Age', 'Address', 'Shelter',
-                  'Operation', 'Arrival', 'Departure', 'Group', 'Contact number', 'PWD', 'Pregnant', 'Needs medical', 'Notes'])
+                  'Operation', 'Arrival', 'Departure', 'Group', 'Contact number', 'PWD', 'Pregnant', 'Lactating',
+                  'Solo parent', 'Needs assistance', 'Needs medical', 'Notes'])
     query = NonRegisteredEvacuee.query.filter_by(operation_id=operation.id) if operation else NonRegisteredEvacuee.query.filter(False)
     if str(center_id).isdigit():
         query = query.filter_by(center_id=int(center_id))
@@ -329,7 +330,8 @@ def add_export_sheet(workbook, operation_id=None, center_id=None, search='', sta
         values = ['Non-registered', row.first_name, row.middle_name, row.last_name, row.sex, row.age_years,
             row.address, row.center.name, row.operation.event_name, row.arrived_at.isoformat(),
             row.departed_at.isoformat() if row.departed_at else '', str(row.group_code), row.contact_number,
-            row.is_pwd, row.is_pregnant, row.needs_medical, row.notes]
+            row.is_pwd, row.is_pregnant, row.is_lactating, row.is_solo_parent, row.needs_assistance,
+            row.needs_medical, row.notes]
         sheet.append(values)
         # Preserve exact strings (including +63 contacts) without executing formulas.
         for cell in sheet[sheet.max_row]:

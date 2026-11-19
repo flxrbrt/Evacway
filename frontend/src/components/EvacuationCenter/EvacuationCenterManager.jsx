@@ -94,6 +94,12 @@ export default function EvacuationCenterManager({
       return {
         id,
         name,
+        status: ['open', 'closed', 'under_repair'].includes(props?.operational_status)
+          ? props.operational_status
+          : ['open', 'closed', 'under_repair'].includes(props?.building_status)
+            ? props.building_status
+            : 'open',
+        occupancyStatus: props?.status || null,
         notes: props?.notes || null,
         geometry: feature?.geometry || null,
         is_mapped,
@@ -183,6 +189,8 @@ export default function EvacuationCenterManager({
 
   // Assign family modal
   const [assignModalOpen, setAssignModalOpen] = useState(false);
+  const [assignTargetRoom, setAssignTargetRoom] = useState(null);
+  const [assignRoomSelectionEnabled, setAssignRoomSelectionEnabled] = useState(false);
   const [selectedFamilyIdToAssign, setSelectedFamilyIdToAssign] = useState("");
   const [assigningFamily, setAssigningFamily] = useState(false);
 
@@ -221,6 +229,32 @@ export default function EvacuationCenterManager({
   // Mapbox drawing states (ref to avoid re-renders on URL sync)
   const handledUrlRef = useRef("");
 
+  // Open a center directly when arriving from the map or a refreshed detail URL.
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const requestedCenterId = params.get("center");
+    if (!requestedCenterId) {
+      handledUrlRef.current = "";
+      return;
+    }
+    if (!Array.isArray(centers?.features)) return;
+
+    const requestKey = `${location.pathname}:${location.search}`;
+    if (handledUrlRef.current === requestKey) return;
+
+    const requestedCenter = centers.features.find((feature) => {
+      const props = feature?.properties || feature;
+      return String(props?.id) === String(requestedCenterId);
+    });
+    if (!requestedCenter) return;
+
+    handledUrlRef.current = requestKey;
+    setSelectedCenter(normalizeCenter(requestedCenter));
+    setSelectedRoom(null);
+    setRoomDetail(null);
+    setCenterSection(params.get("subtab") === "rooms" ? "structure" : "overview");
+  }, [centers, location.pathname, location.search]);
+
   // Active building (kept for handleBack parity with previous behavior)
 
   async function loadCenterRooms(centerId) {
@@ -254,9 +288,11 @@ export default function EvacuationCenterManager({
     ]);
   }
 
-  async function openAssignModal(targetRoom = selectedRoom) {
-    const isSingle = resolveCenterStructureMode(selectedCenter) === 'open_area' || (!targetRoom && centerRooms.length === 0);
-    if (!targetRoom && !isSingle) return;
+  async function openAssignModal(targetRoom = selectedRoom, allowRoomSelection = false) {
+    const isSingle = resolveCenterStructureMode(selectedCenter) === 'open_area';
+    if (!targetRoom && !isSingle && !allowRoomSelection) return;
+    setAssignTargetRoom(targetRoom || null);
+    setAssignRoomSelectionEnabled(allowRoomSelection);
     setAssignModalOpen(true);
     setSelectedFamilyIdToAssign("");
     setLoadingAvailableFamilies(true);
@@ -678,6 +714,7 @@ export default function EvacuationCenterManager({
     if (!family) return;
 
     const isSingle = resolveCenterStructureMode(selectedCenter) === 'open_area';
+    const assignmentRoom = assignTargetRoom;
     const memberCount = family.member_count || family.family_members || 1;
 
     let capacity;
@@ -686,12 +723,15 @@ export default function EvacuationCenterManager({
       capacity = Number(selectedCenter?.capacity || 0);
       const assigned = Number(selectedCenter?.assigned ?? selectedCenter?.total_assigned ?? selectedCenter?.occupied ?? 0);
       remaining = Math.max(capacity - assigned, 0);
-    } else if (selectedRoom) {
-      capacity = Number(selectedRoom.capacity || 0);
-      const assigned = Number(selectedRoom.assigned ?? (selectedRoom.unassigned != null
-        ? capacity - Number(selectedRoom.unassigned)
-        : selectedRoom.occupied ?? 0));
+    } else if (assignmentRoom) {
+      capacity = Number(assignmentRoom.capacity || 0);
+      const assigned = Number(assignmentRoom.assigned ?? (assignmentRoom.unassigned != null
+        ? capacity - Number(assignmentRoom.unassigned)
+        : assignmentRoom.occupied ?? 0));
       remaining = Math.max(capacity - assigned, 0);
+    } else if (assignRoomSelectionEnabled) {
+      setError("Please select an available room before assigning this household.");
+      return;
     } else {
       setError("Please select a room before assigning this household.");
       return;
@@ -713,15 +753,17 @@ export default function EvacuationCenterManager({
     try {
       await api.assignFamily(family.id, {
         center_id: selectedCenter.id,
-        room_id: isSingle ? null : (selectedRoom?.id || null),
+        room_id: isSingle ? null : (assignmentRoom?.id || null),
       });
 
-      const locationLabel = (isSingle || !selectedRoom)
+      const locationLabel = isSingle
         ? (selectedCenter?.name || "the evacuation center")
-        : formatRoomLabel(selectedRoom.room_number);
+        : formatRoomLabel(assignmentRoom.room_number);
 
       setNotice(`Family "${family.household_head_name || family.head_name}" assigned to ${locationLabel}.`);
       setAssignModalOpen(false);
+      setAssignTargetRoom(null);
+      setAssignRoomSelectionEnabled(false);
 
       await invalidateFamilyAssignments();
     } catch (err) {
@@ -970,26 +1012,9 @@ export default function EvacuationCenterManager({
       return;
     }
 
-    if (centerRooms.length === 0) {
-      setError("Add at least one room in the Structure tab before assigning households.");
-      return;
-    }
-
-    if (!selectedRoom || selectedRoom.id === "all") {
-      const firstAvailable = centerRooms.find(
-        (r) => r.is_active && (r.available ?? r.capacity - (r.occupied || 0)) > 0
-      );
-      if (firstAvailable) {
-        setSelectedRoom(firstAvailable);
-        openAssignModal(firstAvailable);
-      } else {
-        setError(
-          "All rooms in this evacuation center are at full capacity or inactive. Please create a new room or adjust room capacity."
-        );
-      }
-    } else {
-      openAssignModal(selectedRoom);
-    }
+    // Open the room picker even if room data is still loading or no rooms have
+    // space. The modal owns the available-room filter and explains when none fit.
+    openAssignModal(null, true);
   }
 
   function handleBack() {
@@ -1064,7 +1089,7 @@ export default function EvacuationCenterManager({
               setCenterSection("structure");
             }}
             onBackToList={handleBack}
-            onAddHousehold={handleAssignHouseholdClick}
+            onAddHousehold={() => openAssignModal(roomDetail)}
             onUnassignHousehold={confirmUnassignFamily}
             onEditRoom={openEditRoomModal}
           />
@@ -1204,15 +1229,23 @@ export default function EvacuationCenterManager({
         />
       )}
       <AssignFamilyModal
-        open={assignModalOpen && (!!selectedRoom || resolveCenterStructureMode(selectedCenter) === 'open_area')}
+        open={assignModalOpen && (!!assignTargetRoom || assignRoomSelectionEnabled || resolveCenterStructureMode(selectedCenter) === 'open_area')}
         selectedCenter={selectedCenter}
-        selectedRoom={selectedRoom}
+        selectedRoom={assignTargetRoom}
+        rooms={centerRooms}
+        buildings={buildings}
+        allowRoomSelection={assignRoomSelectionEnabled}
         availableFamilies={availableFamilies}
         loadingAvailableFamilies={loadingAvailableFamilies}
         selectedFamilyIdToAssign={selectedFamilyIdToAssign}
         assigningFamily={assigningFamily}
-        onClose={() => setAssignModalOpen(false)}
+        onClose={() => {
+          setAssignModalOpen(false);
+          setAssignTargetRoom(null);
+          setAssignRoomSelectionEnabled(false);
+        }}
         onFamilyChange={setSelectedFamilyIdToAssign}
+        onRoomChange={setAssignTargetRoom}
         onConfirm={handleConfirmAssignment}
       />
       <MoveFamilyModal
@@ -1240,6 +1273,14 @@ export default function EvacuationCenterManager({
           activeRoomCount={
             selectedBuilding
               ? centerRooms.filter((r) => String(r.building_id) === String(selectedBuilding.id)).length
+              : 0
+          }
+          assignedHouseholdCount={
+            selectedBuilding
+              ? new Set(allCenterFamilies
+                  .filter((family) => String(family.building_id) === String(selectedBuilding.id))
+                  .map((family) => family.family_id)
+                ).size
               : 0
           }
           saving={savingBuilding}

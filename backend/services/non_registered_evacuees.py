@@ -11,13 +11,17 @@ from models import (
 
 PERSON_FIELDS = (
     'first_name', 'middle_name', 'last_name', 'sex', 'age_years', 'birthdate',
-    'contact_number', 'address', 'is_pwd', 'is_pregnant', 'needs_medical', 'notes',
+    'contact_number', 'address', 'is_pwd', 'is_pregnant', 'is_lactating',
+    'is_solo_parent', 'needs_assistance', 'needs_medical', 'notes',
 )
 
 
 def table_ready():
     # Existing deployments keep working until the additive migration is applied.
     if not inspect(db.engine).has_table('non_registered_evacuees'):
+        return False
+    columns = {column['name'] for column in inspect(db.engine).get_columns('non_registered_evacuees')}
+    if not {'is_lactating', 'is_solo_parent', 'needs_assistance'}.issubset(columns):
         return False
     if db.engine.dialect.name == 'postgresql':
         return bool(db.session.execute(text(
@@ -59,16 +63,6 @@ def validate_person(data, existing=None):
         values[key] = value
     if values.get('sex') not in ('male', 'female', 'other'):
         errors['sex'] = 'Select male, female or other.'
-    age = values.get('age_years')
-    if type(age) is not int or not 0 <= age <= 120:
-        errors['age_years'] = 'Enter a whole number from 0 to 120.'
-    for key in ('is_pwd', 'is_pregnant', 'needs_medical'):
-        value = values.get(key, False)
-        if type(value) is not bool:
-            errors[key] = 'Use true or false.'
-        values[key] = value
-    if values['is_pregnant'] and values.get('sex') != 'female':
-        errors['is_pregnant'] = 'Pregnant is allowed only when sex is female.'
     birthday = values.get('birthdate')
     if birthday:
         try:
@@ -77,6 +71,21 @@ def validate_person(data, existing=None):
                 raise ValueError()
         except (TypeError, ValueError):
             errors['birthdate'] = 'Enter a valid birthdate that is not in the future.'
+        else:
+            today = datetime.now(PHILIPPINES_TZ).date()
+            values['age_years'] = today.year - birthday.year - ((today.month, today.day) < (birthday.month, birthday.day))
+    else:
+        errors['birthdate'] = 'Enter a birthdate so age can be calculated.'
+    age = values.get('age_years')
+    if type(age) is not int or not 0 <= age <= 120:
+        errors['age_years'] = 'Enter a valid birthdate so age can be calculated.'
+    for key in ('is_pwd', 'is_pregnant', 'is_lactating', 'is_solo_parent', 'needs_assistance', 'needs_medical'):
+        value = values.get(key, False)
+        if type(value) is not bool:
+            errors[key] = 'Use true or false.'
+        values[key] = value
+    if values['is_pregnant'] and values.get('sex') != 'female':
+        errors['is_pregnant'] = 'Pregnant is allowed only when sex is female.'
     values['birthdate'] = birthday or None
     phone = values.get('contact_number')
     if phone is not None and not isinstance(phone, str):

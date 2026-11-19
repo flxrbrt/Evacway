@@ -19,6 +19,8 @@ UP = [
         contact_number VARCHAR(13) CHECK (contact_number IS NULL OR contact_number ~ '^\\+639[0-9]{9}$'),
         address VARCHAR(200), is_pwd BOOLEAN NOT NULL DEFAULT FALSE,
         is_pregnant BOOLEAN NOT NULL DEFAULT FALSE CHECK (NOT is_pregnant OR sex='female'),
+        is_lactating BOOLEAN NOT NULL DEFAULT FALSE, is_solo_parent BOOLEAN NOT NULL DEFAULT FALSE,
+        needs_assistance BOOLEAN NOT NULL DEFAULT FALSE,
         needs_medical BOOLEAN NOT NULL DEFAULT FALSE, notes VARCHAR(200),
         group_code UUID NOT NULL, is_group_head BOOLEAN NOT NULL DEFAULT FALSE,
         operation_id INTEGER NOT NULL REFERENCES evacuation_operations(id) ON DELETE RESTRICT,

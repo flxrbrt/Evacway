@@ -4,6 +4,85 @@
    Follows Design System tokens: 14px text, 12px radius, 8px grid, >=44px buttons
    ========================================================= */
 
+.admin-map-building-draw-panel {
+  margin: 14px 12px 18px;
+  padding: 18px;
+  border: 1px solid #dbe5f2;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+}
+
+.admin-map-building-draw-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.admin-map-building-draw-heading h3 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.admin-map-building-draw-heading p,
+.admin-map-building-draw-note {
+  margin: 6px 0 0;
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.admin-map-building-draw-count {
+  flex: 0 0 auto;
+  padding: 5px 10px;
+  border: 1px solid #dbe5f2;
+  border-radius: 999px;
+  background: #f8fafc;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.admin-map-building-draw-count.is-ready {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+  color: #15803d;
+}
+
+.admin-map-building-draw-note {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 9px;
+  background: #f5f8ff;
+}
+
+.admin-map-building-draw-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+@media (max-width: 520px) {
+  .admin-map-building-draw-panel {
+    margin: 12px 8px;
+    padding: 14px;
+  }
+
+  .admin-map-building-draw-heading {
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .admin-map-building-draw-actions > button {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+}
 /* Ensure dashboard-content has zero bottom padding/gap when hosting the map */
 .dashboard-content:has(.admin-map-page) {
   padding-bottom: 0 !important;

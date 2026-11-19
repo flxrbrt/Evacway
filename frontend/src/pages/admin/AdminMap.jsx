@@ -75,7 +75,7 @@ import DashboardMap, {
 import CenterPlacementFlow, { polygonToPoints } from "../../components/CenterPlacementFlow/CenterPlacementFlow";
 import RoomDetailsModal from "../../components/EvacuationCenter/RoomDetailsModal";
 import BuildingDetailsModal from "../../components/BuildingDetailsModal/BuildingDetailsModal";
-import { BuildingFormModal, CenterRoomModal, CenterFormModal } from "../../components/EvacuationCenter/CenterModals";
+import { AddBuildingModal, BuildingFormModal, CenterRoomModal, CenterFormModal } from "../../components/EvacuationCenter/CenterModals";
 import { displayEntityName } from "../../utils/displayEntityName";
 import { snapLngLatToPolygonEdge } from "../../utils/polygonSnap";
 import { isBlockedRoadReport } from "../../components/mapReports/mapReports";
@@ -670,6 +670,14 @@ export default function AdminMap() {
     notes: "",
   });
   const [savingBuildingModal, setSavingBuildingModal] = useState(false);
+  const [mapAddBuildingModalOpen, setMapAddBuildingModalOpen] = useState(false);
+  const [mapAddBuildingForm, setMapAddBuildingForm] = useState({
+    name: "",
+    max_rooms: null,
+    floors: null,
+    status: "open",
+    notes: "",
+  });
 
   const [isAdminRoomModalOpen, setIsAdminRoomModalOpen] = useState(false);
   const [roomModalMode, setRoomModalMode] = useState("add");
@@ -689,15 +697,10 @@ export default function AdminMap() {
   const [loadingSuggestions, setLoadingSuggestions] = useState(false);
   const [managingBuildingId, setManagingBuildingId] = useState(null);
 
-  // Add building guided 3-step flow state (Change 2)
-  const [isAddingBuilding, setIsAddingBuilding] = useState(false);
-  const [addBuildingStep, setAddBuildingStep] = useState("draw"); // "draw" | "name" | "rooms"
-  const [newBuildingName, setNewBuildingName] = useState("");
-  const [newBuildingRoomIds, setNewBuildingRoomIds] = useState([]);
+  // Add building details are collected in the shared form, then its outline is drawn on the map.
+  const [addBuildingStep, setAddBuildingStep] = useState(null);
   const [newBuildingPoints, setNewBuildingPoints] = useState([]);
   const [isDrawingBuilding, setIsDrawingBuilding] = useState(false);
-  const [roomSearchQuery, setRoomSearchQuery] = useState("");
-  const [roomRangeInput, setRoomRangeInput] = useState("");
   const [isSavingBuilding, setIsSavingBuilding] = useState(false);
   const [panelHeaderMenuOpen, setPanelHeaderMenuOpen] = useState(false);
 
@@ -1104,7 +1107,7 @@ export default function AdminMap() {
     }
   };
 
-  // Start Add Building Guided Flow (Change 2 & Change 3)
+  // Open the shared building form, then collect the footprint on the map.
   const startAddBuildingFlowForCenter = useCallback((center) => {
     if (!center) return;
     const props = center.properties || center;
@@ -1113,7 +1116,6 @@ export default function AdminMap() {
     setCenterModalOpen(false);
     setPanelCollapsed(false);
     setBottomSheetOpen(true);
-    setPanelSubView("map_rooms");
     setMapRoomsTab("buildings");
     setSelectedBuildingDetail(null);
     setSelectedBuildingId(null);
@@ -1139,16 +1141,29 @@ export default function AdminMap() {
     }
     const defaultName = `Building ${bldCount + 1}`;
 
-    setIsAddingBuilding(true);
+    setIsDrawingBuilding(false);
+    setAddBuildingStep(null);
+    setNewBuildingPoints([]);
+    setMapAddBuildingForm({
+      name: defaultName,
+      max_rooms: null,
+      floors: null,
+      status: "open",
+      notes: "",
+    });
+    setMapAddBuildingModalOpen(true);
+    setPanelHeaderMenuOpen(false);
+  }, [buildingsGeoJSON]);
+
+  const handleBeginBuildingOutline = (e) => {
+    if (e?.preventDefault) e.preventDefault();
+    setMapAddBuildingModalOpen(false);
+    setPanelSubView("map_rooms");
+    setMapRoomsTab("buildings");
     setIsDrawingBuilding(true);
     setAddBuildingStep("draw");
     setNewBuildingPoints([]);
-    setNewBuildingName(defaultName);
-    setNewBuildingRoomIds([]);
-    setRoomSearchQuery("");
-    setRoomRangeInput("");
-    setPanelHeaderMenuOpen(false);
-  }, [buildingsGeoJSON]);
+  };
 
   const handleDoubleTapFinish = useCallback(() => {
     if (isDrawingBuilding && addBuildingStep === "draw") {
@@ -1158,8 +1173,8 @@ export default function AdminMap() {
           showPlacementToast("Building must stay inside the evacuation center boundary.");
           return;
         }
-        setAddBuildingStep("name");
-        showPlacementToast("Outline finished. Now name your building.");
+        setIsDrawingBuilding(false);
+        showPlacementToast("Building outline finished. Save to add the building.");
       } else {
         showPlacementToast("Click at least 3 corners before finishing.");
       }
@@ -1185,7 +1200,7 @@ export default function AdminMap() {
     }
     if (isDrawingBuilding && addBuildingStep === "draw") {
       setNewBuildingPoints(pts);
-      showPlacementToast("Basemap outline selected. Double-click or click Next to name.");
+      showPlacementToast("Building outline selected. Review it, then save.");
     } else if (isDrawingBuilding && redrawingBuildingId && (isRedrawingBuildingFromScratch || newBuildingPoints.length === 0)) {
       setNewBuildingPoints(pts);
       setIsRedrawingBuildingFromScratch(false);
@@ -1193,21 +1208,22 @@ export default function AdminMap() {
     }
   }, [isDrawingBuilding, addBuildingStep, redrawingBuildingId, isRedrawingBuildingFromScratch, newBuildingPoints.length, selectedCenter]);
 
-  const handleSaveBuildingWithRooms = async () => {
+  const handleSaveMapBuilding = async () => {
     if (newBuildingPoints.length < 3) {
-      alert("Please click at least 3 corners on the map to define the building outline.");
+      showPlacementToast("Place at least 3 corners to define the building outline.");
       setAddBuildingStep("draw");
+      setIsDrawingBuilding(true);
       return;
     }
     const centerPoints = selectedCenter?.geometry ? polygonToPoints(selectedCenter.geometry) : [];
     if (centerPoints.length >= 3 && !isBuildingInsideCenter(newBuildingPoints, centerPoints, true)) {
       showPlacementToast("Building must stay inside the evacuation center boundary.");
       setAddBuildingStep("draw");
+      setIsDrawingBuilding(true);
       return;
     }
-    if (!newBuildingName.trim()) {
-      alert("Please enter a building name.");
-      setAddBuildingStep("name");
+    if (!mapAddBuildingForm.name.trim()) {
+      showPlacementToast("Building name is required.");
       return;
     }
     const coords = newBuildingPoints.map((p) => [Number(p.lng), Number(p.lat)]);
@@ -1225,19 +1241,20 @@ export default function AdminMap() {
         });
         await invalidateEvacuationQueries(queryClient);
         await refetchBuildings();
-        setIsAddingBuilding(false);
         setIsDrawingBuilding(false);
         setRedrawingBuildingId(null);
         setNewBuildingPoints([]);
         showPlacementToast("Building outline redrawn successfully.");
       } else {
-        const savedName = newBuildingName.trim();
-        const roomCountLinked = newBuildingRoomIds.length;
+        const savedName = mapAddBuildingForm.name.trim();
 
         const created = await api.createBuilding(selectedCenterId, {
           name: savedName,
           coordinates: coords,
-          room_ids: newBuildingRoomIds,
+          max_rooms: mapAddBuildingForm.max_rooms,
+          floors: mapAddBuildingForm.floors,
+          status: mapAddBuildingForm.status || "open",
+          notes: mapAddBuildingForm.notes?.trim() || null,
         });
         await invalidateEvacuationQueries(queryClient);
         await refetchBuildings();
@@ -1247,17 +1264,13 @@ export default function AdminMap() {
           setSelectedBuildingId(createdId);
         }
 
-        setIsAddingBuilding(false);
         setIsDrawingBuilding(false);
         setAddBuildingStep(null);
-        setNewBuildingName("");
-        setNewBuildingRoomIds([]);
         setNewBuildingPoints([]);
 
         // Small toast with "Back to center" link per change_3_deep_links
         setSaveNotice({
-          message: `${savedName} saved - ${roomCountLinked} ${roomCountLinked === 1 ? "room" : "rooms"
-            } linked`,
+          message: `${savedName} added. Add rooms from the building details.`,
           centerId: selectedCenterId,
         });
       }
@@ -1270,7 +1283,6 @@ export default function AdminMap() {
   };
 
   const handleCancelDrawingBuilding = () => {
-    setIsAddingBuilding(false);
     setIsDrawingBuilding(false);
     // Restore building layer filter (un-hide the saved outline) if we were redrawing
     if (redrawingBuildingId) {
@@ -1282,8 +1294,6 @@ export default function AdminMap() {
     setRedrawingBuildingId(null);
     setIsRedrawingBuildingFromScratch(false);
     setAddBuildingStep(null);
-    setNewBuildingName("");
-    setNewBuildingRoomIds([]);
     setNewBuildingPoints([]);
     setBuildingEditOriginalPoints([]);
     setBuildingEditUndoStack([]);
@@ -1393,73 +1403,6 @@ export default function AdminMap() {
     setBuildingEditBoundaryError(null);
     setNewBuildingPoints(newPoints);
   }, [newBuildingPoints]);
-
-  const unassignedRooms = useMemo(() => {
-    return selectedCenterRooms.filter(
-      (r) => r.is_active !== false && (r.building_id == null || !r.building_id)
-    );
-  }, [selectedCenterRooms]);
-
-  const filteredUnassignedRooms = useMemo(() => {
-    let list = unassignedRooms;
-    if (roomSearchQuery.trim()) {
-      const q = roomSearchQuery.toLowerCase().trim();
-      list = list.filter((r) =>
-        String(r.room_number || "").toLowerCase().includes(q)
-      );
-    }
-    return list;
-  }, [unassignedRooms, roomSearchQuery]);
-
-  const handleToggleRoomCheckbox = (roomId) => {
-    setNewBuildingRoomIds((prev) =>
-      prev.includes(roomId) ? prev.filter((id) => id !== roomId) : [...prev, roomId]
-    );
-  };
-
-  const handleSelectAllUnmappedRooms = () => {
-    setNewBuildingRoomIds(unassignedRooms.map((r) => r.id));
-  };
-
-  const handleApplyRoomRange = () => {
-    if (!roomRangeInput.trim()) return;
-    const input = roomRangeInput.trim();
-    const parts = input.split(",").map((p) => p.trim());
-    const matchedIds = new Set(newBuildingRoomIds);
-
-    parts.forEach((part) => {
-      const rangeMatch = part.match(/^(\d+)\s*-\s*(\d+)$/);
-      if (rangeMatch) {
-        const start = parseInt(rangeMatch[1], 10);
-        const end = parseInt(rangeMatch[2], 10);
-        const minVal = Math.min(start, end);
-        const maxVal = Math.max(start, end);
-
-        unassignedRooms.forEach((rm) => {
-          const numMatch = String(rm.room_number || "").match(/\d+/);
-          if (numMatch) {
-            const val = parseInt(numMatch[0], 10);
-            if (val >= minVal && val <= maxVal) {
-              matchedIds.add(rm.id);
-            }
-          }
-        });
-      } else {
-        const singleTrim = part.toLowerCase();
-        unassignedRooms.forEach((rm) => {
-          if (
-            String(rm.room_number || "").toLowerCase() === singleTrim ||
-            String(rm.room_number || "").match(/\d+/)?.[0] === singleTrim
-          ) {
-            matchedIds.add(rm.id);
-          }
-        });
-      }
-    });
-
-    setNewBuildingRoomIds(Array.from(matchedIds));
-    setRoomRangeInput("");
-  };
 
   const handleMapBackgroundClick = useCallback(() => {
     if (roomModalOpen) {
@@ -3628,321 +3571,42 @@ export default function AdminMap() {
                 </div>
               )}
 
-              {/* GUIDED 3-STEP FLOW (When adding a building) */}
+              {/* Draw-only step after the shared Add Building form */}
               {addBuildingStep ? (
-                <div className="admin-guided-flow-panel">
-                  {/* 3-Step Indicator */}
-                  <div className="admin-guided-step-bar" role="tablist" aria-label="Add building steps">
-                    <div className={`admin-guided-step ${addBuildingStep === "draw" ? "is-active" : newBuildingPoints.length >= 3 ? "is-complete" : ""}`}>
-                      <span className="admin-guided-step-num">
-                        {newBuildingPoints.length >= 3 && addBuildingStep !== "draw" ? (
-                          <FontAwesomeIcon icon={faCheck} />
-                        ) : (
-                          "1"
-                        )}
-                      </span>
-                      <span>Draw</span>
+                <div className="admin-map-building-draw-panel">
+                  <div className="admin-map-building-draw-heading">
+                    <div>
+                      <h3>Place building outline</h3>
+                      <p>Draw the footprint for <strong>{mapAddBuildingForm.name || "this building"}</strong> on the map. Click corners, then double-click to finish.</p>
                     </div>
-                    <div className="admin-guided-step-line" />
-                    <div className={`admin-guided-step ${addBuildingStep === "name" ? "is-active" : newBuildingName.trim() ? "is-complete" : ""}`}>
-                      <span className="admin-guided-step-num">
-                        {newBuildingName.trim() && addBuildingStep === "rooms" ? (
-                          <FontAwesomeIcon icon={faCheck} />
-                        ) : (
-                          "2"
-                        )}
-                      </span>
-                      <span>Name</span>
-                    </div>
-                    <div className="admin-guided-step-line" />
-                    <div className={`admin-guided-step ${addBuildingStep === "rooms" ? "is-active" : ""}`}>
-                      <span className="admin-guided-step-num">3</span>
-                      <span>Rooms</span>
-                    </div>
+                    <span className={`admin-map-building-draw-count ${newBuildingPoints.length >= 3 ? "is-ready" : ""}`}>
+                      {newBuildingPoints.length} / 3 corners
+                    </span>
                   </div>
-
-                  {/* Step 1: Draw */}
-                  {addBuildingStep === "draw" && (
-                    <div className="admin-guided-card">
-                      <h3 className="admin-guided-title">
-                        <FontAwesomeIcon icon={faDrawPolygon} style={{ color: "#2563eb" }} />
-                        <span>Step 1: Draw building outline</span>
-                      </h3>
-
-                      <div className="admin-guided-hint-box">
-                        <div>
-                          <strong>Click the corners of the building on the map. Double-click to finish.</strong>
-                        </div>
-                        <div className="admin-guided-tip-sub">
-                          Tip: You can also click an existing building footprint on the map to trace it automatically.
-                        </div>
-                      </div>
-
-                      <div
-                        className="admin-guided-pts-pill"
-                        style={{
-                          backgroundColor: newBuildingPoints.length >= 3 ? "#dcfce7" : "#f1f5f9",
-                          color: newBuildingPoints.length >= 3 ? "#166534" : "#475569",
-                        }}
-                      >
-                        <FontAwesomeIcon icon={newBuildingPoints.length >= 3 ? faCheck : faDrawPolygon} />
-                        <span>
-                          {newBuildingPoints.length} corner{newBuildingPoints.length === 1 ? "" : "s"} placed (minimum 3)
-                        </span>
-                      </div>
-
-                      <div className="admin-guided-actions-row">
-                        <button
-                          type="button"
-                          className="admin-guided-btn"
-                          onClick={() => setNewBuildingPoints((pts) => pts.slice(0, -1))}
-                          disabled={newBuildingPoints.length === 0}
-                          title="Undo last corner"
-                        >
-                          <FontAwesomeIcon icon={faRotateLeft} />
-                          <span>Undo</span>
-                        </button>
-                        <button
-                          type="button"
-                          className="admin-guided-btn"
-                          onClick={() => setNewBuildingPoints([])}
-                          disabled={newBuildingPoints.length === 0}
-                          title="Clear corners"
-                        >
-                          <span>Clear</span>
-                        </button>
-                        <button
-                          type="button"
-                          className="admin-guided-btn is-danger"
-                          onClick={handleCancelDrawingBuilding}
-                        >
-                          <span>Cancel</span>
-                        </button>
-                        <button
-                          type="button"
-                          className="admin-guided-btn is-primary"
-                          style={{ marginLeft: "auto" }}
-                          onClick={() => {
-                            if (newBuildingPoints.length >= 3) {
-                              if (!newBuildingName.trim()) {
-                                setNewBuildingName(`Building ${centerBuildings.length + 1}`);
-                              }
-                              setAddBuildingStep("name");
-                            }
-                          }}
-                          disabled={newBuildingPoints.length < 3}
-                        >
-                          <span>Next: Name</span>
-                          <FontAwesomeIcon icon={faArrowRight} />
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Step 2: Name */}
-                  {addBuildingStep === "name" && (
-                    <div className="admin-guided-card">
-                      <h3 className="admin-guided-title">
-                        <FontAwesomeIcon icon={faPen} style={{ color: "#2563eb" }} />
-                        <span>Step 2: Name the building</span>
-                      </h3>
-
-                      <div className="admin-guided-field-group">
-                        <label htmlFor="guided-building-name" className="admin-guided-label">
-                          Building Name
-                        </label>
-                        <input
-                          id="guided-building-name"
-                          type="text"
-                          autoFocus
-                          className="admin-guided-input"
-                          placeholder="e.g. Building 1, Science Wing, Main Hall"
-                          value={newBuildingName}
-                          onChange={(e) => setNewBuildingName(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter" && newBuildingName.trim()) {
-                              e.preventDefault();
-                              setAddBuildingStep("rooms");
-                            }
-                          }}
-                        />
-                      </div>
-
-                      <div className="admin-guided-actions-row">
-                        <button
-                          type="button"
-                          className="admin-guided-btn"
-                          onClick={() => setAddBuildingStep("draw")}
-                        >
-                          <FontAwesomeIcon icon={faArrowLeft} />
-                          <span>Back to Draw</span>
-                        </button>
-                        <button
-                          type="button"
-                          className="admin-guided-btn is-danger"
-                          onClick={handleCancelDrawingBuilding}
-                        >
-                          <span>Cancel</span>
-                        </button>
-                        <button
-                          type="button"
-                          className="admin-guided-btn is-primary"
-                          style={{ marginLeft: "auto" }}
-                          onClick={() => {
-                            if (newBuildingName.trim()) {
-                              setAddBuildingStep("rooms");
-                            }
-                          }}
-                          disabled={!newBuildingName.trim()}
-                        >
-                          <span>Next: Rooms</span>
-                          <FontAwesomeIcon icon={faArrowRight} />
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Step 3: Rooms */}
-                  {addBuildingStep === "rooms" && (
-                    <div className="admin-guided-card">
-                      <h3 className="admin-guided-title">
-                        <FontAwesomeIcon icon={faDoorOpen} style={{ color: "#2563eb" }} />
-                        <span>Step 3: Link rooms to {newBuildingName}</span>
-                      </h3>
-
-                      <div className="admin-guided-rooms-toolbar">
-                        <div className="admin-guided-filter-inputs">
-                          <input
-                            type="text"
-                            className="admin-guided-search-input"
-                            placeholder="Search unmapped rooms..."
-                            value={roomSearchQuery}
-                            onChange={(e) => setRoomSearchQuery(e.target.value)}
-                          />
-                          <div className="admin-guided-range-wrap">
-                            <input
-                              type="text"
-                              className="admin-guided-range-input"
-                              placeholder="Range (1-7)"
-                              value={roomRangeInput}
-                              onChange={(e) => setRoomRangeInput(e.target.value)}
-                              onKeyDown={(e) => {
-                                if (e.key === "Enter") {
-                                  e.preventDefault();
-                                  handleApplyRoomRange();
-                                }
-                              }}
-                            />
-                            <button
-                              type="button"
-                              className="admin-guided-btn"
-                              style={{ height: 36, minHeight: 36, padding: "0 10px", fontSize: 12 }}
-                              onClick={handleApplyRoomRange}
-                            >
-                              Apply
-                            </button>
-                          </div>
-                        </div>
-
-                        <div className="admin-guided-quick-select-row">
-                          <span>
-                            <strong>{newBuildingRoomIds.length}</strong> room{newBuildingRoomIds.length === 1 ? "" : "s"} selected
-                          </span>
-                          <div style={{ display: "flex", gap: "10px" }}>
-                            <button
-                              type="button"
-                              className="admin-guided-quick-btn"
-                              onClick={handleSelectAllUnmappedRooms}
-                            >
-                              Select all
-                            </button>
-                            <button
-                              type="button"
-                              className="admin-guided-quick-btn"
-                              onClick={() => setNewBuildingRoomIds([])}
-                            >
-                              Clear
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Vertical Checklist */}
-                      <div className="admin-guided-rooms-list" role="list" aria-label="Available rooms">
-                        {filteredUnassignedRooms.length === 0 ? (
-                          <div style={{ padding: "16px", textAlign: "center", color: "#64748b", fontSize: 13 }}>
-                            {unassignedRooms.length === 0
-                              ? "All rooms in this center are already linked to buildings."
-                              : "No unlinked rooms match your filter."}
-                          </div>
-                        ) : (
-                          filteredUnassignedRooms.map((rm) => {
-                            const isChecked = newBuildingRoomIds.includes(rm.id);
-                            return (
-                              <label
-                                key={rm.id}
-                                className={`admin-guided-room-item ${isChecked ? "is-checked" : ""}`}
-                              >
-                                <input
-                                  type="checkbox"
-                                  className="admin-guided-room-cb"
-                                  checked={isChecked}
-                                  onChange={() => handleToggleRoomCheckbox(rm.id)}
-                                />
-                                <div className="admin-guided-room-info">
-                                  <span className="admin-guided-room-name">
-                                    Room {rm.room_number || "Unnamed"}
-                                  </span>
-                                  <span className="admin-guided-room-meta">
-                                    {rm.capacity ? `${rm.capacity} cap` : "No cap"}
-                                  </span>
-                                </div>
-                              </label>
-                            );
-                          })
-                        )}
-                      </div>
-
-                      <div className="admin-guided-actions-row">
-                        <button
-                          type="button"
-                          className="admin-guided-btn"
-                          onClick={() => setAddBuildingStep("name")}
-                          disabled={isSavingBuilding}
-                        >
-                          <FontAwesomeIcon icon={faArrowLeft} />
-                          <span>Back to Name</span>
-                        </button>
-                        <button
-                          type="button"
-                          className="admin-guided-btn is-danger"
-                          onClick={handleCancelDrawingBuilding}
-                          disabled={isSavingBuilding}
-                        >
-                          <span>Cancel</span>
-                        </button>
-                        <button
-                          type="button"
-                          className="admin-guided-btn is-primary"
-                          style={{ marginLeft: "auto" }}
-                          onClick={handleSaveBuildingWithRooms}
-                          disabled={isSavingBuilding || !newBuildingName.trim()}
-                        >
-                          {isSavingBuilding ? (
-                            <>
-                              <FontAwesomeIcon icon={faSpinner} spin />
-                              <span>Saving...</span>
-                            </>
-                          ) : (
-                            <>
-                              <FontAwesomeIcon icon={faCheck} />
-                              <span>Save Building ({newBuildingRoomIds.length} rooms)</span>
-                            </>
-                          )}
-                        </button>
-                      </div>
-                    </div>
-                  )}
+                  <p className="admin-map-building-draw-note">You can also select an existing map footprint. Rooms can be added from the building after it is created.</p>
+                  <div className="admin-map-building-draw-actions">
+                    <button type="button" className="admin-guided-btn" onClick={() => setNewBuildingPoints((points) => points.slice(0, -1))} disabled={!newBuildingPoints.length || isSavingBuilding}>
+                      <FontAwesomeIcon icon={faRotateLeft} /> Undo
+                    </button>
+                    <button type="button" className="admin-guided-btn" onClick={() => { setNewBuildingPoints([]); setIsDrawingBuilding(true); }} disabled={!newBuildingPoints.length || isSavingBuilding}>
+                      Clear
+                    </button>
+                    <button type="button" className="admin-guided-btn is-danger" onClick={handleCancelDrawingBuilding} disabled={isSavingBuilding}>
+                      Cancel
+                    </button>
+                    {isDrawingBuilding ? (
+                      <button type="button" className="admin-guided-btn is-primary" onClick={handleDoubleTapFinish} disabled={newBuildingPoints.length < 3 || isSavingBuilding}>
+                        Finish outline
+                      </button>
+                    ) : (
+                      <button type="button" className="admin-guided-btn" onClick={() => setIsDrawingBuilding(true)} disabled={newBuildingPoints.length < 3 || isSavingBuilding}>
+                        Continue drawing
+                      </button>
+                    )}
+                    <button type="button" className="admin-guided-btn is-primary" onClick={handleSaveMapBuilding} disabled={isSavingBuilding || isDrawingBuilding || newBuildingPoints.length < 3}>
+                      {isSavingBuilding ? <><FontAwesomeIcon icon={faSpinner} spin /> Saving...</> : <><FontAwesomeIcon icon={faCheck} /> Save building</>}
+                    </button>
+                  </div>
                 </div>
               ) : (
                 <>
@@ -4026,7 +3690,7 @@ export default function AdminMap() {
                   {centerBuildings.length === 0 ? (
                     <div className="admin-bld-empty-state">
                       <FontAwesomeIcon icon={faBuildingColumns} className="admin-bld-empty-icon" />
-                      <span>No buildings yet. Draw one to link its rooms.</span>
+                      <span>No buildings yet. Add a building, then add its rooms from the building details.</span>
                       <button
                         type="button"
                         className="admin-guided-btn is-primary"
@@ -4699,7 +4363,7 @@ export default function AdminMap() {
                 }}
               >
                 <FontAwesomeIcon icon={faArrowUpRightFromSquare} size="xs" />
-                <span>Edit center</span>
+                <span>Details</span>
               </button>
             </div>
           </div>
@@ -5741,6 +5405,14 @@ export default function AdminMap() {
               </div>
             </div>
           )}
+          <AddBuildingModal
+            open={mapAddBuildingModalOpen}
+            buildingForm={mapAddBuildingForm}
+            onChange={setMapAddBuildingForm}
+            saving={false}
+            onSubmit={handleBeginBuildingOutline}
+            onClose={() => setMapAddBuildingModalOpen(false)}
+          />
           {/* Edit Building Details & Max Rooms Modal */}
           {editBuildingModalOpen && (
             <BuildingFormModal

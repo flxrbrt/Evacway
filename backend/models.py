@@ -1865,6 +1865,9 @@ class NonRegisteredEvacuee(BaseModel):
     address = db.Column(db.String(200))
     is_pwd = db.Column(db.Boolean, nullable=False, default=False, server_default=db.false())
     is_pregnant = db.Column(db.Boolean, nullable=False, default=False, server_default=db.false())
+    is_lactating = db.Column(db.Boolean, nullable=False, default=False, server_default=db.false())
+    is_solo_parent = db.Column(db.Boolean, nullable=False, default=False, server_default=db.false())
+    needs_assistance = db.Column(db.Boolean, nullable=False, default=False, server_default=db.false())
     needs_medical = db.Column(db.Boolean, nullable=False, default=False, server_default=db.false())
     notes = db.Column(db.String(200))
     group_code = db.Column(db.Uuid(as_uuid=False), nullable=False)
@@ -1901,7 +1904,8 @@ class NonRegisteredEvacuee(BaseModel):
             result[key] = value.isoformat() if value else None
         if include_sensitive:
             result.update({key: getattr(self, key) for key in (
-                'contact_number', 'is_pwd', 'is_pregnant', 'needs_medical', 'notes',
+                'contact_number', 'is_pwd', 'is_pregnant', 'is_lactating', 'is_solo_parent',
+                'needs_assistance', 'needs_medical', 'notes',
             )})
         return result
 

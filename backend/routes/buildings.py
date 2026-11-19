@@ -227,6 +227,7 @@ def get_center_buildings(center_id):
             "properties": {
                 "id": b.id,
                 "name": b.name,
+                "operational_status": b.status or "open",
                 "display_label": display_label,
                 "evacuation_center_id": center_id,
                 "center_name": center.name,

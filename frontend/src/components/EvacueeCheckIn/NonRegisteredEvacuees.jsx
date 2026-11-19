@@ -1,12 +1,21 @@
 import { useEffect, useRef, useState } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faPlus, faXmark, faSpinner, faChevronDown } from '@fortawesome/free-solid-svg-icons';
+import { faPlus, faXmark, faSpinner } from '@fortawesome/free-solid-svg-icons';
 import { api } from '../../services/api';
 import './NonRegisteredEvacuees.css';
 
 const emptyPerson = () => ({ first_name: '', middle_name: '', last_name: '', sex: '', age_years: '',
-  birthdate: '', contact_number: '', address: '', is_pwd: false, is_pregnant: false, needs_medical: false, notes: '' });
+  birthdate: '', contact_number: '', address: '', is_pwd: false, is_pregnant: false, is_lactating: false,
+  is_solo_parent: false, needs_assistance: false, needs_medical: false, notes: '' });
 const formatTime = (value) => value ? new Date(value).toLocaleString() : '—';
+const ageFromBirthdate = (value) => {
+  if (!value) return '';
+  const [year, month, day] = value.split('-').map(Number);
+  const today = new Date();
+  let age = today.getFullYear() - year;
+  if (today.getMonth() + 1 < month || (today.getMonth() + 1 === month && today.getDate() < day)) age -= 1;
+  return age >= 0 ? age : '';
+};
 
 export function AddNonRegisteredButton({ disabled, onClick }) {
   return <button type="button" className="nre-add-button" onClick={onClick} disabled={disabled}
@@ -64,20 +73,30 @@ function PersonFields({ person, index, update, remove, operationId, fields, pref
     <div className="nre-demographic-grid">
       <label className="nre-field" htmlFor={`nre-sex-${index}`}><span>Sex *</span>
         <select id={`nre-sex-${index}`} required value={person.sex} aria-invalid={Boolean(fields[`${prefix}sex`])}
-          onChange={(event) => { update('sex', event.target.value); if (event.target.value !== 'female') update('is_pregnant', false); }}>
+        onChange={(event) => { update('sex', event.target.value); if (event.target.value !== 'female') { update('is_pregnant', false); update('is_lactating', false); } }}>
           <option value="">Select sex</option><option value="male">Male</option><option value="female">Female</option><option value="other">Other</option>
         </select>{fields[`${prefix}sex`] && <span className="nre-field-error">{fields[`${prefix}sex`]}</span>}
       </label>
-      {field('age_years', 'Age in years', 'number', true)}
-      {!compact && field('birthdate', 'Birthdate (optional)', 'date')}
+      <>
+        <label className="nre-field" htmlFor={`nre-birthdate-${index}`}><span>Birthdate *</span>
+          <input id={`nre-birthdate-${index}`} type="date" value={person.birthdate || ''} max={new Date().toLocaleDateString('en-CA')}
+            required aria-invalid={Boolean(fields[`${prefix}birthdate`])}
+            onChange={(event) => { update('birthdate', event.target.value); update('age_years', ageFromBirthdate(event.target.value)); }} />
+          {fields[`${prefix}birthdate`] && <span className="nre-field-error">{fields[`${prefix}birthdate`]}</span>}
+        </label>
+        <label className="nre-field"><span>Age</span><input value={person.birthdate ? ageFromBirthdate(person.birthdate) : person.age_years ? `${person.age_years} (recorded)` : 'Enter birthdate to calculate'} disabled aria-label="Calculated age" /></label>
+      </>
     </div>
     <div className="nre-needs">
-      {[['is_pwd', 'PWD'], ['is_pregnant', 'Pregnant'], ['needs_medical', 'Needs medical attention']].map(([key, label]) => <label key={key}>
-        <input type="checkbox" checked={Boolean(person[key])} disabled={key === 'is_pregnant' && person.sex !== 'female'} onChange={(event) => update(key, event.target.checked)} />{label}
+      {[
+        ['is_pwd', 'PWD'], ['is_pregnant', 'Pregnant'], ['is_lactating', 'Lactating'],
+        ['is_solo_parent', 'Solo parent'], ['needs_assistance', 'Needs assistance'], ['needs_medical', 'Needs medical attention'],
+      ].map(([key, label]) => <label key={key}>
+        <input type="checkbox" checked={Boolean(person[key])} disabled={['is_pregnant', 'is_lactating'].includes(key) && person.sex !== 'female'} onChange={(event) => update(key, event.target.checked)} />{label}
         {fields[`${prefix}${key}`] && <span className="nre-field-error">{fields[`${prefix}${key}`]}</span>}
       </label>)}
     </div>
-    {compact ? <details className="nre-optional-details"><summary>Optional contact, address and birthdate</summary><div className="nre-detail-grid">{field('birthdate', 'Birthdate (optional)', 'date')}{field('contact_number', 'Contact number (optional)', 'tel')}{field('address', 'Address / place of origin')}{field('notes', 'Notes (optional)')}</div></details>
+    {compact ? <details className="nre-optional-details"><summary>Optional contact and address details</summary><div className="nre-detail-grid">{field('contact_number', 'Contact number (optional)', 'tel')}{field('address', 'Address / place of origin')}{field('notes', 'Notes (optional)')}</div></details>
       : <div className="nre-detail-grid">{field('contact_number', 'Contact number (optional)', 'tel')}{field('address', 'Address / place of origin')}{field('notes', 'Notes (optional)')}</div>}
   </fieldset>;
 }
@@ -155,7 +174,7 @@ export function NonRegisteredModal({ mode, centers, operation, centerId, onClose
 }
 
 export function NonRegisteredGroups({ result, loading, error, retry, status, setStatus, page, setPage, canEdit, isAdmin, onEdit, onMember, onChanged, onAdd, addDisabled }) {
-  const [expanded, setExpanded] = useState(new Set());
+  const [selectedGroup, setSelectedGroup] = useState(null);
   const [details, setDetails] = useState({});
   const [busy, setBusy] = useState(null);
   const [actionError, setActionError] = useState('');
@@ -173,7 +192,10 @@ export function NonRegisteredGroups({ result, loading, error, retry, status, set
     try {
       const response = await api.getNonRegisteredGroup(group.group_code, true);
       setDetails((current) => ({ ...current, [group.group_code]: response.group }));
-      if (editPerson) onEdit(response.group.members.find((person) => person.id === editPerson.id), group);
+      if (editPerson) {
+        setSelectedGroup(null);
+        onEdit(response.group.members.find((person) => person.id === editPerson.id), group);
+      }
     } catch (requestError) { setActionError(requestError.message || 'Could not load protected details.'); }
     finally { setBusy(null); }
   };
@@ -184,28 +206,51 @@ export function NonRegisteredGroups({ result, loading, error, retry, status, set
       : groups.length === 0 ? <div className="nre-empty"><h3>No non-registered arrivals</h3><p>Record people who arrive without a pre-assignment.</p><AddNonRegisteredButton disabled={addDisabled} onClick={onAdd} /></div>
         : <><div className="nre-table-wrap"><table className="nre-table"><thead><tr><th>Head of group</th><th>People</th><th>Shelter</th><th>Arrival</th><th>Status</th><th>Staff action</th></tr></thead>
           <tbody>{groups.map((group) => {
-            const open = expanded.has(group.group_code);
-            const members = details[group.group_code]?.members || group.members;
-            return <GroupRows key={group.group_code} {...{ group, open, members, busy, canEdit, isAdmin }}
-              toggle={() => setExpanded((current) => { const next = new Set(current); if (next.has(group.group_code)) next.delete(group.group_code); else next.add(group.group_code); return next; })}
-              reveal={() => reveal(group)} edit={(person) => reveal(group, person)} member={() => onMember(group)}
+            return <GroupRows key={group.group_code} {...{ group, busy, canEdit }}
+              openDetails={() => setSelectedGroup(group)} member={() => onMember(group)}
               depart={(person, departed) => act(`departure-${person?.id || group.group_code}`, () => api.departNonRegistered(person?.id || group.group_code, departed, !person))}
-              remove={(person) => { if (window.confirm('Delete this non-registered arrival record?')) act(`delete-${person.id}`, () => api.deleteNonRegisteredPerson(person.id)); }} />;
+              />;
           })}</tbody></table></div>
           <nav className="nre-pagination" aria-label="Non-registered groups pagination"><span>{result.total} groups</span><button type="button" className="nre-secondary" disabled={page <= 1 || busy} onClick={() => setPage(page - 1)}>Previous</button><span>Page {page}</span><button type="button" className="nre-secondary" disabled={page * 10 >= result.total || busy} onClick={() => setPage(page + 1)}>Next</button></nav></>}
+    {selectedGroup && <GroupDetailsModal group={selectedGroup} details={details[selectedGroup.group_code]}
+      busy={busy === selectedGroup.group_code ? busy : null} canEdit={canEdit} isAdmin={isAdmin}
+      onClose={() => setSelectedGroup(null)} onReveal={() => reveal(selectedGroup)}
+      onEdit={(person) => reveal(selectedGroup, person)} onMember={() => { setSelectedGroup(null); onMember(selectedGroup); }}
+      onDepart={(person, departed) => act(`departure-${person?.id || selectedGroup.group_code}`, () => api.departNonRegistered(person?.id || selectedGroup.group_code, departed, !person))}
+      onRemove={(person) => { if (window.confirm('Delete this non-registered arrival record?')) act(`delete-${person.id}`, () => api.deleteNonRegisteredPerson(person.id)); }} />}
   </section>;
 }
 
-function GroupRows({ group, open, members, busy, canEdit, isAdmin, toggle, reveal, edit, member, depart, remove }) {
-  return <><tr><td><button className="nre-group-toggle" type="button" aria-expanded={open} onClick={toggle}><FontAwesomeIcon icon={faChevronDown} />{group.head_name}</button></td>
+function GroupRows({ group, busy, canEdit, openDetails, member, depart }) {
+  return <tr className="nre-group-row" tabIndex={0} onClick={(event) => {
+    if (!event.target.closest('button, a, select, input')) openDetails();
+  }} onKeyDown={(event) => {
+    if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) {
+      event.preventDefault();
+      openDetails();
+    }
+  }}><td><button className="nre-group-toggle" type="button" onClick={openDetails}>{group.head_name}</button></td>
     <td>{group.people_count} people<br /><small>{group.present_count} on-site</small></td><td>{group.center_name}</td><td>{formatTime(group.arrived_at)}</td>
     <td><span className="nre-pill">Non-registered</span><span className={`nre-pill ${group.present_count ? 'is-arrived' : ''}`}>{group.present_count ? 'Arrived' : 'Departed'}</span></td>
-    <td>{canEdit && <div className="nre-actions"><button type="button" disabled={Boolean(busy)} onClick={() => depart(null, group.present_count > 0)}>{group.present_count ? 'Depart group' : 'Undo departure'}</button>{group.present_count > 0 && group.present_count < group.people_count && <button type="button" disabled={Boolean(busy)} onClick={() => depart(null, false)}>Undo group departure</button>}<button type="button" disabled={Boolean(busy)} onClick={member}>Add member</button></div>}</td></tr>
-    {open && <tr><td colSpan={6}><div className="nre-member-list"><button type="button" className="nre-secondary" disabled={Boolean(busy)} onClick={reveal}>View contact numbers and medical needs</button>
-      {members.map((person) => <article key={person.id}><div><strong>{person.name}{person.is_group_head ? ' · Head' : ''}</strong><p>{person.sex} · {person.age_years} years · {person.departed_at ? `Departed ${formatTime(person.departed_at)}` : 'On-site'}</p>
-        {person.address && <p>{person.address}</p>}{Object.hasOwn(person, 'contact_number') && <p>Contact: {person.contact_number || 'Not provided'} · Needs: {[person.is_pwd && 'PWD', person.is_pregnant && 'Pregnant', person.needs_medical && 'Medical attention'].filter(Boolean).join(', ') || 'None recorded'}{person.notes ? ` · ${person.notes}` : ''}</p>}</div>
-        <div className="nre-actions">{canEdit && <><button type="button" disabled={Boolean(busy)} onClick={() => edit(person)}>Edit</button><button type="button" disabled={Boolean(busy)} onClick={() => depart(person, !person.departed_at)}>{person.departed_at ? 'Undo departure' : 'Departed'}</button></>}{isAdmin && <button type="button" disabled={Boolean(busy)} onClick={() => remove(person)}>Delete</button>}</div>
-      </article>)}
-    </div></td></tr>}
-  </>;
+    <td>{canEdit && <div className="nre-actions"><button type="button" disabled={Boolean(busy)} onClick={() => depart(null, group.present_count > 0)}>{group.present_count ? 'Depart group' : 'Undo departure'}</button>{group.present_count > 0 && group.present_count < group.people_count && <button type="button" disabled={Boolean(busy)} onClick={() => depart(null, false)}>Undo group departure</button>}<button type="button" disabled={Boolean(busy)} onClick={member}>Add member</button></div>}</td></tr>;
+}
+
+function GroupDetailsModal({ group, details, busy, canEdit, isAdmin, onClose, onReveal, onEdit, onMember, onDepart, onRemove }) {
+  const members = details?.members || group.members || [];
+  return <div className="nre-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+    <section className="nre-modal nre-group-modal" role="dialog" aria-modal="true" aria-labelledby="nre-group-modal-title">
+      <header><div><h2 id="nre-group-modal-title">{group.head_name}</h2><p>{group.center_name} · {group.people_count} {group.people_count === 1 ? 'person' : 'people'} · {group.present_count} on-site</p></div>
+        <button type="button" onClick={onClose} aria-label="Close group details"><FontAwesomeIcon icon={faXmark} /></button></header>
+      <div className="nre-modal-body">
+        <div className="nre-group-summary"><span><strong>Arrival</strong>{formatTime(group.arrived_at)}</span><span><strong>Status</strong>{group.present_count ? 'Arrived' : 'Departed'}</span></div>
+        <div className="nre-group-detail-heading"><h3>People in this group</h3><button type="button" className="nre-secondary" disabled={Boolean(busy)} onClick={onReveal}>{busy ? 'Loading…' : details ? 'Contact and medical details shown' : 'View contact numbers and medical needs'}</button></div>
+        {members.length === 0 ? <p className="nre-group-no-members">Member details are unavailable.</p> : <div className="nre-member-list">{members.map((person) => <article key={person.id}>
+          <div><strong>{person.name}{person.is_group_head ? ' · Head' : ''}</strong><p>{person.sex} · {person.age_years} years · {person.departed_at ? `Departed ${formatTime(person.departed_at)}` : 'On-site'}</p>
+            {person.address && <p>{person.address}</p>}{Object.hasOwn(person, 'contact_number') && <p>Contact: {person.contact_number || 'Not provided'} · Needs: {[person.is_pwd && 'PWD', person.is_pregnant && 'Pregnant', person.is_lactating && 'Lactating', person.is_solo_parent && 'Solo parent', person.needs_assistance && 'Needs assistance', person.needs_medical && 'Medical attention'].filter(Boolean).join(', ') || 'None recorded'}{person.notes ? ` · ${person.notes}` : ''}</p>}</div>
+          <div className="nre-actions">{canEdit && <><button type="button" disabled={Boolean(busy)} onClick={() => onEdit(person)}>Edit</button><button type="button" disabled={Boolean(busy)} onClick={() => onDepart(person, !person.departed_at)}>{person.departed_at ? 'Undo departure' : 'Departed'}</button></>}{isAdmin && <button type="button" disabled={Boolean(busy)} onClick={() => onRemove(person)}>Delete</button>}</div>
+        </article>)}</div>}
+      </div>
+      <footer><button type="button" className="nre-secondary" onClick={onClose}>Close</button>{canEdit && <button type="button" className="nre-add-button" onClick={onMember}>Add member</button>}</footer>
+    </section>
+  </div>;
 }

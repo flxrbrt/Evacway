@@ -737,6 +737,9 @@ export const api = {
   getCenterBuildings: (centerId) =>
     request(`/api/evacuation-centers/${centerId}/buildings`),
 
+  suggestRoomsForBuildings: (centerId) =>
+    request(`/api/evacuation-centers/${centerId}/suggest-rooms`),
+
   createBuilding: (centerId, data) =>
     request(`/api/evacuation-centers/${centerId}/buildings`, {
       method: "POST",

@@ -6,6 +6,7 @@
 .nre-secondary { min-height:40px; padding:8px 12px; border:1px solid #cbd5e1; border-radius:8px; background:#fff; color:#334155; font:inherit; font-size:13px; cursor:pointer; }
 .nre-overlay { position:fixed; inset:0; z-index:3000; display:flex; justify-content:center; align-items:center; padding:24px; background:#0f172a80; }
 .nre-modal { width:min(920px,100%); max-height:calc(100dvh - 48px); display:flex; flex-direction:column; background:#fff; border-radius:16px; box-shadow:0 24px 64px #0f172a33; color:#0f172a; }
+.nre-group-modal { width:min(760px,100%); }
 .nre-modal header { display:flex; justify-content:space-between; gap:16px; padding:20px 24px; border-bottom:1px solid #e2e8f0; }
 .nre-modal h2 { margin:0; font-size:20px; }
 .nre-modal header p { margin:4px 0 0; font-size:13px; color:#64748b; }
@@ -23,6 +24,7 @@
 .nre-person .nre-detail-grid { grid-template-columns:repeat(3,minmax(0,1fr)); }
 .nre-field { display:flex; flex-direction:column; gap:6px; margin:8px 0; min-width:0; font-size:13px; color:#334155; }
 .nre-field input,.nre-field select,.nre-section-heading select { height:40px; width:100%; box-sizing:border-box; padding:0 10px; border:1px solid #cbd5e1; border-radius:8px; background:#fff; color:#0f172a; font:inherit; }
+.nre-field input:disabled { background:#f1f5f9; color:#334155; cursor:default; opacity:1; }
 .nre-field input[aria-invalid=true],.nre-field select[aria-invalid=true] { border-color:#b91c1c; }
 .nre-field-error { color:#b91c1c; font-size:12px; line-height:1.5; }
 .nre-needs { display:flex; flex-wrap:wrap; gap:12px 24px; margin:16px 0; }
@@ -43,8 +45,11 @@
 .nre-table th { color:#64748b; font-size:12px; font-weight:600; }
 .nre-table th:first-child { width:24%; }
 .nre-table th:nth-child(2) { width:10%; }
+.nre-group-row { cursor:pointer; }
+.nre-group-row:hover { background:#f8fafc; }
+.nre-group-row:focus-visible { outline:2px solid #2563eb; outline-offset:-2px; }
 .nre-group-toggle { border:0; padding:0; background:none; color:#0f172a; font:inherit; text-align:left; font-weight:600; cursor:pointer; overflow-wrap:anywhere; }
-.nre-group-toggle svg { margin-right:8px; }
+.nre-group-toggle:hover { color:#1d4ed8; text-decoration:underline; }
 .nre-pill { display:inline-block; padding:4px 8px; margin:0 4px 4px 0; border-radius:999px; background:#f1f5f9; color:#475569; font-size:11px; }
 .nre-pill.is-arrived { background:#dcfce7; color:#166534; }
 .nre-actions { display:flex; gap:8px; flex-wrap:wrap; }
@@ -53,6 +58,13 @@
 .nre-member-list { padding:12px; border-radius:8px; background:#f8fafc; }
 .nre-member-list article { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; padding:16px 0; border-bottom:1px solid #e2e8f0; }
 .nre-member-list p { margin:4px 0 0; color:#475569; line-height:1.5; }
+.nre-group-summary { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; margin-bottom:20px; }
+.nre-group-summary span { display:flex; flex-direction:column; gap:5px; padding:12px 14px; border:1px solid #e2e8f0; border-radius:10px; color:#334155; font-size:13px; }
+.nre-group-summary strong { color:#64748b; font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.04em; }
+.nre-group-detail-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:12px; }
+.nre-group-detail-heading h3 { margin:0; font-size:15px; }
+.nre-group-detail-heading .nre-secondary { flex:0 0 auto; }
+.nre-group-no-members { padding:20px; border:1px dashed #cbd5e1; border-radius:8px; color:#64748b; text-align:center; }
 .nre-pagination { display:flex; justify-content:flex-end; align-items:center; gap:12px; margin-top:16px; font-size:13px; }
 .nre-empty { text-align:center; padding:24px; color:#64748b; }
 .nre-empty h3 { color:#334155; font-size:15px; }
@@ -75,6 +87,7 @@
   .nre-name-grid,.nre-demographic-grid,.nre-detail-grid,.nre-person .nre-detail-grid { grid-template-columns:1fr; gap:4px; }
   .nre-groups { padding:16px; }
   .nre-member-list article { flex-direction:column; }
+  .nre-group-detail-heading { align-items:flex-start; flex-direction:column; }
   .nre-pagination { flex-wrap:wrap; }
   .nre-section-heading { align-items:flex-start; }
 }
