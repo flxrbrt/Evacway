@@ -237,8 +237,8 @@
   justify-content: center;
   gap: 8px;
   cursor: pointer;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
-  transition: background-color 0.15s ease, opacity 0.15s ease, transform 0.1s ease;
+  box-shadow: var(--shadow-primary);
+  transition: background-color 0.15s ease, opacity 0.15s ease, transform 150ms ease;
 }
 
 .cpf-btn-primary:hover:not(:disabled) {
@@ -287,7 +287,7 @@
   display: inline-flex;
   align-items: center;
   gap: 10px;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
+  box-shadow: none;
   border: 1px solid rgba(0, 0, 0, 0.06);
   pointer-events: auto;
   white-space: nowrap;
@@ -340,7 +340,7 @@
   background: #ffffff;
   border-radius: 12px;
   padding: 12px 14px;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12);
+  box-shadow: var(--shadow-xs);
   border: 1px solid #e2e8f0;
   z-index: 25;
   pointer-events: auto;
@@ -409,7 +409,7 @@
   min-height: 56px;
   background: #ffffff;
   border-radius: 999px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
+  box-shadow: var(--shadow-md);
   border: 1px solid rgba(0, 0, 0, 0.06);
   display: flex;
   align-items: center;
@@ -451,7 +451,7 @@
 .cpf-tool-btn.is-active {
   background: #ffffff;
   color: #0f172a;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  box-shadow: var(--shadow-xs);
 }
 
 .cpf-tool-btn:focus-visible {
@@ -525,7 +525,7 @@
   border-radius: 10px;
   font-size: 13.5px;
   font-weight: 500;
-  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.25);
+  box-shadow: var(--shadow-lg);
   z-index: 100;
   display: flex;
   align-items: center;
@@ -567,7 +567,7 @@
   padding: 24px;
   max-width: 400px;
   width: 100%;
-  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.2), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+  box-shadow: var(--shadow-lg);
   border: 1px solid #e2e8f0;
   box-sizing: border-box;
 }

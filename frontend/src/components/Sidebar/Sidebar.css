@@ -216,11 +216,11 @@
 @keyframes sidebar-badge-pulse {
   0%, 100% {
     transform: scale(1);
-    box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.4);
+    box-shadow: none;
   }
   50% {
     transform: scale(1.05);
-    box-shadow: 0 0 0 6px rgba(220, 38, 38, 0);
+    box-shadow: var(--shadow-focus);
   }
 }
 
@@ -316,7 +316,7 @@
   color: #94a3b8;
   margin-left: auto;
   flex-shrink: 0;
-  transition: color 140ms ease, transform 140ms ease;
+  transition: color 140ms ease, transform 150ms ease;
 }
 
 .sidebar-profile-trigger:hover .sidebar-profile-chevron,
@@ -334,7 +334,7 @@
   background: #ffffff;
   border: 1px solid #e2e8f0;
   border-radius: 10px;
-  box-shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.12), 0 8px 10px -6px rgba(15, 23, 42, 0.08);
+  box-shadow: var(--shadow-md);
   padding: 6px;
   display: flex;
   flex-direction: column;
@@ -427,7 +427,7 @@
   background: #ffffff;
   border-radius: 16px;
   padding: 28px;
-  box-shadow: 0 20px 50px rgba(15, 23, 42, 0.18);
+  box-shadow: var(--shadow-lg);
   font-family: var(--font-body, "Public Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif);
   box-sizing: border-box;
   display: flex;
@@ -440,7 +440,7 @@
 .logout-confirm-modal.is-fading-out {
   opacity: 0;
   transform: scale(0.98);
-  transition: opacity 200ms ease, transform 200ms ease;
+  transition: opacity 200ms ease, transform 150ms ease;
 }
 
 .logout-confirm-mark {
@@ -455,7 +455,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 0 0 8px #f5f9ff;
+  box-shadow: var(--shadow-focus);
   margin-bottom: 20px;
   flex-shrink: 0;
 }
@@ -814,7 +814,7 @@
     background: var(--surface);
     box-shadow: var(--shadow-lg);
     transform: translateX(-100%);
-    transition: transform 220ms cubic-bezier(0.16, 1, 0.3, 1);
+    transition: transform 150ms ease;
     box-sizing: border-box;
     overflow-y: auto;
     overflow-x: hidden;

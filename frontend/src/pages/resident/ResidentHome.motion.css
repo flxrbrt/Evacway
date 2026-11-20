@@ -56,8 +56,8 @@
 .route-panel.is-navigating .route-guidance { border-left-color: #16a34a; }
 .walking-navigation-button.is-active { animation: rh-live 1.8s ease-out infinite; }
 @keyframes rh-live {
-  0% { box-shadow: 0 0 0 0 rgba(180, 35, 24, 0.45); }
-  70%, 100% { box-shadow: 0 0 0 12px rgba(180, 35, 24, 0); }
+  0% { box-shadow: var(--shadow-xs); }
+  70%, 100% { box-shadow: var(--shadow-focus); }
 }
 
 /* ---------- Map markers (animate children only: Mapbox positions the
@@ -66,13 +66,13 @@
   animation: rh-alert 2.2s ease-out infinite;
 }
 @keyframes rh-alert {
-  0% { box-shadow: 0 3px 10px rgba(45, 31, 22, 0.35), 0 0 0 0 rgba(220, 38, 38, 0.55); }
-  70%, 100% { box-shadow: 0 3px 10px rgba(45, 31, 22, 0.35), 0 0 0 16px rgba(220, 38, 38, 0); }
+  0% { box-shadow: var(--shadow-xs); }
+  70%, 100% { box-shadow: var(--shadow-focus); }
 }
 .evacuation-entrance-marker { animation: rh-entrance 2.6s ease-out infinite; }
 @keyframes rh-entrance {
-  0% { box-shadow: 0 2px 8px rgba(17, 42, 35, 0.4), 0 0 0 0 rgba(21, 128, 93, 0.5); }
-  70%, 100% { box-shadow: 0 2px 8px rgba(17, 42, 35, 0.4), 0 0 0 14px rgba(21, 128, 93, 0); }
+  0% { box-shadow: var(--shadow-xs); }
+  70%, 100% { box-shadow: var(--shadow-focus); }
 }
 
 /* ---------- Phones & tablets: sheets slide up from the bottom ---------- */

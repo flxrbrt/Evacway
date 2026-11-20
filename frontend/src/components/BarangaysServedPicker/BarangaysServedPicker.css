@@ -99,14 +99,14 @@ input.bsp-search-input {
   background: #ffffff !important;
   box-sizing: border-box !important;
   outline: none !important;
-  transition: border-color 140ms ease, box-shadow 140ms ease;
+  transition: border-color 140ms ease, box-shadow 150ms ease;
 }
 
 .bsp-container input.bsp-search-input:focus,
 .bsp-search-wrap input.bsp-search-input:focus,
 input.bsp-search-input:focus {
   border-color: #2563eb !important;
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12) !important;
+  box-shadow: var(--shadow-focus) !important;
 }
 
 .bsp-search-clear {
@@ -205,7 +205,7 @@ input.bsp-checkbox {
   cursor: pointer !important;
   flex-shrink: 0 !important;
   box-sizing: border-box !important;
-  box-shadow: none !important;
+  box-shadow: none;
   outline: none !important;
 }
 

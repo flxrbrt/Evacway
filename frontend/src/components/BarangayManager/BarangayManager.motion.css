@@ -27,18 +27,18 @@
 
 /* Subtle transitions */
 .barangay-page .barangay-card {
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  transition: border-color 0.15s ease, box-shadow 150ms ease;
 }
 
 .barangay-page .view-button svg {
-  transition: transform 0.15s ease;
+  transition: transform 150ms ease;
 }
 .barangay-page .view-button:hover svg {
   transform: translateX(3px);
 }
 
 .barangay-page .back-button svg {
-  transition: transform 0.15s ease;
+  transition: transform 150ms ease;
 }
 .barangay-page .back-button:hover svg {
   transform: translateX(-3px);

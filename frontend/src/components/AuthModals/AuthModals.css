@@ -15,7 +15,7 @@
   border-radius: 20px;
   color: #0f172a;
   background: #ffffff;
-  box-shadow: 0 25px 50px -12px rgba(15, 23, 42, 0.25), 0 0 0 1px rgba(15, 23, 42, 0.05);
+  box-shadow: var(--shadow-focus);
   z-index: 9999;
 }
 
@@ -173,7 +173,7 @@
 .ew-role-tab.active {
   background: #ffffff;
   color: #1d4ed8;
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.1), 0 1px 2px rgba(15, 23, 42, 0.06);
+  box-shadow: var(--shadow-xs);
 }
 
 /* Contextual Role Banner */
@@ -329,7 +329,7 @@
   outline: none;
   background: #ffffff;
   border-color: #2563eb;
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+  box-shadow: var(--shadow-focus);
 }
 
 .ew-input-wrap:focus-within .ew-input-icon {
@@ -372,14 +372,14 @@
   border: none;
   border-radius: 10px;
   cursor: pointer;
-  box-shadow: 0 4px 6px -1px rgba(37, 99, 235, 0.25), 0 2px 4px -2px rgba(37, 99, 235, 0.15);
+  box-shadow: var(--shadow-xs);
   transition: all 150ms ease;
 }
 
 .ew-submit-btn:hover:not(:disabled) {
   background: linear-gradient(135deg, #1d4ed8, #1e40af);
   transform: translateY(-1px);
-  box-shadow: 0 6px 12px -1px rgba(37, 99, 235, 0.3);
+  box-shadow: none;
 }
 
 .ew-submit-btn:active:not(:disabled) {
@@ -507,7 +507,7 @@
   border-radius: 16px;
   border: 1px solid #e2e8f0;
   background: #ffffff;
-  box-shadow: 0 20px 40px rgba(15, 23, 42, 0.2);
+  box-shadow: var(--shadow-lg);
 }
 
 .ew-signup {
@@ -626,7 +626,7 @@
   outline: none;
   background: #ffffff;
   border-color: #2563eb;
-  box-shadow: 0 0 0 2px #2563eb;
+  box-shadow: var(--shadow-focus);
 }
 
 /* Error text: 12px, #b91c1c, directly under the field, wrapping fully (no ellipsis). Invalid input gets red border. */
@@ -640,7 +640,7 @@
 .ew-signup .ew-field select[aria-invalid="true"]:focus {
   outline: none;
   border: 1px solid #b91c1c !important;
-  box-shadow: 0 0 0 2px rgba(185, 28, 28, 0.25) !important;
+  box-shadow: var(--shadow-focus-danger) !important;
 }
 
 .ew-signup .ew-field-error {

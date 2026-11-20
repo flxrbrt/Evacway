@@ -283,7 +283,7 @@
   font: inherit;
   font-size: 13.5px;
   box-sizing: border-box;
-  transition: border-color 140ms ease, box-shadow 140ms ease;
+  transition: border-color 140ms ease, box-shadow 150ms ease;
 }
 
 .um-input:hover {
@@ -373,7 +373,7 @@
   border: 1px solid #e2e8f0;
   border-radius: 10px;
   overflow: visible;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  box-shadow: var(--shadow-xs);
 }
 
 .um-table {
@@ -670,7 +670,7 @@
   background: #ffffff;
   border: 1px solid #e2e8f0;
   border-radius: 8px;
-  box-shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.14), 0 8px 10px -6px rgba(15, 23, 42, 0.08);
+  box-shadow: var(--shadow-md);
   padding: 5px;
   display: flex;
   flex-direction: column;
@@ -950,7 +950,7 @@
   border-radius: 12px;
   background: #ffffff;
   border: 1px solid #e2e8f0;
-  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+  box-shadow: var(--shadow-lg);
   overflow: hidden;
   display: flex;
   flex-direction: column;

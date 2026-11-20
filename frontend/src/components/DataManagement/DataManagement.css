@@ -64,7 +64,7 @@
   padding: 6px;
   border-radius: 10px;
   border: 1px solid var(--line, #e2e8f0);
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+  box-shadow: var(--shadow-xs);
   width: fit-content;
 }
 
@@ -91,7 +91,7 @@
 .dm-subtab-btn.is-active {
   background: var(--brand, #2563eb);
   color: #ffffff;
-  box-shadow: 0 2px 6px rgba(37, 99, 235, 0.25);
+  box-shadow: var(--shadow-xs);
 }
 
 /* Alerts */
@@ -150,7 +150,7 @@
   background: #ffffff;
   border: 1px solid var(--line, #e2e8f0);
   border-radius: 12px;
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.05);
+  box-shadow: var(--shadow-xs);
   padding: 22px;
   display: flex;
   flex-direction: column;
@@ -253,13 +253,13 @@
   font-size: 14px;
   font-weight: 600;
   cursor: pointer;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  transition: border-color 0.15s ease, box-shadow 150ms ease;
 }
 
 .dm-import-barangay-select:focus {
   outline: none;
   border-color: var(--brand, #2563eb);
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.14);
+  box-shadow: var(--shadow-focus);
 }
 
 .dm-import-barangay-select:disabled {
@@ -629,7 +629,7 @@
   background: #ffffff;
   color: var(--brand, #2563eb);
   border-color: rgba(0, 0, 0, 0.06);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  box-shadow: var(--shadow-xs);
 }
 
 .dm-review-tab-count {
@@ -665,12 +665,12 @@
   color: var(--text-0, #0f172a);
   font-family: inherit;
   outline: none;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  transition: border-color 0.15s ease, box-shadow 150ms ease;
 }
 
 .dm-review-search-input:focus {
   border-color: var(--brand, #2563eb);
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+  box-shadow: var(--shadow-focus);
 }
 
 .dm-review-search-clear {
@@ -747,7 +747,7 @@
 .dm-review-expand-icon {
   font-size: 11px;
   color: #94a3b8;
-  transition: transform 0.15s ease, color 0.15s ease;
+  transition: transform 150ms ease, color 0.15s ease;
   width: 12px;
   flex-shrink: 0;
 }
@@ -1039,12 +1039,12 @@
   font-size: 13px;
   font-family: inherit;
   outline: none;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  transition: border-color 0.15s ease, box-shadow 150ms ease;
 }
 
 .dm-search-input:focus {
   border-color: var(--brand, #2563eb);
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+  box-shadow: var(--shadow-focus);
 }
 
 .dm-toolbar-actions {
@@ -1063,7 +1063,7 @@
   border-radius: 12px;
   border: 1px solid var(--line, #e2e8f0);
   background: #ffffff;
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+  box-shadow: var(--shadow-xs);
 }
 
 .dm-table {
@@ -1285,7 +1285,7 @@
   border-radius: 12px;
   width: 100%;
   max-width: 480px;
-  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+  box-shadow: var(--shadow-lg);
   border: 1px solid var(--line, #e2e8f0);
   overflow: hidden;
   display: flex;
@@ -1365,7 +1365,7 @@
 
 .dm-form-group input:focus {
   border-color: var(--brand, #2563eb);
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+  box-shadow: var(--shadow-focus);
 }
 
 .dm-form-hint {
@@ -1590,7 +1590,7 @@
   padding: 12px 18px;
   font-size: 13.5px;
   font-weight: 500;
-  box-shadow: 0 12px 30px -4px rgba(15, 23, 42, 0.18), 0 4px 12px -2px rgba(15, 23, 42, 0.08);
+  box-shadow: var(--shadow-lg);
   animation: toastSlideDown 0.28s cubic-bezier(0.16, 1, 0.3, 1);
   backdrop-filter: blur(8px);
 }
@@ -1609,7 +1609,7 @@
   background: #ffffff;
   border: 1px solid var(--line, #e2e8f0);
   border-radius: 12px;
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+  box-shadow: var(--shadow-xs);
   display: flex;
   flex-direction: column;
   height: calc(100vh - 205px);
@@ -1667,7 +1667,7 @@
   font-family: inherit;
   cursor: pointer;
   white-space: nowrap;
-  transition: background-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+  transition: background-color 0.15s ease, color 0.15s ease, box-shadow 150ms ease;
 }
 
 .dm-meta-subtab:hover {
@@ -1677,7 +1677,7 @@
 .dm-meta-subtab.is-active {
   background: #ffffff;
   color: #0f172a;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+  box-shadow: var(--shadow-xs);
 }
 
 .dm-meta-subtab-icon {
@@ -1888,8 +1888,8 @@
   height: 12px;
   border-radius: 50%;
   background: #ffffff;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.2);
-  transition: transform 0.15s ease;
+  box-shadow: var(--shadow-xs);
+  transition: transform 150ms ease;
 }
 
 .dm-meta-row-toggle.is-active {
@@ -1935,7 +1935,7 @@
   background: #ffffff;
   border: 1px solid #e2e8f0;
   border-radius: 10px;
-  box-shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.14), 0 4px 10px -4px rgba(15, 23, 42, 0.08);
+  box-shadow: var(--shadow-md);
   padding: 4px;
   display: flex;
   flex-direction: column;
@@ -2042,7 +2042,7 @@
 
 .dm-form-group textarea:focus {
   border-color: var(--brand, #2563eb);
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+  box-shadow: var(--shadow-focus);
 }
 
 .dm-form-group input.is-invalid,
@@ -2052,7 +2052,7 @@
 }
 
 .dm-form-group input.is-invalid:focus {
-  box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.12);
+  box-shadow: var(--shadow-focus-danger);
 }
 
 .dm-field-error {
@@ -2510,7 +2510,7 @@
   background: var(--brand, #2563eb);
   color: #ffffff;
   border-color: var(--brand, #2563eb);
-  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.28);
+  box-shadow: none;
 }
 
 .dm-year-stats-grid {
@@ -2527,7 +2527,7 @@
   border-radius: 10px;
   background: #ffffff;
   border: 1px solid var(--line, #e2e8f0);
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+  box-shadow: var(--shadow-xs);
 }
 
 .dm-year-stat-icon {
@@ -2610,7 +2610,7 @@
 .dm-view-mode-btn.is-active {
   background: #ffffff;
   color: var(--brand, #2563eb);
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
+  box-shadow: var(--shadow-xs);
 }
 
 /* Roster View Mode Tabs & Filter Controls */
@@ -2671,7 +2671,7 @@
 
 .dm-select-filter:focus {
   border-color: var(--brand, #2563eb);
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+  box-shadow: var(--shadow-focus);
 }
 
 .dm-search-clear {
@@ -2704,7 +2704,7 @@
   border-radius: 12px;
   background: #ffffff;
   border: 1px solid var(--line, #e2e8f0);
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+  box-shadow: var(--shadow-xs);
   display: flex;
   flex-direction: column;
   gap: 10px;

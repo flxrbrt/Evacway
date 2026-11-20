@@ -36,7 +36,7 @@
   color: #ffffff;
   padding: 12px 20px;
   border-radius: 12px;
-  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.25);
+  box-shadow: var(--shadow-lg);
   font-size: 0.875rem;
   font-weight: 500;
   display: flex;
@@ -131,7 +131,7 @@
   height: 6px;
   border-radius: 50%;
   background: #10b981;
-  box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.2);
+  box-shadow: var(--shadow-focus);
   animation: livePulse 2s infinite ease-in-out;
 }
 
@@ -199,8 +199,8 @@
   text-align: left;
   line-height: 1.25;
   cursor: pointer;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  box-shadow: var(--shadow-xs);
+  transition: border-color 0.15s ease, box-shadow 150ms ease;
   width: 100%;
   max-width: 100%;
   min-width: 0;
@@ -215,7 +215,7 @@
 .checkin-op-trigger[aria-expanded="true"] {
   outline: none;
   border-color: #2563eb;
-  box-shadow: 0 0 0 2.5px rgba(37, 99, 235, 0.12);
+  box-shadow: var(--shadow-focus);
 }
 
 .checkin-op-trigger-label {
@@ -240,7 +240,7 @@
   border: 1px solid #cbd5e1;
   border-radius: 10px;
   padding: 6px;
-  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.14);
+  box-shadow: var(--shadow-md);
   z-index: 60;
   display: flex;
   flex-direction: column;
@@ -364,19 +364,19 @@
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
+  box-shadow: var(--shadow-xs);
   position: relative;
   overflow: hidden;
   cursor: pointer;
   text-align: left;
   font: inherit;
-  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+  transition: transform 150ms ease, box-shadow 150ms ease, border-color 0.15s ease, background 0.15s ease;
   box-sizing: border-box;
 }
 
 .checkin-stat-card:hover {
   border-color: #93c5fd;
-  box-shadow: 0 3px 8px rgba(37, 99, 235, 0.08);
+  box-shadow: var(--shadow-md);
 }
 
 .checkin-stat-card:focus-visible {
@@ -387,7 +387,7 @@
 .checkin-stat-card.is-selected {
   border-color: #2563eb;
   background: #f8fbff;
-  box-shadow: 0 0 0 1px #2563eb, 0 3px 10px rgba(37, 99, 235, 0.1);
+  box-shadow: var(--shadow-focus);
 }
 
 .checkin-stat-card-main {
@@ -460,7 +460,7 @@
   display: flex;
   align-items: center;
   gap: 12px;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
+  box-shadow: var(--shadow-xs);
   width: 100%;
   box-sizing: border-box;
 }
@@ -500,7 +500,7 @@
 .checkin-search-input:focus {
   background: #ffffff;
   border-color: #2563eb;
-  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.1);
+  box-shadow: var(--shadow-focus);
 }
 
 .checkin-search-clear {
@@ -527,7 +527,7 @@
   border: 1px solid #e2e8f0;
   border-radius: 12px;
   overflow: hidden;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
+  box-shadow: var(--shadow-xs);
   width: 100%;
   display: flex;
   flex-direction: column;
@@ -640,7 +640,7 @@
   max-width: 224px;
   box-sizing: border-box;
   white-space: nowrap;
-  box-shadow: -4px 0 8px rgba(0, 0, 0, 0.03);
+  box-shadow: var(--shadow-xs);
 }
 
 .checkin-table tr:hover td.col-action {
@@ -932,7 +932,7 @@
   background: #2563eb;
   color: #ffffff;
   border-color: #2563eb;
-  box-shadow: 0 1px 2px rgba(37, 99, 235, 0.2);
+  box-shadow: var(--shadow-xs);
 }
 
 .checkin-action-btn.btn-arrive:hover:not(:disabled) {
@@ -1095,7 +1095,7 @@
   background: #ffffff;
   border: 1px solid #e2e8f0;
   border-radius: 12px;
-  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.14);
+  box-shadow: var(--shadow-md);
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -1198,7 +1198,7 @@
   max-height: 82dvh;
   background: #ffffff;
   border-radius: 16px 16px 0 0;
-  box-shadow: 0 -10px 30px rgba(15, 23, 42, 0.2);
+  box-shadow: var(--shadow-xs);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -1479,7 +1479,7 @@
 .checkin-modal-card {
   background: #ffffff;
   border-radius: 16px;
-  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.2);
+  box-shadow: var(--shadow-lg);
   width: 100%;
   max-width: 500px;
   max-height: 88vh;
@@ -1747,7 +1747,7 @@
 .checkin-modal-btn.is-primary {
   background: #16a34a;
   color: #ffffff;
-  box-shadow: 0 1px 2px rgba(22, 163, 74, 0.2);
+  box-shadow: var(--shadow-lg);
 }
 
 .checkin-modal-btn.is-primary:hover:not(:disabled) {
@@ -1835,7 +1835,7 @@
   transition: all 0.15s ease;
   white-space: nowrap;
   flex-shrink: 0;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+  box-shadow: var(--shadow-xs);
   box-sizing: border-box;
 }
 
@@ -1843,7 +1843,7 @@
   background: #f8fafc;
   border-color: #94a3b8;
   color: #0f172a;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  box-shadow: none;
 }
 
 .checkin-export-btn:disabled {
@@ -1859,7 +1859,7 @@
   border: 1px solid #e2e8f0;
   border-radius: 12px;
   padding: 10px 16px;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.02);
+  box-shadow: var(--shadow-xs);
   width: 100%;
   box-sizing: border-box;
   transition: all 0.15s ease;
@@ -2109,7 +2109,7 @@
   background: #f8fafc !important;
   border: 1px solid #e2e8f0 !important;
   color: #94a3b8 !important;
-  box-shadow: none !important;
+  box-shadow: var(--shadow-xs) !important;
   cursor: not-allowed;
 }
 
@@ -2247,7 +2247,7 @@
 
 .checkin-form-input:focus {
   border-color: #2563eb;
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+  box-shadow: var(--shadow-focus);
 }
 
 .checkin-form-input.has-error {
@@ -2542,17 +2542,17 @@
 
   .checkin-banner-mobile-dot.live {
     background: #10b981;
-    box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.2);
+    box-shadow: var(--shadow-focus);
   }
 
   .checkin-banner-mobile-dot.standby {
     background: #f59e0b;
-    box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.2);
+    box-shadow: var(--shadow-focus);
   }
 
   .checkin-banner-mobile-dot.closed {
     background: #64748b;
-    box-shadow: 0 0 0 2px rgba(100, 116, 139, 0.16);
+    box-shadow: var(--shadow-focus);
   }
 
   .checkin-banner-title-row {

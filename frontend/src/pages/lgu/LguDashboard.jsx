@@ -201,7 +201,7 @@ function LguDashboard() {
               justifyContent: "space-between",
               fontSize: "13.5px",
               fontWeight: "600",
-              boxShadow: "0 2px 6px rgba(220, 38, 38, 0.08)",
+              boxShadow: "var(--shadow-xs)",
             }}
           >
             <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>

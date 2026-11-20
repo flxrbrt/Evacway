@@ -23,8 +23,6 @@
   --flood: #0E9F9A;
   --slide: #EA580C;
   --alert: #DC2626;
-
-  --ew-shadow-soft: 0 12px 32px rgba(18, 67, 152, 0.10);
   --ew-font-display: "Plus Jakarta Sans", "DM Sans", system-ui, -apple-system, sans-serif;
   --ew-font-body: "DM Sans", system-ui, -apple-system, sans-serif;
   --ew-font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -118,14 +116,14 @@ body:has(.ew) {
   border-top: 3px solid #1B56C4;
   transition:
     background-color 0.25s ease-out,
-    box-shadow 0.25s ease-out;
+    box-shadow 150ms ease-out;
 }
 
 .ew-header-scrolled {
   top: 0;
   background: var(--ew-paper);
   border-bottom: 1px solid var(--ew-rule);
-  box-shadow: 0 6px 20px rgba(13, 31, 60, 0.05);
+  box-shadow: var(--shadow-xs);
 }
 
 .ew-header-inner {
@@ -186,7 +184,7 @@ body:has(.ew) {
   object-fit: contain;
   border-radius: 50%;
   flex-shrink: 0;
-  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.08));
+  filter: drop-shadow(var(--drop-shadow-xs));
 }
 
 .ew-lgu-name {
@@ -245,8 +243,8 @@ body:has(.ew) {
   cursor: pointer;
   transition:
     background 0.22s ease-out,
-    box-shadow 0.22s ease-out,
-    transform 0.22s ease-out;
+    box-shadow 150ms ease-out,
+    transform 150ms ease-out;
 }
 
 .ew-btn-primary {
@@ -278,7 +276,7 @@ body:has(.ew) {
   background: var(--brand);
   color: #FFFFFF;
   border: 1.5px solid var(--brand-border, #bfdbfe);
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow-xs);
 }
 
 .ew-btn-login-pill:hover {
@@ -293,7 +291,7 @@ body:has(.ew) {
   background: #FFFFFF;
   color: var(--ew-blue-600);
   border-color: var(--ew-contour);
-  box-shadow: 0 4px 14px rgba(18, 67, 152, 0.08);
+  box-shadow: var(--shadow-xs);
 }
 
 .ew-btn-outline:hover {
@@ -308,7 +306,7 @@ body:has(.ew) {
 
 .ew-btn-chevron {
   margin-right: -4px;
-  transition: transform 0.2s ease;
+  transition: transform 150ms ease;
 }
 
 .ew-btn-primary:hover .ew-btn-chevron {
@@ -515,7 +513,7 @@ body:has(.ew) {
   background: rgba(255, 255, 255, 0.9);
   border: 1px solid rgba(27, 86, 196, 0.18);
   border-radius: 9999px;
-  box-shadow: 0 2px 10px rgba(13, 31, 60, 0.06);
+  box-shadow: none;
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
   font-size: 0.8125rem;
@@ -580,7 +578,7 @@ body:has(.ew) {
   background: rgba(255, 255, 255, 0.88);
   border: 1px solid #D5E2F2;
   border-radius: 999px;
-  box-shadow: 0 4px 12px rgba(13, 31, 60, 0.05);
+  box-shadow: none;
 }
 
 .ew-note::before {
@@ -589,7 +587,7 @@ body:has(.ew) {
   height: 6.5px;
   border-radius: 50%;
   background: #3B82F6;
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.22);
+  box-shadow: var(--shadow-focus);
 }
 
 .ew-mobile-map-card,
@@ -690,7 +688,7 @@ body:has(.ew) {
   background: var(--ew-paper);
   border: 1px solid var(--ew-rule);
   border-radius: 20px;
-  box-shadow: 0 8px 24px rgba(13, 31, 60, 0.04);
+  box-shadow: var(--shadow-xs);
 }
 
 .ew-step::after {
@@ -755,7 +753,7 @@ body:has(.ew) {
   border: 1px solid var(--ew-rule);
   border-radius: 24px;
   padding: 36px 28px;
-  box-shadow: var(--ew-shadow-soft);
+  box-shadow: var(--shadow-xs);
 }
 
 .ew-key-layout {
@@ -874,7 +872,7 @@ body:has(.ew) {
   border-radius: 50%;
   background: var(--brand);
   border: 2.5px solid #FFFFFF;
-  box-shadow: 0 0 0 5px rgba(16, 185, 129, 0.28);
+  box-shadow: var(--shadow-focus);
 }
 
 .ew-sw-route {
@@ -883,7 +881,7 @@ body:has(.ew) {
   margin: 10px 0 20px;
   border-radius: 999px;
   background: var(--brand);
-  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.45);
+  box-shadow: var(--shadow-xs);
 }
 
 /* ==========================================================================
@@ -967,7 +965,7 @@ body:has(.ew) {
   object-fit: contain;
   border-radius: 50%;
   flex-shrink: 0;
-  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.08));
+  filter: drop-shadow(var(--drop-shadow-xs));
 }
 
 .ew-footer-lgu-info {
@@ -1036,7 +1034,7 @@ body:has(.ew) {
   border-radius: 22px;
   color: var(--ew-ink);
   background: #FFFFFF;
-  box-shadow: var(--ew-shadow-soft);
+  box-shadow: var(--shadow-lg);
 }
 
 .ew-signup-dialog {
@@ -1405,7 +1403,7 @@ body:has(.ew) {
     border-radius: 16px;
     border: 1px solid var(--ew-rule);
     background: linear-gradient(135deg, #F5F9FF 0%, #ECF3FC 55%, #DFEBFA 100%);
-    box-shadow: var(--ew-shadow-soft);
+    box-shadow: var(--shadow-xs);
     overflow: hidden;
   }
 

@@ -13,6 +13,15 @@
   --alert: #dc2626;
   --line: #e2e8f0;
 
+  --shadow-xs: 0 1px 2px rgba(15, 23, 42, 0.05);
+  --shadow-sm: 0 1px 3px rgba(15, 23, 42, 0.08), 0 1px 2px rgba(15, 23, 42, 0.04);
+  --shadow-md: 0 4px 12px rgba(15, 23, 42, 0.08), 0 2px 4px rgba(15, 23, 42, 0.04);
+  --shadow-lg: 0 12px 32px rgba(15, 23, 42, 0.12), 0 4px 8px rgba(15, 23, 42, 0.05);
+  --shadow-primary: 0 2px 8px rgba(37, 99, 235, 0.25);
+  --drop-shadow-xs: 0 1px 2px rgba(15, 23, 42, 0.05);
+  --shadow-focus: 0 0 0 3px rgba(37, 99, 235, 0.15);
+  --shadow-focus-danger: 0 0 0 3px rgba(185, 28, 28, 0.25);
+
   --radius: 8px;
   --font-display: 'Public Sans', system-ui, -apple-system, sans-serif;
   --font-body: 'Public Sans', system-ui, -apple-system, sans-serif;
@@ -95,12 +104,6 @@
   --radius-xl: 16px;
   --radius-full: 9999px;
 
-  --shadow-sm: 0 1px 2px 0 rgba(15, 23, 42, 0.05);
-  --shadow-md: 0 4px 6px -1px rgba(15, 23, 42, 0.08), 0 2px 4px -2px rgba(15, 23, 42, 0.06);
-  --shadow-lg: 0 10px 15px -3px rgba(15, 23, 42, 0.10), 0 4px 6px -4px rgba(15, 23, 42, 0.08);
-  --shadow-modal: 0 20px 25px -5px rgba(15, 23, 42, 0.20), 0 8px 10px -6px rgba(15, 23, 42, 0.15);
-  --shadow-map-control: 0 2px 8px rgba(15, 23, 42, 0.15);
-
   /* §5 Design tokens - type scale */
   --text-page-title: 26px;
   --text-card-title: 15px;
@@ -114,8 +117,6 @@
   --radius-chip: var(--radius-full);
 
   /* §5 Design tokens - elevation */
-  --shadow-card: 0 1px 3px 0 rgba(15, 23, 42, 0.08);
-  --shadow-overlay: 0 20px 25px -5px rgba(15, 23, 42, 0.20), 0 8px 10px -6px rgba(15, 23, 42, 0.15);
 
   /* §5 Design tokens - control heights */
   --control-height: 36px;
@@ -142,8 +143,20 @@
   border: 1px solid var(--line);
   background: var(--bg-1);
   border-radius: var(--radius-card);
-  box-shadow: var(--shadow-card);
+  box-shadow: var(--shadow-xs);
   padding: var(--space-5) var(--space-6);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+  }
+
+  *:hover {
+    transform: none !important;
+  }
 }
 
 .btn {
@@ -286,7 +299,7 @@ button, input, textarea, select { font-family: inherit; }
   border-radius: 8px;
   color: #fff;
   background: var(--brand-dark);
-  box-shadow: 0 8px 24px rgba(14, 31, 58, 0.2);
+  box-shadow: var(--shadow-primary);
   font-size: 13px;
   text-align: center;
   transform: translateX(-50%);
@@ -330,7 +343,7 @@ a.mapboxgl-ctrl-logo {
   background: #ffffff;
   border: 1px solid var(--line, #e2e8f0);
   border-radius: 14px;
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+  box-shadow: var(--shadow-xs);
   text-align: left;
   box-sizing: border-box;
   min-height: 108px;
@@ -342,17 +355,17 @@ a.mapboxgl-ctrl-logo {
 }
 .stat-card.is-plain:hover {
   border-color: var(--line, #e2e8f0);
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+  box-shadow: var(--shadow-xs);
 }
 
 /* Clickable filter stat cards */
 .stat-card.is-clickable {
   cursor: pointer;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
+  transition: border-color 0.15s ease, box-shadow 150ms ease, background-color 0.15s ease;
 }
 .stat-card.is-clickable:hover {
   border-color: #bfdbfe;
-  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.08);
+  box-shadow: var(--shadow-md);
 }
 .stat-card.is-clickable:focus-visible {
   outline: 2px solid var(--brand, #2563eb);
@@ -361,7 +374,7 @@ a.mapboxgl-ctrl-logo {
 .stat-card.is-clickable.is-selected {
   border: 2px solid var(--brand, #2563eb) !important;
   background: #ffffff;
-  box-shadow: 0 0 0 1px var(--brand, #2563eb), 0 4px 12px rgba(37, 99, 235, 0.12);
+  box-shadow: var(--shadow-focus), var(--shadow-md);
 }
 
 /* Stat card content layout */

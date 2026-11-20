@@ -35,7 +35,7 @@
   background-color: #ffffff;
   border: 1px solid var(--border, #e2e8f0);
   border-radius: 16px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  box-shadow: var(--shadow-xs);
   overflow: visible;
 }
 
@@ -74,7 +74,7 @@
 .ec-toolbar-search .si-input:focus {
   outline: none;
   border-color: var(--brand, #1B56C4);
-  box-shadow: 0 0 0 3px rgba(27, 86, 196, 0.15);
+  box-shadow: var(--shadow-focus);
 }
 
 .ec-toolbar-select {
@@ -107,7 +107,7 @@
 .ec-barangay-select:focus {
   outline: none;
   border-color: var(--brand, #1B56C4);
-  box-shadow: 0 0 0 3px rgba(27, 86, 196, 0.15);
+  box-shadow: var(--shadow-focus);
 }
 
 .ec-barangay-select-text {
@@ -159,7 +159,7 @@
   background: var(--surface, #ffffff);
   border: 1px solid var(--border, #e2e8f0);
   border-radius: 10px;
-  box-shadow: var(--shadow-md, 0 4px 6px -1px rgba(0, 0, 0, 0.1));
+  box-shadow: var(--shadow-md);
   z-index: 600;
   display: none;
   flex-direction: column;
@@ -890,7 +890,7 @@
     max-height: 82dvh;
     background: #ffffff;
     border-radius: 16px 16px 0 0;
-    box-shadow: 0 -8px 28px rgba(15, 23, 42, 0.16);
+    box-shadow: var(--shadow-xs);
     display: flex;
     flex-direction: column;
     overflow: hidden;

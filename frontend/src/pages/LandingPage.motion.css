@@ -140,7 +140,7 @@
   .ew-reveal {
     opacity: 0;
     transform: translateY(16px);
-    transition: opacity 400ms ease-out, transform 400ms ease-out;
+    transition: opacity 400ms ease-out, transform 150ms ease-out;
   }
 
   .ew-reveal.ew-visible {
@@ -153,7 +153,7 @@
     transform: translateY(16px);
     transition:
       opacity 400ms ease-out calc(var(--ew-stagger, 0) * 80ms),
-      transform 400ms ease-out calc(var(--ew-stagger, 0) * 80ms);
+      transform 150ms ease-out calc(var(--ew-stagger, 0) * 80ms);
   }
 
   .ew-reveal.ew-visible .ew-stagger-item {
@@ -184,7 +184,7 @@
 
   /* 4. Interactive Legend Sample Map & Skeleton */
   .ew-legend-sym {
-    transition: opacity 220ms ease-out, transform 220ms ease-out;
+    transition: opacity 220ms ease-out, transform 150ms ease-out;
   }
 
   .ew-status-skel-num,
@@ -194,7 +194,7 @@
 
   /* 5. Hover & Press Feedback */
   .ew-btn {
-    transition: transform 160ms ease-out, opacity 160ms ease-out;
+    transition: transform 150ms ease-out, opacity 160ms ease-out;
   }
 
   .ew-btn:active {
@@ -202,19 +202,19 @@
   }
 
   .ew-btn-primary .ew-btn-chevron {
-    transition: transform 200ms ease-out;
+    transition: transform 150ms ease-out;
   }
 
   @media (hover: hover) and (pointer: fine) {
     .ew-step,
     .ew-key-item {
-      transition: transform 220ms ease-out, opacity 220ms ease-out;
+      transition: transform 150ms ease-out, opacity 220ms ease-out;
     }
 
     .ew-step:hover,
     .ew-key-item:hover {
       transform: translateY(-2px);
-      box-shadow: var(--ew-shadow-soft);
+      box-shadow: var(--shadow-md);
     }
 
     .ew-btn-primary:hover .ew-btn-chevron {

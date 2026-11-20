@@ -32,7 +32,7 @@
   background: #ffffff;
   border: 1px solid var(--border, #e3e8f0);
   border-radius: 16px;
-  box-shadow: 0 20px 25px -5px rgba(15, 23, 42, 0.25), 0 8px 10px -6px rgba(15, 23, 42, 0.1);
+  box-shadow: var(--shadow-lg);
   display: flex;
   flex-direction: column;
   overflow: hidden;

@@ -198,12 +198,12 @@
   font-size: 14px;
   box-sizing: border-box;
   outline: none;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  transition: border-color 0.15s ease, box-shadow 150ms ease;
 }
 
 .sal-search-input:focus {
   border-color: #2563eb;
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+  box-shadow: var(--shadow-focus);
 }
 
 .sal-toolbar-filters {
@@ -231,7 +231,7 @@
 
 .sal-select:focus {
   border-color: #2563eb;
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+  box-shadow: var(--shadow-focus);
 }
 
 .sal-date-group {
@@ -268,7 +268,7 @@
 
 .sal-date-input:focus {
   border-color: #2563eb;
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+  box-shadow: var(--shadow-focus);
 }
 
 /* CLEAR FILTERS BUTTON */

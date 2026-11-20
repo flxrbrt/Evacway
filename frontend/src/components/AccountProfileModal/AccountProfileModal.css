@@ -17,7 +17,7 @@
   border-radius: 10px;
   color: var(--ink);
   background: #fff;
-  box-shadow: 0 22px 60px rgba(14, 31, 58, 0.3);
+  box-shadow: var(--shadow-lg);
 }
 
 .account-profile-header {

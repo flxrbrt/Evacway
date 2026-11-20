@@ -213,7 +213,7 @@ function ExecutiveKpiCard({
     <button
       type="button"
       onClick={onClick}
-      className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 text-left flex flex-col justify-between group cursor-pointer w-full focus:outline-none focus:ring-2 focus:ring-blue-500/40 hover:border-slate-300 hover:shadow-2xs transition"
+      className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 text-left flex flex-col justify-between group cursor-pointer w-full focus:outline-none focus:ring-2 focus:ring-blue-500/40 hover:border-slate-300 hover:shadow-[var(--shadow-md)] transition"
     >
       <div>
         <div className="flex items-center justify-between gap-2">
@@ -316,7 +316,7 @@ function CenterArrivalList({ centers = [], onSelectCenter, onManageFacilities })
   if (!centers || centers.length === 0) {
     return (
       <section
-        className="dashboard-center-arrival-card bg-white border border-slate-200 rounded-2xl p-5 shadow-2xs w-full"
+        className="dashboard-center-arrival-card bg-white border border-slate-200 rounded-2xl p-5 shadow-[var(--shadow-xs)] w-full"
         aria-label="Center Arrival & Capacity Matrix"
       >
         <div className="dashboard-center-arrival-header flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 mb-4 border-b border-slate-100">
@@ -376,7 +376,7 @@ function CenterArrivalList({ centers = [], onSelectCenter, onManageFacilities })
 
   return (
     <section
-    className="dashboard-center-arrival-card bg-white border border-slate-200 rounded-2xl p-5 shadow-2xs w-full"
+    className="dashboard-center-arrival-card bg-white border border-slate-200 rounded-2xl p-5 shadow-[var(--shadow-xs)] w-full"
       aria-label="Center Arrival & Capacity Matrix"
     >
       {/* Card Header */}
@@ -479,7 +479,7 @@ function CenterArrivalList({ centers = [], onSelectCenter, onManageFacilities })
       {tooltip && (
         <div
           role="tooltip"
-          className="fixed z-50 pointer-events-none rounded-xl border border-slate-200 bg-white/95 px-3 py-2 shadow-lg backdrop-blur-xs text-xs whitespace-nowrap transition-opacity"
+          className="fixed z-50 pointer-events-none rounded-xl border border-slate-200 bg-white/95 px-3 py-2 shadow-[var(--shadow-lg)] backdrop-blur-xs text-xs whitespace-nowrap transition-opacity"
           style={{
             top: `${tooltip.top}px`,
             left: `${tooltip.left}px`,
@@ -766,7 +766,7 @@ function IncidentTrendsCard({
 
   return (
     <section
-      className="dashboard-chart-card bg-white border border-slate-200 rounded-2xl p-5 shadow-2xs w-full flex flex-col justify-between"
+      className="dashboard-chart-card bg-white border border-slate-200 rounded-2xl p-5 shadow-[var(--shadow-xs)] w-full flex flex-col justify-between"
       aria-label={title}
     >
       {/* 2-Row Header */}
@@ -1460,7 +1460,7 @@ function Dashboard() {
           {(pushStatus === "inactive" || pushSuccess) && !pushStripDismissed && (
             <div className={`flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 py-3 rounded-2xl border text-xs font-semibold transition ${pushSuccess
               ? "bg-emerald-50 border-emerald-200 text-emerald-800"
-              : "bg-blue-50/90 border-blue-200 text-blue-900 shadow-2xs"
+              : "bg-blue-50/90 border-blue-200 text-blue-900"
               }`}>
               <div className="flex items-center gap-2.5">
                 <FontAwesomeIcon
@@ -1479,7 +1479,7 @@ function Dashboard() {
                     type="button"
                     onClick={handleActivatePushFromDashboard}
                     disabled={pushActivating}
-                    className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs transition shadow-xs flex items-center gap-1.5 cursor-pointer"
+                    className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs transition shadow-[var(--shadow-primary)] flex items-center gap-1.5 cursor-pointer"
                   >
                     {pushActivating ? (
                       <>
@@ -1522,7 +1522,7 @@ function Dashboard() {
               <button
                 type="button"
                 onClick={() => handleSectionChange("checkin")}
-                className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-3.5 py-2 text-xs font-bold text-white hover:bg-emerald-700 shadow-xs transition shrink-0"
+                className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-3.5 py-2 text-xs font-bold text-white hover:bg-emerald-700 shadow-[var(--shadow-primary)] transition shrink-0"
                 aria-label="Evacuee Arrival Desk"
                 title="Evacuee Arrival Desk"
               >
@@ -1533,7 +1533,7 @@ function Dashboard() {
               <button
                 type="button"
                 onClick={() => handleSectionChange("map")}
-                className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-3.5 py-2 text-xs font-bold text-white hover:bg-blue-700 shadow-xs transition shrink-0"
+                className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-3.5 py-2 text-xs font-bold text-white hover:bg-blue-700 shadow-[var(--shadow-primary)] transition shrink-0"
                 aria-label="Map Operations"
                 title="Map Operations"
               >
@@ -1547,7 +1547,7 @@ function Dashboard() {
                 disabled={isRefreshing}
                 aria-label="Sync"
                 title="Sync"
-                className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100 transition shadow-2xs min-w-[96px] shrink-0"
+                className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100 transition min-w-[96px] shrink-0"
               >
                 <FontAwesomeIcon
                   icon={faArrowsRotate}
@@ -1562,7 +1562,7 @@ function Dashboard() {
           {/* ERROR ALERT */}
           {error && !isLoading && (
             <div
-              className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 rounded-2xl border border-red-200 bg-red-50 p-5 text-red-800 shadow-xs"
+              className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 rounded-2xl border border-red-200 bg-red-50 p-5 text-red-800 shadow-[var(--shadow-xs)]"
               role="alert"
             >
               <div>
@@ -1586,7 +1586,7 @@ function Dashboard() {
           {stats ? (
             <>
               {/* 2. EVACUEE ARRIVAL & SHELTERING COMMAND HERO */}
-              <section className="dashboard-arrival-card bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-2xs space-y-4" aria-label="Evacuation arrival and sheltering status">
+              <section className="dashboard-arrival-card bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-[var(--shadow-xs)] space-y-4" aria-label="Evacuation arrival and sheltering status">
                 <div>
                   <h2 className="dashboard-heading text-lg sm:text-xl font-black text-slate-900 tracking-tight">
                     Evacuee &amp; Shelter Arrival Status
@@ -1790,7 +1790,7 @@ function Dashboard() {
                         type="button"
                         onClick={() => setBarangayMetric("households")}
                         className={`px-3 py-1.5 rounded-lg transition cursor-pointer ${barangayMetric === "households"
-                          ? "bg-white text-blue-700 shadow-2xs font-extrabold"
+                          ? "bg-white text-blue-700 font-extrabold"
                           : "text-slate-600 hover:text-slate-900"
                           }`}
                       >
@@ -1800,7 +1800,7 @@ function Dashboard() {
                         type="button"
                         onClick={() => setBarangayMetric("residents")}
                         className={`px-3 py-1.5 rounded-lg transition cursor-pointer ${barangayMetric === "residents"
-                          ? "bg-white text-blue-700 shadow-2xs font-extrabold"
+                          ? "bg-white text-blue-700 font-extrabold"
                           : "text-slate-600 hover:text-slate-900"
                           }`}
                       >
@@ -1967,7 +1967,7 @@ function Dashboard() {
               </section>
             </>
           ) : error ? (
-            <div className="flex flex-col items-center justify-center p-12 text-center bg-white rounded-2xl border border-slate-200 shadow-xs my-6">
+            <div className="flex flex-col items-center justify-center p-12 text-center bg-white rounded-2xl border border-slate-200 shadow-[var(--shadow-xs)] my-6">
               <div className="size-12 rounded-2xl bg-red-50 text-red-600 flex items-center justify-center mb-4">
                 <FontAwesomeIcon icon={faTriangleExclamation} className="text-xl" />
               </div>
@@ -1978,7 +1978,7 @@ function Dashboard() {
               <button
                 type="button"
                 onClick={handleRefreshAll}
-                className="mt-4 px-4 py-2 rounded-xl bg-blue-600 text-white text-xs font-bold hover:bg-blue-700 transition shadow-xs"
+                className="mt-4 px-4 py-2 rounded-xl bg-blue-600 text-white text-xs font-bold hover:bg-blue-700 transition shadow-[var(--shadow-primary)]"
               >
                 Retry Loading
               </button>
