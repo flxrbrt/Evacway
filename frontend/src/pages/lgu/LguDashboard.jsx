@@ -20,7 +20,12 @@ import EvacueeCheckIn from "../../components/EvacueeCheckIn/EvacueeCheckIn";
 function LguDashboard() {
   const location = useLocation();
   const searchParams = new URLSearchParams(location.search);
-  const requestedTab = searchParams.get("tab") || (location.pathname.startsWith("/lgu/evacuation-centers/") ? "centers" : null);
+  const isCenterDetailRoute = location.pathname.startsWith("/lgu/evacuation-centers/");
+  const rawRequestedTab = isCenterDetailRoute ? "centers" : searchParams.get("tab");
+  const requestedTab =
+    rawRequestedTab === "families" || rawRequestedTab === "overview"
+      ? "barangays"
+      : rawRequestedTab;
   const notificationId = searchParams.get("notificationId");
   const resourceTypeParam = searchParams.get("resourceType");
   const resourceIdParam = searchParams.get("resourceId");

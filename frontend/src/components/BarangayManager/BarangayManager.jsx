@@ -1,6 +1,24 @@
 import { useMemo, useRef, useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
+import {
+  AlertTriangle,
+  ArrowLeft,
+  ArrowRight,
+  Building2,
+  Calendar,
+  CheckCircle2,
+  ChevronRight,
+  Download,
+  Home,
+  LayoutGrid,
+  MapPin,
+  Plus,
+  Search,
+  ShieldCheck,
+  Users,
+  X,
+} from "lucide-react";
 import { api } from "../../services/api";
 import {
   invalidateEvacuationQueries,
@@ -16,6 +34,7 @@ import FamilyManagement from "../EvacuationCenter/FamilyManagement";
 import { resolveCenterStructureMode } from "../EvacuationCenter/utils";
 import LoadingState from "../LoadingState/LoadingState";
 import BarangaysServedPicker from "../BarangaysServedPicker/BarangaysServedPicker";
+import { Button, ProgressBar, SegmentedControl, StatCard, StatusPill } from "../ui";
 import { formatRoomLabel } from "../../utils/formatRoomLabel";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
@@ -23,7 +42,6 @@ import {
   faTriangleExclamation,
   faArrowLeft,
   faLocationDot,
-  faArrowRight,
   faUpload,
   faFileExcel,
   faXmark,
@@ -32,18 +50,13 @@ import {
   faPeopleGroup,
   faBuilding,
   faDoorOpen,
-  faMagnifyingGlass,
-  faDownload,
   faPlus,
   faPenToSquare,
-  faTrash,
   faRightLeft,
   faUserXmark,
   faEye,
   faChevronRight,
-  faLayerGroup,
   faHouseFlag,
-  faShieldHeart,
 } from "@fortawesome/free-solid-svg-icons";
 
 function formatHouseholdCode(idOrCode) {
@@ -61,6 +74,8 @@ function formatHouseholdCode(idOrCode) {
 
 function BarangayManager() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const barangaysQuery = useBarangays();
   const barangays = useMemo(
@@ -76,13 +91,50 @@ function BarangayManager() {
     if (Array.isArray(allCentersQuery.data)) {
       return allCentersQuery.data.length;
     }
-    return 3;
+    return 0;
   }, [allCentersQuery.data]);
 
-  // Navigation state
-  const [workspaceTab, setWorkspaceTab] = useState("barangays"); // 'barangays' | 'families'
-  const [selectedBarangayId, setSelectedBarangayId] = useState(null);
-  const [barangaySection, setBarangaySection] = useState("overview"); // 'overview' | 'households' | 'centers'
+  // Navigation state: top-level and detail tabs live in the URL (?tab=barangays|families|overview)
+  const barangayParam = searchParams.get("barangay");
+  const selectedBarangayId = useMemo(() => {
+    if (!barangayParam) return null;
+    const asNumber = Number(barangayParam);
+    return Number.isNaN(asNumber) ? barangayParam : asNumber;
+  }, [barangayParam]);
+
+  const tabParam = searchParams.get("tab");
+  const workspaceTab =
+    !selectedBarangayId && tabParam === "families" ? "families" : "barangays";
+  const barangaySection =
+    selectedBarangayId && tabParam === "families" ? "households" : "overview";
+
+  function setWorkspaceTab(nextTab) {
+    const targetTab = nextTab === "families" ? "families" : "barangays";
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.delete("barangay");
+      next.set("tab", targetTab);
+      return next;
+    });
+  }
+
+  function setBarangayDetailTab(nextSection) {
+    const targetTab =
+      nextSection === "households" || nextSection === "families"
+        ? "families"
+        : "overview";
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.set("tab", targetTab);
+      if (selectedBarangayId != null) {
+        next.set("barangay", String(selectedBarangayId));
+      }
+      return next;
+    });
+  }
+
+  const barangaysTabHref = `${location.pathname}?tab=barangays`;
+  const familiesTabHref = `${location.pathname}?tab=families`;
   const [selectedCenterId, setSelectedCenterId] = useState(null);
   const [selectedRoomId, setSelectedRoomId] = useState(null);
 
@@ -173,10 +225,11 @@ function BarangayManager() {
     return () => clearTimeout(t);
   }, [successMsg]);
 
-  // Page A Search & Pagination
+  // Page A Search, Status Filter & Pagination
   const [barangaySearch, setBarangaySearch] = useState("");
+  const [barangayStatusFilter, setBarangayStatusFilter] = useState("all"); // 'all' | 'sheltered' | 'unassigned' | 'no-records'
   const [brgyPage, setBrgyPage] = useState(1);
-  const [brgyPageSize, setBrgyPageSize] = useState(10);
+  const brgyPageSize = 10;
 
   // Phase 3: Barangay Overview Household Filters (Assigned/Unassigned + Building)
   const [overviewHouseholdSearch, setOverviewHouseholdSearch] = useState("");
@@ -201,22 +254,6 @@ function BarangayManager() {
   const [unassigning, setUnassigning] = useState(false);
   const [familyScreen, setFamilyScreen] = useState("list");
   const familyActionsRef = useRef(null);
-  const [isMobileViewport, setIsMobileViewport] = useState(() =>
-    typeof window !== "undefined" && typeof window.matchMedia === "function"
-      ? window.matchMedia("(max-width: 768px)").matches
-      : false
-  );
-
-  useEffect(() => {
-    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
-      return undefined;
-    }
-    const mq = window.matchMedia("(max-width: 768px)");
-    const handleChange = (e) => setIsMobileViewport(e.matches);
-    setIsMobileViewport(mq.matches);
-    mq.addEventListener("change", handleChange);
-    return () => mq.removeEventListener("change", handleChange);
-  }, []);
 
   const loading = barangaysQuery.isLoading;
   const detailLoading = selectedBarangayQuery.isLoading && Boolean(selectedBarangayId);
@@ -274,9 +311,27 @@ function BarangayManager() {
   // Filtered Barangays (Page A)
   const filteredBarangays = useMemo(() => {
     const q = barangaySearch.trim().toLowerCase();
-    if (!q) return barangays;
-    return barangays.filter((b) => (b.name || "").toLowerCase().includes(q));
-  }, [barangays, barangaySearch]);
+    return barangays.filter((b) => {
+      if (q && !(b.name || "").toLowerCase().includes(q)) return false;
+      if (barangayStatusFilter !== "all") {
+        const famCount = Number(
+          b.household_count ?? b.family_count ?? b.total_families ?? 0
+        );
+        const assignedCount = Number(b.assigned_family_count ?? 0);
+        const unassignedCount = Number(
+          b.unassigned_family_count ?? Math.max(0, famCount - assignedCount)
+        );
+        const rowStatus =
+          famCount === 0
+            ? "no-records"
+            : unassignedCount > 0
+              ? "unassigned"
+              : "sheltered";
+        if (rowStatus !== barangayStatusFilter) return false;
+      }
+      return true;
+    });
+  }, [barangays, barangaySearch, barangayStatusFilter]);
 
   const totalBrgyPages = Math.max(1, Math.ceil(filteredBarangays.length / brgyPageSize));
   const safeBrgyPage = Math.min(brgyPage, totalBrgyPages);
@@ -284,34 +339,6 @@ function BarangayManager() {
     const start = (safeBrgyPage - 1) * brgyPageSize;
     return filteredBarangays.slice(start, start + brgyPageSize);
   }, [filteredBarangays, safeBrgyPage, brgyPageSize]);
-
-  const brgyPaginationItems = useMemo(() => {
-    if (totalBrgyPages <= 5) {
-      return Array.from({ length: totalBrgyPages }, (_, i) => i + 1);
-    }
-    const pages = Array.from(
-      new Set(
-        [1, totalBrgyPages, safeBrgyPage - 1, safeBrgyPage, safeBrgyPage + 1].filter(
-          (p) => p >= 1 && p <= totalBrgyPages
-        )
-      )
-    ).sort((a, b) => a - b);
-
-    const items = [];
-    for (let i = 0; i < pages.length; i++) {
-      const p = pages[i];
-      const prev = pages[i - 1];
-      if (i > 0) {
-        if (p - prev === 2) {
-          items.push(prev + 1);
-        } else if (p - prev > 2) {
-          items.push(`ellipsis-${prev}`);
-        }
-      }
-      items.push(p);
-    }
-    return items;
-  }, [safeBrgyPage, totalBrgyPages]);
 
   // Selected Barangay Derived Stats (Page B)
   const selectedBarangayStats = useMemo(() => {
@@ -478,17 +505,24 @@ function BarangayManager() {
 
   async function openBarangay(id, initialSection = "overview") {
     try {
-      setWorkspaceTab("barangays");
       setError("");
       setSuccessMsg("");
-      setSelectedBarangayId(id);
-      setBarangaySection(initialSection);
       setFamilyScreen("list");
       setSelectedCenterId(null);
       setSelectedRoomId(null);
       setOverviewHouseholdSearch("");
       setOverviewStatusFilter("");
       setOverviewBuildingFilter("");
+      const targetTab =
+        initialSection === "households" || initialSection === "families"
+          ? "families"
+          : "overview";
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev);
+        next.set("tab", targetTab);
+        next.set("barangay", String(id));
+        return next;
+      });
       await queryClient.fetchQuery({
         queryKey: queryKeys.barangay(id),
         queryFn: () => api.getBarangay(id),
@@ -500,13 +534,17 @@ function BarangayManager() {
   }
 
   function closeBarangay() {
-    setSelectedBarangayId(null);
-    setBarangaySection("overview");
     setFamilyScreen("list");
     setSelectedCenterId(null);
     setSelectedRoomId(null);
     setStartAddFamilyOnOpen(false);
     setInitialFamilyIdToOpen(null);
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.delete("barangay");
+      next.set("tab", "barangays");
+      return next;
+    });
   }
 
   function openHouseholdsSection(options = {}) {
@@ -519,7 +557,7 @@ function BarangayManager() {
     } else {
       setFamilyScreen("list");
     }
-    setBarangaySection("households");
+    setBarangayDetailTab("families");
   }
 
   function openCentersSection(centerId = null, roomId = null) {
@@ -1901,102 +1939,142 @@ function BarangayManager() {
   // MAIN RENDER
   // =========================================================
 
-  const isHouseholdsListMode =
-    Boolean(selectedBarangay) &&
-    barangaySection === "households" &&
-    familyScreen === "list";
-
-  const isBarangaysListMode =
-    !selectedBarangay &&
-    workspaceTab === "barangays" &&
-    !loading &&
-    !detailLoading;
-
-  const isAllHouseholdsListMode =
-    !selectedBarangayId &&
-    workspaceTab === "families" &&
-    familyScreen === "list";
-
   const isAllHouseholdsDetailOpen =
     !selectedBarangayId &&
     workspaceTab === "families" &&
     familyScreen !== "list";
+
+  const isTopLevelListView =
+    !selectedBarangay &&
+    !isAllHouseholdsDetailOpen &&
+    (workspaceTab === "barangays" || workspaceTab === "families");
+
+  const isBarangaysListView = !selectedBarangay && workspaceTab === "barangays";
 
   const isBarangayHouseholdDetailOpen =
     Boolean(selectedBarangay) &&
     barangaySection === "households" &&
     familyScreen !== "list";
 
+  function handleHeaderAddFamily() {
+    if (workspaceTab === "families" && familyActionsRef.current?.openAddFamilyWizard) {
+      familyActionsRef.current.openAddFamilyWizard();
+      return;
+    }
+    setStartAddFamilyOnOpen(true);
+    setFamilyScreen("list");
+    setWorkspaceTab("families");
+  }
+
+  function handleHeaderExportCsv() {
+    if (workspaceTab === "families") {
+      familyActionsRef.current?.exportFamilies?.();
+      return;
+    }
+    exportBarangaysCsv();
+  }
+
+  const hasActiveBarangayFilters =
+    barangaySearch.trim().length > 0 || barangayStatusFilter !== "all";
+
+  const pageRangeStart =
+    filteredBarangays.length === 0 ? 0 : (safeBrgyPage - 1) * brgyPageSize + 1;
+  const pageRangeEnd = Math.min(safeBrgyPage * brgyPageSize, filteredBarangays.length);
+
+  const overviewMetrics = useMemo(() => {
+    const totalHH = selectedBarangayStats.totalHouseholds;
+    const assignedHH = selectedBarangayStats.assignedHouseholds;
+    const unassignedHH = selectedBarangayStats.unassignedHouseholds;
+    const assignPct =
+      totalHH > 0 ? Math.min(100, Math.round((assignedHH / totalHH) * 100)) : 0;
+    const unassignPct = totalHH > 0 ? Math.max(0, 100 - assignPct) : 0;
+    const avgFamilySize =
+      totalHH > 0
+        ? (selectedBarangayStats.totalResidents / totalHH).toFixed(1)
+        : "0";
+    const radius = 54;
+    const circumference = 2 * Math.PI * radius;
+    const hasBoth = assignedHH > 0 && unassignedHH > 0;
+    const gap = hasBoth ? 12 : 0;
+    const rawAssigned = totalHH > 0 ? (assignedHH / totalHH) * circumference : 0;
+    const rawUnassigned = totalHH > 0 ? Math.max(0, circumference - rawAssigned) : 0;
+    const assignedArc = assignedHH > 0 ? Math.max(4, rawAssigned - gap) : 0;
+    const unassignedArc = unassignedHH > 0 ? Math.max(4, rawUnassigned - gap) : 0;
+    const assignedOffset = hasBoth ? -gap / 2 : 0;
+    const unassignedOffset = hasBoth ? -(rawAssigned + gap / 2) : 0;
+
+    return {
+      totalHH,
+      assignedHH,
+      unassignedHH,
+      assignPct,
+      unassignPct,
+      avgFamilySize,
+      radius,
+      circumference,
+      assignedArc,
+      unassignedArc,
+      assignedOffset,
+      unassignedOffset,
+    };
+  }, [selectedBarangayStats]);
+
+  const isDetailPage =
+    Boolean(selectedBarangayId) && !isBarangayHouseholdDetailOpen;
+
   return (
     <div
       className={`barangay-page ${
-        isHouseholdsListMode ? "bm-households-list-mode" : ""
-      } ${isBarangaysListMode ? "bm-barangays-list-mode" : ""} ${
-        isAllHouseholdsListMode ? "bm-all-households-list-mode" : ""
-      }`.trim()}
+        isTopLevelListView ? "bm-list-page" : ""
+      } ${isDetailPage ? "bm-detail-page" : ""}`.trim()}
     >
       {/* Top Page Header */}
       {!selectedBarangayId && !isAllHouseholdsDetailOpen && (
-        <div className="barangay-header">
-          <div className="barangay-header-copy">
-            <h2 className="barangay-title">Barangays</h2>
-            <p className="barangay-subtitle">
-              Manage registered barangays, population, and associated records.
+        <header className="bm-list-header">
+          <div className="bm-list-header-copy">
+            <h1 className="bm-list-title">Barangays</h1>
+            <p className="bm-list-subtitle">
+              Manage registered barangays, families, and shelter assignments.
             </p>
           </div>
-          {workspaceTab === "families" && familyScreen === "list" && (
-            <div className="barangay-header-actions bm-all-families-actions">
-              <button
-                type="button"
-                className="bm-header-btn-primary"
-                onClick={() => familyActionsRef.current?.openAddFamilyWizard?.()}
-              >
-                <FontAwesomeIcon icon={faPlus} />
-                <span>Add Family</span>
-              </button>
-              <button
-                type="button"
-                className="bm-header-btn-secondary"
-                aria-label="Export CSV"
-                title="Export CSV"
-                onClick={() => familyActionsRef.current?.exportFamilies?.()}
-              >
-                <FontAwesomeIcon icon={faDownload} />
-                <span className="bm-export-btn-label">Export CSV</span>
-              </button>
-            </div>
-          )}
-        </div>
+
+          <div className="bm-list-header-actions">
+            <Button
+              variant="secondary"
+              onClick={handleHeaderExportCsv}
+              disabled={workspaceTab === "barangays" && filteredBarangays.length === 0}
+            >
+              <Download size={16} strokeWidth={2} aria-hidden="true" />
+              <span>Export CSV</span>
+            </Button>
+            <Button variant="primary" onClick={handleHeaderAddFamily}>
+              <Plus size={16} strokeWidth={2} aria-hidden="true" />
+              <span>Add Family</span>
+            </Button>
+          </div>
+        </header>
       )}
 
-      {/* Top-Level Mode Switcher when on Landing Page */}
+      {/* Top-Level Segmented Control: Barangays / All Families (URL-driven) */}
       {!selectedBarangayId && !isAllHouseholdsDetailOpen && (
-        <div className="barangay-workspace-tabs">
-          <button
-            type="button"
-            className={workspaceTab === "barangays" ? "active" : ""}
-            onClick={() => {
-              setWorkspaceTab("barangays");
+        <div className="bm-list-mode-row">
+          <SegmentedControl
+            ariaLabel="Barangays workspace view"
+            value={workspaceTab}
+            onChange={(nextTab) => {
               setFamilyScreen("list");
+              setWorkspaceTab(nextTab);
             }}
-          >
-            <FontAwesomeIcon icon={faLocationDot} /> Barangays
-          </button>
-          <button
-            type="button"
-            className={workspaceTab === "families" ? "active" : ""}
-            onClick={() => {
-              setWorkspaceTab("families");
-              setFamilyScreen("list");
-            }}
-          >
-            <FontAwesomeIcon icon={faPeopleGroup} /> All Families
-          </button>
+            options={[
+              { value: "barangays", label: "Barangays", icon: MapPin },
+              { value: "families", label: "All Families", icon: Users },
+            ]}
+          />
         </div>
       )}
 
       {/* Feedback Alerts */}
-      {visibleError && (
+      {visibleError && !isBarangaysListView && (
         <div className="alert alert-error bm-banner-alert">
           <span className="alert-icon">
             <FontAwesomeIcon icon={faTriangleExclamation} />
@@ -2005,6 +2083,7 @@ function BarangayManager() {
           <button
             type="button"
             className="bm-alert-dismiss"
+            aria-label="Dismiss error"
             onClick={() => setError("")}
           >
             <FontAwesomeIcon icon={faXmark} />
@@ -2013,7 +2092,7 @@ function BarangayManager() {
       )}
 
       {successMsg && (
-        <div className="alert alert-success bm-banner-alert">
+        <div className="alert alert-success bm-banner-alert" role="status">
           <span className="alert-icon">
             <FontAwesomeIcon icon={faCircleCheck} />
           </span>
@@ -2021,6 +2100,7 @@ function BarangayManager() {
           <button
             type="button"
             className="bm-alert-dismiss"
+            aria-label="Dismiss message"
             onClick={() => setSuccessMsg("")}
           >
             <FontAwesomeIcon icon={faXmark} />
@@ -2028,10 +2108,12 @@ function BarangayManager() {
         </div>
       )}
 
-      {/* Global All-Households Directory Tab */}
+      {/* Global All-Families Directory Tab */}
       {workspaceTab === "families" && !selectedBarangayId ? (
         <FamilyManagement
           barangays={barangays}
+          initialStartAdd={startAddFamilyOnOpen}
+          onInitialStartAddConsumed={() => setStartAddFamilyOnOpen(false)}
           onRefreshParent={loadBarangays}
           hideListHeader={true}
           compactMobileAllHouseholds={true}
@@ -2044,80 +2126,198 @@ function BarangayManager() {
             familyActionsRef.current = actions;
           }}
         />
-      ) : loading ? (
-        <LoadingState
-          title="Loading barangays..."
-          subtitle="Fetching barangay records, families, and evacuation center summaries."
-        />
       ) : detailLoading ? (
-        <LoadingState
-          title="Opening barangay..."
-          subtitle="Loading families, residents, and evacuation centers."
-        />
-      ) : !selectedBarangay ? (
-        /* =========================================================
-           PAGE A: BARANGAY MANAGEMENT LANDING PAGE
-           ========================================================= */
-        <div className="bm-landing">
-          {/* Elevated Summary Metric Cards */}
-          <div className="stat-card-grid cols-4 bm-landing-summary-grid">
-            <div className="stat-card is-plain">
-              <div className="stat-card-content">
-                <span className="stat-card-label">Barangays</span>
-                <strong className="stat-card-value">{overallStats.totalBarangays}</strong>
-                <span className="stat-card-hint">{overallStats.totalCenters} evacuation centers</span>
+        <div className="bm-detail-shell" aria-busy="true" aria-label="Loading barangay details">
+          <div className="bm-detail-header" aria-hidden="true">
+            <span className="bm-skeleton bm-skeleton-line-sm" />
+            <div className="bm-detail-header-row">
+              <div className="bm-detail-heading">
+                <span className="bm-skeleton bm-skeleton-detail-title" />
+                <div className="bm-detail-meta-chips">
+                  <span className="bm-skeleton bm-skeleton-pill" />
+                  <span className="bm-skeleton bm-skeleton-pill" />
+                </div>
               </div>
-              <span className="stat-card-icon stat-card-icon--neutral" aria-hidden="true">
-                <FontAwesomeIcon icon={faLocationDot} />
-              </span>
+              <div className="bm-detail-header-actions">
+                <span className="bm-skeleton bm-skeleton-btn" />
+                <span className="bm-skeleton bm-skeleton-btn" />
+              </div>
             </div>
-
-            <div className="stat-card is-plain">
-              <div className="stat-card-content">
-                <span className="stat-card-label">Families</span>
-                <strong className="stat-card-value">{overallStats.totalHouseholds}</strong>
-                <span className="stat-card-hint">{overallStats.totalResidents} registered residents</span>
-              </div>
-              <span className="stat-card-icon stat-card-icon--neutral" aria-hidden="true">
-                <FontAwesomeIcon icon={faHouse} />
-              </span>
-            </div>
-            <div className="stat-card is-plain">
-              <div className="stat-card-content">
-                <span className="stat-card-label">Assigned</span>
-                <strong className="stat-card-value text-emerald-700">{overallStats.totalAssigned}</strong>
-                <span className="stat-card-hint">{overallStats.assignedPct}% of families</span>
-              </div>
-              <span className="stat-card-icon stat-card-icon--resolved" aria-hidden="true">
-                <FontAwesomeIcon icon={faCircleCheck} />
-              </span>
-            </div>
-            <div className="stat-card is-plain">
-              <div className="stat-card-content">
-                <span className="stat-card-label">Unassigned</span>
-                <strong className={overallStats.totalUnassigned > 0 ? "stat-card-value text-amber-600" : "stat-card-value text-emerald-700"}>
-                  {overallStats.totalUnassigned}
-                </strong>
-                <span className="stat-card-hint">
-                  {overallStats.totalUnassigned > 0 ? "Awaiting room assignment" : "All families assigned"}
-                </span>
-              </div>
-              <span className={overallStats.totalUnassigned > 0 ? "stat-card-icon stat-card-icon--warning" : "stat-card-icon stat-card-icon--resolved"} aria-hidden="true">
-                <FontAwesomeIcon icon={overallStats.totalUnassigned > 0 ? faTriangleExclamation : faShieldHeart} />
-              </span>
+            <div className="bm-detail-tabs">
+              <span className="bm-skeleton bm-skeleton-tab" />
+              <span className="bm-skeleton bm-skeleton-tab" />
             </div>
           </div>
 
-          {/* Merged Search & Export Toolbar + Barangay List Card */}
-          <div className="bm-section-card bm-barangays-table-card">
-            <div className="barangay-filter-bar">
-              <div className="barangay-search">
-                <FontAwesomeIcon icon={faMagnifyingGlass} />
+          {barangaySection === "households" ? (
+            <div className="bm-list-card" aria-hidden="true">
+              <div className="bm-list-toolbar">
+                <span className="bm-skeleton bm-skeleton-search" />
+                <div className="bm-skeleton-row">
+                  <span className="bm-skeleton bm-skeleton-btn" />
+                  <span className="bm-skeleton bm-skeleton-btn" />
+                </div>
+              </div>
+              {Array.from({ length: 5 }).map((_, idx) => (
+                <div key={idx} className="bm-list-skeleton-row">
+                  <span className="bm-skeleton bm-skeleton-line-md" />
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="bm-ov-stats-grid" aria-hidden="true">
+              {Array.from({ length: 4 }).map((_, idx) => (
+                <div key={idx} className="bm-skeleton-stat-card">
+                  <div className="bm-skeleton-row">
+                    <span className="bm-skeleton bm-skeleton-tile-sm" />
+                    <span className="bm-skeleton bm-skeleton-line-sm" />
+                  </div>
+                  <span className="bm-skeleton bm-skeleton-val" />
+                  <span className="bm-skeleton bm-skeleton-line-md" />
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : selectedBarangayId && !selectedBarangay ? (
+        <section className="bm-list-card" aria-label="Barangay error">
+          <div className="bm-list-state" role="alert">
+            <span className="bm-list-state-icon is-error" aria-hidden="true">
+              <AlertTriangle size={20} strokeWidth={2} />
+            </span>
+            <h3>Could not load barangay</h3>
+            <p>
+              {selectedBarangayQuery.error?.message ||
+                "This barangay record could not be found or failed to load."}
+            </p>
+            <div className="bm-list-footer-nav">
+              <Button
+                variant="secondary"
+                onClick={() => selectedBarangayQuery.refetch()}
+              >
+                Try again
+              </Button>
+              <Button variant="primary" onClick={closeBarangay}>
+                Back to Barangays
+              </Button>
+            </div>
+          </div>
+        </section>
+      ) : !selectedBarangay ? (
+        /* =========================================================
+           PAGE A: BARANGAYS LIST (REDESIGNED)
+           ========================================================= */
+        <div className="bm-list-stack">
+          {/* Attention Banner Card (hidden when unassigned === 0 or loading) */}
+          {!loading && overallStats.totalUnassigned > 0 && (
+            <section
+              className="bm-attention-banner"
+              aria-label="Unassigned families attention"
+            >
+              <div className="bm-attention-left">
+                <span className="bm-attention-icon" aria-hidden="true">
+                  <AlertTriangle size={18} strokeWidth={2} />
+                </span>
+                <div className="bm-attention-copy">
+                  <strong className="bm-attention-title">
+                    {overallStats.totalUnassigned}{" "}
+                    {overallStats.totalUnassigned === 1
+                      ? "family still needs a room"
+                      : "families still need a room"}
+                  </strong>
+                  <p className="bm-attention-sub">
+                    Review unassigned families and match them to an available evacuation center room.
+                  </p>
+                </div>
+              </div>
+              <Link
+                to={familiesTabHref}
+                className="ui-btn ui-btn--secondary bm-attention-cta"
+              >
+                Review families
+              </Link>
+            </section>
+          )}
+
+          {/* 4 StatCards */}
+          {loading ? (
+            <div className="bm-list-stats-grid" aria-hidden="true">
+              {Array.from({ length: 4 }).map((_, idx) => (
+                <div key={idx} className="bm-skeleton-stat-card">
+                  <div className="bm-skeleton-row">
+                    <span className="bm-skeleton bm-skeleton-tile-sm" />
+                    <span className="bm-skeleton bm-skeleton-line-sm" />
+                  </div>
+                  <span className="bm-skeleton bm-skeleton-val" />
+                  <span className="bm-skeleton bm-skeleton-line-md" />
+                </div>
+              ))}
+            </div>
+          ) : (
+            <section className="bm-list-stats-grid" aria-label="Barangays summary">
+              <StatCard
+                icon={MapPin}
+                iconTone="primary"
+                label="Barangays"
+                value={overallStats.totalBarangays}
+                showProgress={false}
+                footer={`${overallStats.totalCenters} evacuation ${
+                  overallStats.totalCenters === 1 ? "center" : "centers"
+                }`}
+              />
+              <StatCard
+                icon={Users}
+                iconTone="neutral"
+                label="Families"
+                value={overallStats.totalHouseholds}
+                showProgress={false}
+                footer={`${overallStats.totalResidents} registered ${
+                  overallStats.totalResidents === 1 ? "resident" : "residents"
+                }`}
+              />
+              <StatCard
+                icon={CheckCircle2}
+                iconTone="success"
+                label="Assigned"
+                value={overallStats.totalAssigned}
+                of={overallStats.totalHouseholds}
+                showProgress={true}
+                progressValue={overallStats.totalAssigned}
+                progressMax={Math.max(overallStats.totalHouseholds, 1)}
+                progressVariant="completion"
+                footer={`${overallStats.assignedPct}% of families sheltered`}
+              />
+              <StatCard
+                icon={overallStats.totalUnassigned > 0 ? AlertTriangle : ShieldCheck}
+                iconTone={overallStats.totalUnassigned > 0 ? "warn" : "success"}
+                label="Unassigned"
+                value={overallStats.totalUnassigned}
+                showProgress={false}
+                footer={
+                  overallStats.totalUnassigned > 0
+                    ? "Awaiting room assignment"
+                    : "All families assigned"
+                }
+              />
+            </section>
+          )}
+
+          {/* One Table Card (--radius-xl) */}
+          <section className="bm-list-card" aria-label="Registered barangays">
+            {/* Toolbar: Search + Status Select */}
+            <div className="bm-list-toolbar">
+              <div className="bm-list-search-wrap">
+                <Search
+                  size={16}
+                  strokeWidth={2}
+                  className="bm-list-search-icon"
+                  aria-hidden="true"
+                />
                 <input
-                  type="text"
-                  placeholder={
-                    isMobileViewport ? "Search barangays" : "Search barangays..."
-                  }
+                  type="search"
+                  className="bm-list-search-input"
+                  placeholder="Search barangays..."
+                  aria-label="Search barangays"
                   value={barangaySearch}
                   onChange={(e) => {
                     setBarangaySearch(e.target.value);
@@ -2127,661 +2327,639 @@ function BarangayManager() {
                 {barangaySearch && (
                   <button
                     type="button"
-                    className="barangay-search-clear"
+                    className="bm-list-search-clear"
+                    aria-label="Clear search"
                     onClick={() => {
                       setBarangaySearch("");
                       setBrgyPage(1);
                     }}
                   >
-                    <FontAwesomeIcon icon={faXmark} />
+                    <X size={15} strokeWidth={2} aria-hidden="true" />
                   </button>
                 )}
               </div>
 
-              <div className="barangay-filter-actions">
-                <button
-                  type="button"
-                  className="btn btn-secondary"
-                  aria-label="Export CSV"
-                  title="Export CSV"
-                  onClick={exportBarangaysCsv}
-                  disabled={filteredBarangays.length === 0}
+              <div className="bm-list-toolbar-right">
+                <select
+                  className="bm-list-select"
+                  aria-label="Filter by status"
+                  value={barangayStatusFilter}
+                  onChange={(e) => {
+                    setBarangayStatusFilter(e.target.value);
+                    setBrgyPage(1);
+                  }}
                 >
-                  <FontAwesomeIcon icon={faDownload} />
-                  <span className="bm-export-btn-label">Export CSV</span>
-                </button>
+                  <option value="all">All statuses</option>
+                  <option value="sheltered">Sheltered</option>
+                  <option value="unassigned">Unassigned</option>
+                  <option value="no-records">No records</option>
+                </select>
               </div>
             </div>
 
-            {filteredBarangays.length === 0 ? (
-              <div className="bm-empty-box">
-                <FontAwesomeIcon icon={faLocationDot} className="bm-empty-icon" />
-                <h4>
-                  {barangays.length === 0
-                    ? "No Barangays Found"
-                    : "No Matching Barangays"}
-                </h4>
+            {/* Table Content: Skeleton / Error / Empty / Rows */}
+            {loading ? (
+              <div className="bm-list-table-scroll" aria-busy="true" aria-label="Loading barangays">
+                <div className="bm-list-grid bm-list-grid-head" aria-hidden="true">
+                  <span>BARANGAY</span>
+                  <span className="is-center">FAMILIES</span>
+                  <span>SHELTER ASSIGNMENT</span>
+                  <span>STATUS</span>
+                  <span>EVACUATION CENTERS</span>
+                </div>
+                {Array.from({ length: 6 }).map((_, idx) => (
+                  <div key={idx} className="bm-list-grid bm-list-skeleton-row" aria-hidden="true">
+                    <div className="bm-list-brgy-cell">
+                      <span className="bm-skeleton bm-skeleton-tile-lg" />
+                      <div className="bm-skeleton-col">
+                        <span className="bm-skeleton bm-skeleton-line-md" />
+                        <span className="bm-skeleton bm-skeleton-line-sm" />
+                      </div>
+                    </div>
+                    <div className="bm-list-families-cell">
+                      <span className="bm-skeleton bm-skeleton-num" />
+                    </div>
+                    <div className="bm-skeleton-col">
+                      <span className="bm-skeleton bm-skeleton-line-md" />
+                      <span className="bm-skeleton bm-skeleton-bar" />
+                    </div>
+                    <div>
+                      <span className="bm-skeleton bm-skeleton-pill" />
+                    </div>
+                    <div className="bm-list-centers-cell">
+                      <span className="bm-skeleton bm-skeleton-pill" />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : barangaysQuery.error || error ? (
+              <div className="bm-list-state" role="alert">
+                <span className="bm-list-state-icon is-error" aria-hidden="true">
+                  <AlertTriangle size={20} strokeWidth={2} />
+                </span>
+                <h3>Could not load barangays</h3>
+                <p>{visibleError || "Something went wrong while loading barangay records."}</p>
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    setError("");
+                    barangaysQuery.refetch();
+                  }}
+                >
+                  Try again
+                </Button>
+              </div>
+            ) : filteredBarangays.length === 0 ? (
+              <div className="bm-list-state" role="status">
+                <span className="bm-list-state-icon" aria-hidden="true">
+                  <MapPin size={20} strokeWidth={2} />
+                </span>
+                <h3>
+                  {barangays.length === 0 ? "No barangays found" : "No matching barangays"}
+                </h3>
                 <p>
                   {barangays.length === 0
                     ? "No barangays are currently registered in the system."
-                    : `No barangays matched "${barangaySearch}".`}
+                    : "Try adjusting your search or status filter to see more barangays."}
                 </p>
+                {hasActiveBarangayFilters && (
+                  <Button
+                    variant="secondary"
+                    onClick={() => {
+                      setBarangaySearch("");
+                      setBarangayStatusFilter("all");
+                      setBrgyPage(1);
+                    }}
+                  >
+                    Clear filters
+                  </Button>
+                )}
               </div>
             ) : (
               <>
-                <div className="bm-table-wrap bm-desktop-only">
-                  <table className="bm-table bm-barangays-table">
-                    <thead>
-                      <tr>
-                        <th>Barangay Community</th>
-                        <th className="bm-col-center">Families</th>
-                        <th>Shelter Assignment</th>
-                        <th className="bm-col-center bm-th-status">STATUS</th>
-                        <th className="bm-col-center">Evacuation Centers</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {paginatedBarangays.map((b) => {
-                        const famCount = Number(
-                          b.household_count ?? b.family_count ?? b.total_families ?? 0
-                        );
-                        const assignedCount = Number(b.assigned_family_count ?? 0);
-                        const unassignedCount = Number(
-                          b.unassigned_family_count ?? Math.max(0, famCount - assignedCount)
-                        );
-                        const resCount = Number(
-                          b.resident_count ?? b.total_residents ?? 0
-                        );
-                        const centerCount = Number(b.evacuation_center_count ?? 0);
-                        const assignPct = famCount > 0 ? Math.round((assignedCount / famCount) * 100) : 0;
-                        const is100 = assignPct >= 100;
+                <div className="bm-list-table-scroll">
+                  <div className="bm-list-grid bm-list-grid-head" role="row">
+                    <span role="columnheader">BARANGAY</span>
+                    <span role="columnheader" className="is-center">
+                      FAMILIES
+                    </span>
+                    <span role="columnheader">SHELTER ASSIGNMENT</span>
+                    <span role="columnheader">STATUS</span>
+                    <span role="columnheader">EVACUATION CENTERS</span>
+                  </div>
 
-                        return (
-                          <tr
-                            key={b.id}
-                            className="bm-clickable-row"
-                            tabIndex={0}
-                            aria-label={`Open details for ${b.name}`}
-                            onClick={() => openBarangay(b.id, "overview")}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter" || e.key === " ") {
-                                e.preventDefault();
-                                openBarangay(b.id, "overview");
-                              }
-                            }}
-                          >
-                            <td>
-                              <div className="bm-barangay-cell">
-                                <div className="bm-brgy-icon">
-                                  <FontAwesomeIcon icon={faLocationDot} />
-                                </div>
-                                <div>
-                                  <strong className="bm-cell-strong">{b.name}</strong>
-                                  <div className="bm-cell-sub">
-                                    {resCount} residents &bull; {famCount > 0 ? (resCount / famCount).toFixed(1) : 0} avg/fam
-                                  </div>
-                                </div>
-                              </div>
-                            </td>
-                            <td className="bm-col-center">
-                              <span className="bm-household-count">{famCount}</span>
-                            </td>
-                            <td>
-                              <div className="bm-progress-cell">
-                                <div className="bm-progress-meta">
-                                  <span className="bm-progress-numbers">
-                                    <strong>{assignedCount}</strong> of {famCount} assigned
-                                  </span>
-                                  <span className={`bm-pct-chip ${is100 ? "full" : assignPct > 0 ? "partial" : "zero"}`}>
-                                    {assignPct}%
-                                  </span>
-                                </div>
-                                <div className="bm-progress-track">
-                                  <div
-                                    className={`bm-progress-fill ${is100 ? "full" : assignPct > 0 ? "partial" : "zero"}`}
-                                    style={{ width: `${assignPct}%` }}
-                                  />
-                                </div>
-                              </div>
-                            </td>
-                            <td className="bm-col-center">
-                              {unassignedCount > 0 ? (
-                                <span className="bm-status-pill bm-status-pill--near-full">
-                                  <span className="bm-status-dot" aria-hidden="true" />
-                                  Unassigned
-                                </span>
-                              ) : (
-                                <span className="bm-status-pill bm-status-pill--available">
-                                  <span className="bm-status-dot" aria-hidden="true" />
-                                  Sheltered
-                                </span>
-                              )}
-                            </td>
-                            <td className="bm-col-center">
-                              <div className="bm-centers-cell">
-                                <span className="bm-centers-chip">
-                                  <FontAwesomeIcon icon={faBuilding} />
-                                  <span>{centerCount} {centerCount === 1 ? "center" : "centers"}</span>
-                                </span>
-                                <FontAwesomeIcon
-                                  icon={faChevronRight}
-                                  className="bm-row-chevron"
-                                  aria-hidden="true"
-                                />
-                              </div>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+                  <div className="bm-list-rows" role="list">
+                    {paginatedBarangays.map((b) => {
+                      const famCount = Number(
+                        b.household_count ?? b.family_count ?? b.total_families ?? 0
+                      );
+                      const assignedCount = Number(b.assigned_family_count ?? 0);
+                      const unassignedCount = Number(
+                        b.unassigned_family_count ?? Math.max(0, famCount - assignedCount)
+                      );
+                      const resCount = Number(
+                        b.resident_count ?? b.total_residents ?? 0
+                      );
+                      const centerCount = Number(b.evacuation_center_count ?? 0);
+                      const assignPct =
+                        famCount > 0 ? Math.round((assignedCount / famCount) * 100) : 0;
+                      const avgPerFamily =
+                        famCount > 0 ? (resCount / famCount).toFixed(1) : "0";
+                      const statusVariant =
+                        famCount === 0
+                          ? "no-records"
+                          : unassignedCount > 0
+                            ? "unassigned"
+                            : "sheltered";
+                      const pctToneClass =
+                        assignPct >= 100
+                          ? "is-complete"
+                          : assignPct > 0
+                            ? "is-partial"
+                            : "is-zero";
+
+                      return (
+                        <button
+                          key={b.id}
+                          type="button"
+                          role="listitem"
+                          className="bm-list-grid bm-list-row"
+                          aria-label={`Open ${b.name} details`}
+                          onClick={() => openBarangay(b.id, "overview")}
+                        >
+                          {/* BARANGAY */}
+                          <span className="bm-list-brgy-cell">
+                            <span className="bm-list-brgy-tile" aria-hidden="true">
+                              <MapPin size={18} strokeWidth={2} />
+                            </span>
+                            <span className="bm-list-brgy-copy">
+                              <span className="bm-list-brgy-name">{b.name}</span>
+                              <span className="bm-list-brgy-meta">
+                                {resCount} {resCount === 1 ? "resident" : "residents"} &bull;{" "}
+                                {avgPerFamily} avg per family
+                              </span>
+                            </span>
+                          </span>
+
+                          {/* FAMILIES */}
+                          <span className="bm-list-families-cell">
+                            <span className="bm-list-mobile-label">Families</span>
+                            <span className="bm-list-families-num">{famCount}</span>
+                          </span>
+
+                          {/* SHELTER ASSIGNMENT */}
+                          <span className="bm-list-assign-cell">
+                            <span className="bm-list-assign-top">
+                              <span className="bm-list-assign-text">
+                                <strong>{assignedCount}</strong> of {famCount}{" "}
+                                {famCount === 1 ? "family" : "families"} assigned
+                              </span>
+                              <span className={`bm-list-assign-pct ${pctToneClass}`}>
+                                {assignPct}%
+                              </span>
+                            </span>
+                            <ProgressBar
+                              value={assignedCount}
+                              max={Math.max(famCount, 1)}
+                              variant="completion"
+                              ariaLabel={`${b.name} shelter assignment ${assignPct}%`}
+                            />
+                          </span>
+
+                          {/* STATUS */}
+                          <span className="bm-list-status-cell">
+                            <StatusPill variant={statusVariant} />
+                          </span>
+
+                          {/* EVACUATION CENTERS + CHEVRON */}
+                          <span className="bm-list-centers-cell">
+                            <span className="bm-list-center-chip">
+                              <Building2 size={15} strokeWidth={2} aria-hidden="true" />
+                              <span>
+                                {centerCount} {centerCount === 1 ? "center" : "centers"}
+                              </span>
+                            </span>
+                            <ChevronRight
+                              size={16}
+                              strokeWidth={2}
+                              className="bm-list-row-chevron"
+                              aria-hidden="true"
+                            />
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
 
-              {/* Mobile Barangay Cards */}
-              <div className="bm-mobile-stack bm-mobile-only">
-                {paginatedBarangays.map((b) => {
-                  const famCount = Number(
-                    b.household_count ?? b.family_count ?? b.total_families ?? 0
-                  );
-                  const assignedCount = Number(b.assigned_family_count ?? 0);
-                  const unassignedCount = Number(
-                    b.unassigned_family_count ?? Math.max(0, famCount - assignedCount)
-                  );
-                  const resCount = Number(
-                    b.resident_count ?? b.total_residents ?? 0
-                  );
-                  const centerCount = Number(b.evacuation_center_count ?? 0);
-                  const assignPct =
-                    famCount > 0 ? Math.round((assignedCount / famCount) * 100) : 0;
-                  const is100 = assignPct >= 100;
-
-                  return (
-                    <div
-                      key={b.id}
-                      className="bm-mobile-card bm-mobile-clickable-card bm-brgy-compact-card"
-                      tabIndex={0}
-                      role="button"
-                      aria-label={`Open details for ${b.name}`}
-                      onClick={() => openBarangay(b.id, "overview")}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" || e.key === " ") {
-                          e.preventDefault();
-                          openBarangay(b.id, "overview");
-                        }
-                      }}
-                    >
-                      <div className="bm-brgy-card-row1">
-                        <h4 className="bm-mobile-card-title">{b.name}</h4>
-                        <div className="bm-mobile-card-top-right">
-                          {famCount === 0 ? (
-                            <span className="bm-status-pill bm-status-pill--unmapped">
-                              <span className="bm-status-dot" aria-hidden="true" />
-                              No Records
-                            </span>
-                          ) : unassignedCount > 0 ? (
-                            <span className="bm-status-pill bm-status-pill--near-full">
-                              <span className="bm-status-dot" aria-hidden="true" />
-                              Unassigned
-                            </span>
-                          ) : (
-                            <span className="bm-status-pill bm-status-pill--available">
-                              <span className="bm-status-dot" aria-hidden="true" />
-                              Sheltered
-                            </span>
-                          )}
-                          <FontAwesomeIcon
-                            icon={faChevronRight}
-                            className="bm-row-chevron"
-                            aria-hidden="true"
-                          />
-                        </div>
-                      </div>
-
-                      <div className="bm-brgy-card-row2">
-                        {famCount} {famCount === 1 ? "family" : "families"} &middot;{" "}
-                        {resCount} {resCount === 1 ? "resident" : "residents"} &middot;{" "}
-                        {centerCount} {centerCount === 1 ? "center" : "centers"}
-                      </div>
-
-                      <div className="bm-progress-cell bm-brgy-card-progress">
-                        <div className="bm-progress-meta">
-                          <span className="bm-progress-numbers">
-                            <strong>{assignedCount}</strong> of {famCount} assigned
-                          </span>
-                          <span
-                            className={`bm-pct-chip ${
-                              is100 ? "full" : assignPct > 0 ? "partial" : "zero"
-                            }`}
-                          >
-                            {assignPct}%
-                          </span>
-                        </div>
-                        <div className="bm-progress-track">
-                          <div
-                            className={`bm-progress-fill ${
-                              is100 ? "full" : assignPct > 0 ? "partial" : "zero"
-                            }`}
-                            style={{ width: `${assignPct}%` }}
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-
-              </>
-            )}
-
-            {/* Pagination */}
-            {filteredBarangays.length > 0 && (
-              <nav className="bm-pagination" aria-label="Pagination">
-                <span className="bm-pagination-info">
-                  Showing {(safeBrgyPage - 1) * brgyPageSize + 1} to{" "}
-                  {Math.min(safeBrgyPage * brgyPageSize, filteredBarangays.length)} of{" "}
-                  {filteredBarangays.length}
-                </span>
-
-                <div className="bm-pagination-controls">
-                  <label className="bm-pagination-size">
-                    <span className="bm-pagination-size-label">Rows per page</span>
-                    <select
-                      value={brgyPageSize}
-                      onChange={(e) => {
-                        setBrgyPageSize(Number(e.target.value));
-                        setBrgyPage(1);
-                      }}
-                      aria-label="Rows per page"
-                    >
-                      <option value={10}>10</option>
-                      <option value={25}>25</option>
-                      <option value={50}>50</option>
-                    </select>
-                  </label>
-
-                  <button
-                    type="button"
-                    className="btn btn-secondary bm-page-nav-btn"
-                    disabled={safeBrgyPage <= 1}
-                    onClick={() => setBrgyPage((p) => Math.max(1, p - 1))}
-                    aria-label="Previous page"
-                  >
-                    Previous
-                  </button>
-
-                  {totalBrgyPages > 1 && (
-                    <div className="bm-pagination-pages">
-                      {brgyPaginationItems.map((item) =>
-                        typeof item === "string" ? (
-                          <span
-                            key={item}
-                            className="bm-pagination-ellipsis"
-                            aria-hidden="true"
-                          >
-                            …
-                          </span>
-                        ) : (
-                          <button
-                            key={item}
-                            type="button"
-                            className={`bm-page-num-btn ${
-                              item === safeBrgyPage ? "is-active" : ""
-                            }`}
-                            aria-label={`Page ${item}`}
-                            aria-current={item === safeBrgyPage ? "page" : undefined}
-                            onClick={() => setBrgyPage(item)}
-                          >
-                            {item}
-                          </button>
-                        )
-                      )}
-                    </div>
-                  )}
-
-                  <span className="bm-pagination-page">
-                    Page {safeBrgyPage} of {totalBrgyPages}
+                {/* Footer: Showing X of Y + Previous / Next */}
+                <footer className="bm-list-footer">
+                  <span className="bm-list-footer-info">
+                    {totalBrgyPages > 1
+                      ? `Showing ${pageRangeStart}–${pageRangeEnd} of ${filteredBarangays.length} barangays`
+                      : `Showing ${filteredBarangays.length} of ${barangays.length} ${
+                          barangays.length === 1 ? "barangay" : "barangays"
+                        }`}
                   </span>
 
-                  <button
-                    type="button"
-                    className="btn btn-secondary bm-page-nav-btn"
-                    disabled={safeBrgyPage >= totalBrgyPages}
-                    onClick={() => setBrgyPage((p) => Math.min(totalBrgyPages, p + 1))}
-                    aria-label="Next page"
-                  >
-                    Next
-                  </button>
-                </div>
-              </nav>
+                  <div className="bm-list-footer-nav">
+                    <Button
+                      variant="secondary"
+                      className="bm-list-page-btn"
+                      disabled={safeBrgyPage <= 1}
+                      onClick={() => setBrgyPage((p) => Math.max(1, p - 1))}
+                    >
+                      Previous
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      className="bm-list-page-btn"
+                      disabled={safeBrgyPage >= totalBrgyPages}
+                      onClick={() => setBrgyPage((p) => Math.min(totalBrgyPages, p + 1))}
+                    >
+                      Next
+                    </Button>
+                  </div>
+                </footer>
+              </>
             )}
-          </div>
+          </section>
         </div>
       ) : (
         /* =========================================================
-           PAGE B: BARANGAY DASHBOARD
+           PAGE B: BARANGAY DETAIL
            ========================================================= */
-        <div className="bm-dashboard">
-          {/* Executive Barangay Hero Header Banner */}
+        <div className="bm-detail-shell">
+          {/* Redesigned Barangay Detail Header (Tabs live in URL: ?tab=overview | ?tab=families) */}
           {!isBarangayHouseholdDetailOpen && (
-            <div className="bm-hero-header">
-            <div className="bm-hero-topline">
-              <nav className="bm-hero-breadcrumb" aria-label="Breadcrumb">
-                <button
-                  type="button"
-                  className="bm-hero-breadcrumb-link"
-                  onClick={closeBarangay}
+            <header className="bm-detail-header">
+              {/* Breadcrumb: back arrow, Barangays > barangay name */}
+              <nav className="bm-detail-breadcrumb" aria-label="Breadcrumb">
+                <Link
+                  to={barangaysTabHref}
+                  className="bm-detail-breadcrumb-link"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    closeBarangay();
+                  }}
                 >
-                  <FontAwesomeIcon icon={faArrowLeft} className="bm-hero-breadcrumb-icon" />
+                  <ArrowLeft size={16} strokeWidth={2} aria-hidden="true" />
                   <span>Barangays</span>
-                </button>
-                <FontAwesomeIcon
-                  icon={faChevronRight}
-                  className="bm-hero-breadcrumb-sep"
+                </Link>
+                <ChevronRight
+                  size={15}
+                  strokeWidth={2}
+                  className="bm-detail-breadcrumb-sep"
                   aria-hidden="true"
                 />
-                <span className="bm-hero-breadcrumb-current">{selectedBarangay.name}</span>
+                <span className="bm-detail-breadcrumb-current" aria-current="page">
+                  {selectedBarangay.name}
+                </span>
               </nav>
-            </div>
 
-            <div className="bm-hero-main">
-              <div className="bm-hero-title-row">
-                <h2 className="bm-hero-title">{selectedBarangay.name}</h2>
-                <span className={`bm-hero-badge ${selectedBarangayStats.unassignedHouseholds === 0 ? "complete" : "pending"}`}>
-                  <FontAwesomeIcon icon={selectedBarangayStats.unassignedHouseholds === 0 ? faCircleCheck : faTriangleExclamation} />
-                  {selectedBarangayStats.unassignedHouseholds === 0 ? "100% Sheltered" : `${selectedBarangayStats.unassignedHouseholds} Unassigned`}
-                </span>
-              </div>
-              <div className="bm-hero-chips">
-                <span className="bm-hero-chip location">
-                  Sogod Municipality
-                </span>
-                <span className="bm-hero-chip census">
-                  Census Year 2026
-                </span>
-              </div>
-              <div className="bm-hero-actions">
-                <button
-                  type="button"
-                  className="bm-header-btn-primary"
-                  onClick={() => familyActionsRef.current?.openAddFamilyWizard?.()}
-                >
-                  <FontAwesomeIcon icon={faPlus} />
-                  <span>Add Family</span>
-                </button>
-                <button
-                  type="button"
-                  className="bm-header-btn-secondary"
-                  aria-label="Export CSV"
-                  title="Export CSV"
-                  onClick={() => familyActionsRef.current?.exportFamilies?.()}
-                >
-                  <FontAwesomeIcon icon={faDownload} />
-                  <span className="bm-export-btn-label">Export CSV</span>
-                </button>
-              </div>
-            </div>
-
-            {/* Plain Underline Tab Switcher */}
-            <div className="bm-segmented-tabs" role="tablist" aria-label="Barangay detail sections">
-              <button
-                type="button"
-                role="tab"
-                aria-selected={barangaySection === "overview"}
-                className={`bm-segmented-tab ${barangaySection === "overview" ? "active" : ""}`}
-                onClick={() => {
-                  setBarangaySection("overview");
-                  setSelectedCenterId(null);
-                  setSelectedRoomId(null);
-                }}
-              >
-                <FontAwesomeIcon icon={faLayerGroup} className="bm-tab-icon" />
-                <span className="bm-tab-label">Overview</span>
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={barangaySection === "households"}
-                className={`bm-segmented-tab ${barangaySection === "households" ? "active" : ""}`}
-                onClick={() => openHouseholdsSection()}
-              >
-                <FontAwesomeIcon icon={faPeopleGroup} className="bm-tab-icon" />
-                <span className="bm-tab-label">Families</span>
-                <span className="bm-tab-count">{selectedBarangayStats.totalHouseholds}</span>
-              </button>
-            </div>
-            </div>
-          )}
-
-          {barangaySection === "overview" && (() => {
-            const totalHH = selectedBarangayStats.totalHouseholds;
-            const assignedHH = selectedBarangayStats.assignedHouseholds;
-            const unassignedHH = selectedBarangayStats.unassignedHouseholds;
-            const assignPct =
-              totalHH > 0
-                ? Math.min(100, Math.round((assignedHH / totalHH) * 100))
-                : 0;
-            const unassignPct = totalHH > 0 ? Math.max(0, 100 - assignPct) : 0;
-            const avgFamilySize =
-              totalHH > 0
-                ? (selectedBarangayStats.totalResidents / totalHH).toFixed(1)
-                : "0";
-
-            const donutRadius = 48;
-            const donutCircumference = 2 * Math.PI * donutRadius;
-            const hasBothSegments = assignedHH > 0 && unassignedHH > 0;
-            const gapLen = hasBothSegments ? 14 : 0;
-            const rawAssignedArc =
-              totalHH > 0 ? (assignedHH / totalHH) * donutCircumference : 0;
-            const rawUnassignedArc =
-              totalHH > 0 ? Math.max(0, donutCircumference - rawAssignedArc) : 0;
-            const assignedArc =
-              assignedHH > 0 ? Math.max(4, rawAssignedArc - gapLen) : 0;
-            const unassignedArc =
-              unassignedHH > 0 ? Math.max(4, rawUnassignedArc - gapLen) : 0;
-            const assignedOffset = hasBothSegments ? -gapLen / 2 : 0;
-            const unassignedOffset = hasBothSegments
-              ? -(rawAssignedArc + gapLen / 2)
-              : 0;
-
-            const summaryText =
-              totalHH === 0
-                ? `No families are currently registered in ${selectedBarangay.name}.`
-                : `${assignedHH} of ${totalHH} families (${assignPct}%) are assigned to a building & room, and ${unassignedHH} (${unassignPct}%) are unassigned.`;
-
-            return (
-              <div className="bm-overview-content">
-                <div className="bm-overview-two-col">
-                  {/* Left (wider): Overview Card */}
-                  <div className="bm-overview-summary-card">
-                    <div className="bm-info-card-header">
-                      <h3 className="bm-info-card-title">Overview</h3>
-                      <button
-                        type="button"
-                        className="btn btn-secondary btn-sm"
-                        onClick={() => openHouseholdsSection()}
-                      >
-                        Manage Families ({totalHH}){" "}
-                        <FontAwesomeIcon icon={faArrowRight} />
-                      </button>
-                    </div>
-
-                    <div className="bm-overview-numbers-grid">
-                      <div className="bm-overview-number-item">
-                        <span className="bm-overview-number-label">Families</span>
-                        <strong className="bm-overview-number-val">
-                          {totalHH}
-                        </strong>
-                      </div>
-                      <div className="bm-overview-number-item">
-                        <span className="bm-overview-number-label">Residents</span>
-                        <strong className="bm-overview-number-val">
-                          {selectedBarangayStats.totalResidents}
-                        </strong>
-                      </div>
-                      <div className="bm-overview-number-item">
-                        <span className="bm-overview-number-label">Assigned</span>
-                        <strong className="bm-overview-number-val text-emerald-700">
-                          {assignedHH}
-                        </strong>
-                      </div>
-                      <div className="bm-overview-number-item">
-                        <span className="bm-overview-number-label">Unassigned</span>
-                        <strong
-                          className={`bm-overview-number-val ${
-                            unassignedHH > 0 ? "text-amber-600" : "text-emerald-700"
-                          }`}
-                        >
-                          {unassignedHH}
-                        </strong>
-                      </div>
-                    </div>
-
-                    {totalHH === 0 ? (
-                      <div className="bm-overview-charts-empty" role="status">
-                        <p className="bm-overview-empty-title">No family data yet</p>
-                        <p className="bm-overview-empty-sub">
-                          Assignment chart will appear once families are registered in {selectedBarangay.name}.
-                        </p>
-                      </div>
+              {/* Title + Status Pill + Meta Chips + Actions */}
+              <div className="bm-detail-header-row">
+                <div className="bm-detail-heading">
+                  <div className="bm-detail-title-line">
+                    <h1 className="bm-detail-title">{selectedBarangay.name}</h1>
+                    {selectedBarangayStats.totalHouseholds === 0 ? (
+                      <StatusPill variant="no-records" label="No families yet" />
+                    ) : selectedBarangayStats.unassignedHouseholds > 0 ? (
+                      <StatusPill
+                        variant="unassigned"
+                        label={`${selectedBarangayStats.unassignedHouseholds} ${
+                          selectedBarangayStats.unassignedHouseholds === 1
+                            ? "family"
+                            : "families"
+                        } unassigned`}
+                      />
                     ) : (
-                      /* Donut Chart: Assigned vs Unassigned */
-                      <div className="bm-overview-donut-section">
-                        <div
-                          className="bm-donut-wrap"
-                          role="img"
-                          aria-label={`Donut chart: ${assignedHH} assigned (${assignPct}%) and ${unassignedHH} unassigned (${unassignPct}%) families`}
-                        >
-                          <svg
-                            className="bm-donut-svg"
-                            viewBox="0 0 120 120"
-                          >
-                            <circle
-                              className="bm-donut-track"
-                              cx="60"
-                              cy="60"
-                              r={donutRadius}
-                              fill="none"
-                              strokeWidth="8"
-                            />
-                            {unassignedHH > 0 && (
-                              <circle
-                                className="bm-donut-segment unassigned"
-                                cx="60"
-                                cy="60"
-                                r={donutRadius}
-                                fill="none"
-                                strokeWidth="8"
-                                strokeLinecap="round"
-                                strokeDasharray={`${unassignedArc} ${donutCircumference}`}
-                                strokeDashoffset={unassignedOffset}
-                                transform="rotate(-90 60 60)"
-                              >
-                                <title>{`Unassigned: ${unassignedHH} ${unassignedHH === 1 ? "family" : "families"} (${unassignPct}%)`}</title>
-                              </circle>
-                            )}
-                            {assignedHH > 0 && (
-                              <circle
-                                className="bm-donut-segment assigned"
-                                cx="60"
-                                cy="60"
-                                r={donutRadius}
-                                fill="none"
-                                strokeWidth="8"
-                                strokeLinecap="round"
-                                strokeDasharray={`${assignedArc} ${donutCircumference}`}
-                                strokeDashoffset={assignedOffset}
-                                transform="rotate(-90 60 60)"
-                              >
-                                <title>{`Assigned: ${assignedHH} ${assignedHH === 1 ? "family" : "families"} (${assignPct}%)`}</title>
-                              </circle>
-                            )}
-                          </svg>
-                          <div className="bm-donut-center">
-                            <strong className="bm-donut-pct">{assignPct}%</strong>
-                            <span className="bm-donut-caption">Assigned</span>
-                          </div>
-                        </div>
-
-                        <div className="bm-donut-meta">
-                          <span className="bm-overview-progress-sub">
-                            Assigned to building &amp; room
-                          </span>
-                          <div className="bm-donut-legend">
-                            <div
-                              className="bm-donut-legend-item"
-                              data-tooltip={`Assigned: ${assignedHH} ${assignedHH === 1 ? "family" : "families"} (${assignPct}%)`}
-                              title={`Assigned: ${assignedHH} ${assignedHH === 1 ? "family" : "families"} (${assignPct}%)`}
-                            >
-                              <span className="bm-donut-dot assigned" aria-hidden="true" />
-                              <span className="bm-donut-legend-label">Assigned</span>
-                              <strong className="bm-donut-legend-val">
-                                {assignedHH} ({assignPct}%)
-                              </strong>
-                            </div>
-                            <div
-                              className="bm-donut-legend-item"
-                              data-tooltip={`Unassigned: ${unassignedHH} ${unassignedHH === 1 ? "family" : "families"} (${unassignPct}%)`}
-                              title={`Unassigned: ${unassignedHH} ${unassignedHH === 1 ? "family" : "families"} (${unassignPct}%)`}
-                            >
-                              <span className="bm-donut-dot unassigned" aria-hidden="true" />
-                              <span className="bm-donut-legend-label">Unassigned</span>
-                              <strong className="bm-donut-legend-val">
-                                {unassignedHH} ({unassignPct}%)
-                              </strong>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
+                      <StatusPill variant="sheltered" label="All families sheltered" />
                     )}
-
-                    <p className="bm-sr-only">{summaryText}</p>
                   </div>
 
-                  {/* Right (smaller): Barangay Details Card */}
-                  <div className="bm-info-card">
-                    <div className="bm-info-card-header">
-                      <h3 className="bm-info-card-title">Barangay Details</h3>
-                    </div>
-
-                    <dl className="bm-info-list">
-                      <div className="bm-info-row">
-                        <dt className="bm-info-label">Municipality</dt>
-                        <dd className="bm-info-value">
-                          {selectedBarangay.municipality || "Sogod Municipality"}
-                        </dd>
-                      </div>
-                      <div className="bm-info-row">
-                        <dt className="bm-info-label">Census Year</dt>
-                        <dd className="bm-info-value">
-                          {selectedBarangay.census_year || "2026"}
-                        </dd>
-                      </div>
-                      <div className="bm-info-row">
-                        <dt className="bm-info-label">Average family size</dt>
-                        <dd className="bm-info-value">{avgFamilySize}</dd>
-                      </div>
-                      <div className="bm-info-row">
-                        <dt className="bm-info-label">Status</dt>
-                        <dd className="bm-info-value">
-                          {unassignedHH === 0 ? (
-                            <span className="bm-status-pill bm-status-pill--available">
-                              <span className="bm-status-dot" aria-hidden="true" />
-                              Sheltered
-                            </span>
-                          ) : (
-                            <span className="bm-status-pill bm-status-pill--near-full">
-                              <span className="bm-status-dot" aria-hidden="true" />
-                              Unassigned
-                            </span>
-                          )}
-                        </dd>
-                      </div>
-                    </dl>
+                  <div className="bm-detail-meta-chips">
+                    <span className="bm-detail-meta-chip">
+                      <MapPin size={14} strokeWidth={2} aria-hidden="true" />
+                      <span>{selectedBarangay.municipality || "Sogod Municipality"}</span>
+                    </span>
+                    <span className="bm-detail-meta-chip">
+                      <Calendar size={14} strokeWidth={2} aria-hidden="true" />
+                      <span>Census Year {selectedBarangay.census_year || "2026"}</span>
+                    </span>
                   </div>
                 </div>
+
+                <div className="bm-detail-header-actions">
+                  <Button
+                    variant="secondary"
+                    onClick={() => familyActionsRef.current?.exportFamilies?.()}
+                  >
+                    <Download size={16} strokeWidth={2} aria-hidden="true" />
+                    <span>Export CSV</span>
+                  </Button>
+                  <Button
+                    variant="primary"
+                    onClick={() => familyActionsRef.current?.openAddFamilyWizard?.()}
+                  >
+                    <Plus size={16} strokeWidth={2} aria-hidden="true" />
+                    <span>Add Family</span>
+                  </Button>
+                </div>
               </div>
-            );
-          })()}
+
+              {/* Underline Tabs: Overview & Families (URL-driven) */}
+              <div
+                className="bm-detail-tabs"
+                role="tablist"
+                aria-label="Barangay detail sections"
+              >
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={barangaySection === "overview"}
+                  tabIndex={barangaySection === "overview" ? 0 : -1}
+                  className={`bm-detail-tab ${
+                    barangaySection === "overview" ? "is-active" : ""
+                  }`}
+                  onClick={() => {
+                    setSelectedCenterId(null);
+                    setSelectedRoomId(null);
+                    setFamilyScreen("list");
+                    setBarangayDetailTab("overview");
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+                      e.preventDefault();
+                      openHouseholdsSection();
+                    }
+                  }}
+                >
+                  <LayoutGrid size={16} strokeWidth={2} aria-hidden="true" />
+                  <span>Overview</span>
+                </button>
+
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={barangaySection === "households"}
+                  tabIndex={barangaySection === "households" ? 0 : -1}
+                  className={`bm-detail-tab ${
+                    barangaySection === "households" ? "is-active" : ""
+                  }`}
+                  onClick={() => openHouseholdsSection()}
+                  onKeyDown={(e) => {
+                    if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+                      e.preventDefault();
+                      setSelectedCenterId(null);
+                      setSelectedRoomId(null);
+                      setFamilyScreen("list");
+                      setBarangayDetailTab("overview");
+                    }
+                  }}
+                >
+                  <Users size={16} strokeWidth={2} aria-hidden="true" />
+                  <span>Families</span>
+                  <span className="bm-detail-tab-count">
+                    {selectedBarangayStats.totalHouseholds}
+                  </span>
+                </button>
+              </div>
+            </header>
+          )}
+
+          {barangaySection === "overview" && (
+            <div className="bm-ov-stack">
+              {/* 4 StatCards: Families, Residents, Assigned, Unassigned */}
+              <section className="bm-ov-stats-grid" aria-label="Barangay summary">
+                <StatCard
+                  icon={Home}
+                  iconTone="primary"
+                  label="Families"
+                  value={overviewMetrics.totalHH}
+                  showProgress={false}
+                  footer={`${overviewMetrics.avgFamilySize} avg per family`}
+                />
+                <StatCard
+                  icon={Users}
+                  iconTone="neutral"
+                  label="Residents"
+                  value={selectedBarangayStats.totalResidents}
+                  showProgress={false}
+                  footer="Registered in census"
+                />
+                <StatCard
+                  icon={CheckCircle2}
+                  iconTone="success"
+                  label="Assigned"
+                  value={overviewMetrics.assignedHH}
+                  of={overviewMetrics.totalHH}
+                  showProgress={true}
+                  progressValue={overviewMetrics.assignedHH}
+                  progressMax={Math.max(overviewMetrics.totalHH, 1)}
+                  progressVariant="completion"
+                  footer={`${overviewMetrics.assignPct}% of families sheltered`}
+                />
+                <StatCard
+                  icon={overviewMetrics.unassignedHH > 0 ? AlertTriangle : ShieldCheck}
+                  iconTone={overviewMetrics.unassignedHH > 0 ? "warn" : "success"}
+                  label="Unassigned"
+                  value={overviewMetrics.unassignedHH}
+                  showProgress={false}
+                  footer={
+                    overviewMetrics.unassignedHH > 0
+                      ? "Still need a room"
+                      : "All families assigned"
+                  }
+                />
+              </section>
+
+              {/* Two Columns: Shelter assignment (left) + Barangay details (right) */}
+              <div className="bm-ov-grid">
+                {/* Left: Shelter assignment card */}
+                <section
+                  className="bm-ov-card bm-ov-assignment-card"
+                  aria-labelledby="bm-ov-assignment-title"
+                >
+                  <div className="bm-ov-card-header">
+                    <h2 id="bm-ov-assignment-title" className="bm-ov-card-title">
+                      Shelter assignment
+                    </h2>
+                    <Button
+                      variant="secondary"
+                      className="bm-ov-manage-btn"
+                      onClick={() => openHouseholdsSection()}
+                    >
+                      <span>Manage families ({overviewMetrics.totalHH})</span>
+                      <ArrowRight size={16} strokeWidth={2} aria-hidden="true" />
+                    </Button>
+                  </div>
+
+                  {overviewMetrics.totalHH === 0 ? (
+                    <div className="bm-ov-empty" role="status">
+                      <span className="bm-ov-empty-icon" aria-hidden="true">
+                        <Users size={20} strokeWidth={2} />
+                      </span>
+                      <h3>No families registered yet</h3>
+                      <p>
+                        The shelter assignment breakdown will appear once families are registered in{" "}
+                        {selectedBarangay.name}.
+                      </p>
+                      <Button
+                        variant="primary"
+                        onClick={() => familyActionsRef.current?.openAddFamilyWizard?.()}
+                      >
+                        <Plus size={16} strokeWidth={2} aria-hidden="true" />
+                        <span>Add Family</span>
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="bm-ov-donut-layout">
+                      <div
+                        className="bm-ov-donut-wrap"
+                        role="img"
+                        aria-label={`Shelter assignment: ${overviewMetrics.assignedHH} assigned (${overviewMetrics.assignPct}%) and ${overviewMetrics.unassignedHH} unassigned (${overviewMetrics.unassignPct}%) out of ${overviewMetrics.totalHH} families`}
+                      >
+                        <svg className="bm-ov-donut-svg" viewBox="0 0 140 140" aria-hidden="true">
+                          <circle
+                            className="bm-ov-donut-track"
+                            cx="70"
+                            cy="70"
+                            r={overviewMetrics.radius}
+                            fill="none"
+                            strokeWidth="12"
+                          />
+                          {overviewMetrics.unassignedHH > 0 && (
+                            <circle
+                              className="bm-ov-donut-arc is-unassigned"
+                              cx="70"
+                              cy="70"
+                              r={overviewMetrics.radius}
+                              fill="none"
+                              strokeWidth="12"
+                              strokeLinecap="round"
+                              strokeDasharray={`${overviewMetrics.unassignedArc} ${overviewMetrics.circumference}`}
+                              strokeDashoffset={overviewMetrics.unassignedOffset}
+                              transform="rotate(-90 70 70)"
+                            />
+                          )}
+                          {overviewMetrics.assignedHH > 0 && (
+                            <circle
+                              className={`bm-ov-donut-arc ${
+                                overviewMetrics.assignPct >= 100 ? "is-complete" : "is-assigned"
+                              }`}
+                              cx="70"
+                              cy="70"
+                              r={overviewMetrics.radius}
+                              fill="none"
+                              strokeWidth="12"
+                              strokeLinecap="round"
+                              strokeDasharray={`${overviewMetrics.assignedArc} ${overviewMetrics.circumference}`}
+                              strokeDashoffset={overviewMetrics.assignedOffset}
+                              transform="rotate(-90 70 70)"
+                            />
+                          )}
+                        </svg>
+                        <div className="bm-ov-donut-center" aria-hidden="true">
+                          <strong className="bm-ov-donut-pct">{overviewMetrics.assignPct}%</strong>
+                          <span className="bm-ov-donut-caption">Assigned</span>
+                        </div>
+                      </div>
+
+                      <div className="bm-ov-legend-col">
+                        <div className="bm-ov-legend-list">
+                          <div className="bm-ov-legend-item">
+                            <span className="bm-ov-legend-left">
+                              <span
+                                className={`bm-ov-legend-dot ${
+                                  overviewMetrics.assignPct >= 100 ? "is-complete" : "is-assigned"
+                                }`}
+                                aria-hidden="true"
+                              />
+                              <span className="bm-ov-legend-label">Assigned</span>
+                            </span>
+                            <span className="bm-ov-legend-val">
+                              <strong>{overviewMetrics.assignedHH}</strong>{" "}
+                              <span className="bm-ov-legend-pct">
+                                ({overviewMetrics.assignPct}%)
+                              </span>
+                            </span>
+                          </div>
+
+                          <div className="bm-ov-legend-item">
+                            <span className="bm-ov-legend-left">
+                              <span
+                                className="bm-ov-legend-dot is-unassigned"
+                                aria-hidden="true"
+                              />
+                              <span className="bm-ov-legend-label">Unassigned</span>
+                            </span>
+                            <span className="bm-ov-legend-val">
+                              <strong>{overviewMetrics.unassignedHH}</strong>{" "}
+                              <span className="bm-ov-legend-pct">
+                                ({overviewMetrics.unassignPct}%)
+                              </span>
+                            </span>
+                          </div>
+                        </div>
+
+                        <p className="bm-ov-legend-note">
+                          {overviewMetrics.assignedHH} of {overviewMetrics.totalHH}{" "}
+                          {overviewMetrics.totalHH === 1 ? "family is" : "families are"} assigned to
+                          an evacuation building &amp; room.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </section>
+
+                {/* Right: Barangay details card */}
+                <aside
+                  className="bm-ov-card bm-ov-details-card"
+                  aria-labelledby="bm-ov-details-title"
+                >
+                  <div className="bm-ov-card-header">
+                    <h2 id="bm-ov-details-title" className="bm-ov-card-title">
+                      Barangay details
+                    </h2>
+                  </div>
+
+                  <dl className="bm-ov-dl">
+                    <div className="bm-ov-dl-row">
+                      <dt className="bm-ov-dt">Municipality</dt>
+                      <dd className="bm-ov-dd">
+                        {selectedBarangay.municipality || "Sogod Municipality"}
+                      </dd>
+                    </div>
+                    <div className="bm-ov-dl-row">
+                      <dt className="bm-ov-dt">Census year</dt>
+                      <dd className="bm-ov-dd">
+                        {selectedBarangay.census_year || "2026"}
+                      </dd>
+                    </div>
+                    <div className="bm-ov-dl-row">
+                      <dt className="bm-ov-dt">Average family size</dt>
+                      <dd className="bm-ov-dd">{overviewMetrics.avgFamilySize} members</dd>
+                    </div>
+                    <div className="bm-ov-dl-row">
+                      <dt className="bm-ov-dt">Status</dt>
+                      <dd className="bm-ov-dd">
+                        <StatusPill
+                          variant={
+                            overviewMetrics.totalHH === 0
+                              ? "no-records"
+                              : overviewMetrics.unassignedHH > 0
+                                ? "unassigned"
+                                : "sheltered"
+                          }
+                        />
+                      </dd>
+                    </div>
+                  </dl>
+                </aside>
+              </div>
+            </div>
+          )}
 
           <FamilyManagement
             key={`${selectedBarangay.id}-${initialFamilyIdToOpen || "list"}`}

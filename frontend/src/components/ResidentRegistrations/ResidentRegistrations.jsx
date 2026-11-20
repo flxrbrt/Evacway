@@ -1,56 +1,30 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { useSearchParams } from "react-router-dom";
 import {
-  faCheck,
-  faCircleCheck,
-  faCircleNotch,
-  faCircleXmark,
-  faClock,
-  faEllipsisVertical,
-  faEnvelope,
-  faInfoCircle,
-  faLayerGroup,
-  faMagnifyingGlass,
-  faTriangleExclamation,
-  faUserPlus,
-  faXmark,
-} from "@fortawesome/free-solid-svg-icons";
+  AlertTriangle,
+  Check,
+  CheckCircle2,
+  ChevronRight,
+  Clock,
+  Info,
+  Layers,
+  Loader2,
+  Mail,
+  Pencil,
+  Search,
+  UserCheck,
+  UserPlus,
+  X,
+  XCircle,
+} from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { api } from "../../services/api";
-import { queryKeys } from "../../hooks/useEvacuationQueries";
+import { queryKeys, useBarangays } from "../../hooks/useEvacuationQueries";
+import { Button, StatCard, StatusPill } from "../ui";
 import CreateResidentAccountModal from "./CreateResidentAccountModal";
 import "./ResidentRegistrations.css";
 
-const STATUS_CARDS = [
-  {
-    id: "all",
-    label: "All",
-    sub: "Every registration",
-    icon: faLayerGroup,
-    variant: "neutral",
-  },
-  {
-    id: "pending",
-    label: "Pending",
-    sub: "Awaiting review",
-    icon: faClock,
-    variant: "pending",
-  },
-  {
-    id: "approved",
-    label: "Approved",
-    sub: "Linked to roster",
-    icon: faCircleCheck,
-    variant: "resolved",
-  },
-  {
-    id: "rejected",
-    label: "Rejected",
-    sub: "Not accepted",
-    icon: faCircleXmark,
-    variant: "alert",
-  },
-];
+const VALID_STATUS_FILTERS = ["all", "pending", "approved", "rejected"];
 
 const COMPARISON_FIELDS = [
   { id: "name", label: "Full name", flag: "name", format: (record) => record.full_name || joinName(record) },
@@ -160,29 +134,18 @@ function matchesAutosuggestRecord(resident, suggestion) {
   );
 }
 
-/**
- * Maps resident registration status to standardized pill variant classes
- * matching CenterList ec-status-pill pattern:
- * - pending → --pending (info/blue)
- * - approved → --available (success/green)
- * - rejected → --full (danger/red)
- */
-function getResidentStatusPillClass(status) {
-  switch (status) {
-    case "pending":
-      return "resident-registration-status--pending";
-    case "approved":
-      return "resident-registration-status--available";
-    case "rejected":
-      return "resident-registration-status--full";
-    default:
-      return "resident-registration-status--pending";
-  }
-}
-
 export default function ResidentRegistrations({ focusRegistrationId = null }) {
   const queryClient = useQueryClient();
-  const [activeStatus, setActiveStatus] = useState("all");
+  const barangaysQuery = useBarangays();
+  const barangayOptions = useMemo(() => {
+    const raw = Array.isArray(barangaysQuery.data) ? barangaysQuery.data : [];
+    return raw
+      .map((item) => (typeof item === "string" ? item : item?.name || ""))
+      .filter(Boolean);
+  }, [barangaysQuery.data]);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const rawFilter = String(searchParams.get("filter") || "all").toLowerCase();
+  const activeStatus = VALID_STATUS_FILTERS.includes(rawFilter) ? rawFilter : "all";
   const [search, setSearch] = useState("");
   const [requests, setRequests] = useState([]);
   const [allRequests, setAllRequests] = useState([]);
@@ -209,15 +172,29 @@ export default function ResidentRegistrations({ focusRegistrationId = null }) {
   const [resetLoading, setResetLoading] = useState(false);
   const [resetCooldowns, setResetCooldowns] = useState({});
   const [nowMs, setNowMs] = useState(() => Date.now());
+  const [isEditingInfo, setIsEditingInfo] = useState(false);
+  const [editSaving, setEditSaving] = useState(false);
+  const [editError, setEditError] = useState("");
+  const [editForm, setEditForm] = useState({
+    first_name: "",
+    middle_name: "",
+    last_name: "",
+    birthdate: "",
+    barangay: "",
+    address: "",
+    contact_number: "",
+    email: "",
+  });
 
-  // Manual account modal, pagination, mobile menu & toast notification state
+  // Manual account modal, pagination & toast notification state
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
-  const [openMobileMenuId, setOpenMobileMenuId] = useState(null);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [toast, setToast] = useState(null);
 
   const dialogRef = useRef(null);
+  const confirmOverlayRef = useRef(null);
+  const lastActiveRowRef = useRef(null);
   const listRequestRef = useRef(0);
   const listScrollRef = useRef(null);
   const actionLockRef = useRef(false);
@@ -269,6 +246,22 @@ export default function ResidentRegistrations({ focusRegistrationId = null }) {
     return () => window.clearTimeout(timer);
   }, [refreshKey, refreshList, search]);
 
+  const handleStatusFilterChange = useCallback(
+    (nextStatus) => {
+      const safeStatus = VALID_STATUS_FILTERS.includes(nextStatus) ? nextStatus : "all";
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          next.set("filter", safeStatus);
+          return next;
+        },
+        { replace: true }
+      );
+      setPage(1);
+    },
+    [setSearchParams]
+  );
+
   useEffect(() => {
     if (focusRegistrationId == null) {
       handledFocusIdRef.current = null;
@@ -282,12 +275,12 @@ export default function ResidentRegistrations({ focusRegistrationId = null }) {
     handledFocusIdRef.current = String(focusRegistrationId);
     const timer = window.setTimeout(() => {
       if (match.status && match.status !== activeStatus) {
-        setActiveStatus(match.status);
+        handleStatusFilterChange(match.status);
       }
       openReview(match);
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [focusRegistrationId, allRequests, activeStatus]);
+  }, [focusRegistrationId, allRequests, activeStatus, handleStatusFilterChange]);
 
   useEffect(() => {
     if (!selectedRequest) return undefined;
@@ -300,11 +293,47 @@ export default function ResidentRegistrations({ focusRegistrationId = null }) {
 
     let active = true;
     api.getResidentRegistrationMatches(selectedRequest.id)
-      .then((result) => {
+      .then(async (result) => {
         if (!active) return;
-        setMatchResult(result);
-        const available = (result.matches || []).filter((item) => item.available);
-        if (result.status === "match" && available.length === 1) {
+        let nextResult = result;
+        const linkedId = selectedRequest.matched_resident_id;
+        const apiMatches = result?.matches || [];
+        const hasLinkedInMatches =
+          linkedId != null &&
+          apiMatches.some((item) => getMatchResidentId(item) === linkedId);
+
+        if (
+          selectedRequest.status === "approved" &&
+          linkedId != null &&
+          !hasLinkedInMatches
+        ) {
+          try {
+            const allResidents = await api.getResidents();
+            if (!active) return;
+            const linkedResident = (Array.isArray(allResidents) ? allResidents : []).find(
+              (r) => String(r.id) === String(linkedId)
+            );
+            if (linkedResident) {
+              const linkedRecord = {
+                ...getRosterRecord(linkedResident),
+                already_linked: true,
+                available: false,
+              };
+              nextResult = {
+                ...result,
+                status: "match",
+                matches: [linkedRecord, ...apiMatches],
+              };
+            }
+          } catch {
+            // Fall back to showing matched_resident_id in the banner
+          }
+        }
+
+        if (!active) return;
+        setMatchResult(nextResult);
+        const available = (nextResult.matches || []).filter((item) => item.available);
+        if (nextResult.status === "match" && available.length === 1) {
           setSelectedResident(available[0]);
         }
       })
@@ -328,59 +357,62 @@ export default function ResidentRegistrations({ focusRegistrationId = null }) {
     return visibleRequests.slice(start, start + pageSize);
   }, [visibleRequests, safePage, pageSize]);
 
-  const paginationItems = useMemo(() => {
-    if (totalPages <= 5) {
-      return Array.from({ length: totalPages }, (_, i) => i + 1);
-    }
-    const pages = Array.from(
-      new Set(
-        [1, totalPages, safePage - 1, safePage, safePage + 1].filter(
-          (p) => p >= 1 && p <= totalPages
-        )
-      )
-    ).sort((a, b) => a - b);
-
-    const items = [];
-    for (let i = 0; i < pages.length; i++) {
-      const p = pages[i];
-      const prev = pages[i - 1];
-      if (i > 0) {
-        if (p - prev === 2) {
-          items.push(prev + 1);
-        } else if (p - prev > 2) {
-          items.push(`ellipsis-${prev}`);
-        }
-      }
-      items.push(p);
-    }
-    return items;
-  }, [totalPages, safePage]);
-
   useEffect(() => {
     if (listScrollRef.current) {
       listScrollRef.current.scrollTop = 0;
     }
   }, [page, pageSize, activeStatus]);
 
+  // Explicit keyboard Tab focus-trap and Escape close for Review Modal & Confirm Dialog
   useEffect(() => {
-    if (openMobileMenuId == null) return undefined;
-    const handleOutsideClick = (event) => {
-      if (!event.target.closest?.(".resident-mobile-menu-anchor")) {
-        setOpenMobileMenuId(null);
-      }
-    };
+    if (!selectedRequest) return undefined;
     const handleKeyDown = (event) => {
       if (event.key === "Escape") {
-        setOpenMobileMenuId(null);
+        if (confirmModal) {
+          event.preventDefault();
+          event.stopPropagation();
+          if (!actionLoading && !resetLoading) {
+            setConfirmModal(null);
+          }
+          return;
+        }
+        if (actionLoading || resetLoading) {
+          event.preventDefault();
+        }
+        return;
+      }
+
+      if (event.key === "Tab") {
+        const container = confirmModal ? confirmOverlayRef.current : dialogRef.current;
+        if (!container) return;
+        const focusables = Array.from(
+          container.querySelectorAll(
+            'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+          )
+        ).filter((el) => el.offsetParent !== null);
+
+        if (focusables.length === 0) {
+          event.preventDefault();
+          return;
+        }
+
+        const first = focusables[0];
+        const last = focusables[focusables.length - 1];
+        if (event.shiftKey) {
+          if (document.activeElement === first || !container.contains(document.activeElement)) {
+            event.preventDefault();
+            last.focus();
+          }
+        } else if (document.activeElement === last || !container.contains(document.activeElement)) {
+          event.preventDefault();
+          first.focus();
+        }
       }
     };
-    document.addEventListener("mousedown", handleOutsideClick);
-    document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("mousedown", handleOutsideClick);
-      document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [openMobileMenuId]);
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [selectedRequest, confirmModal, actionLoading, resetLoading]);
 
   const activeCooldownExpiresAt = selectedRequest ? resetCooldowns[selectedRequest.id] || 0 : 0;
   useEffect(() => {
@@ -398,7 +430,7 @@ export default function ResidentRegistrations({ focusRegistrationId = null }) {
   }, [activeCooldownExpiresAt]);
 
   function closeReview() {
-    if (actionLoading || resetLoading) return;
+    if (actionLoading || resetLoading || editSaving) return;
     dialogRef.current?.close();
   }
 
@@ -410,10 +442,19 @@ export default function ResidentRegistrations({ focusRegistrationId = null }) {
     setDecisionResult(null);
     setConfirmModal(null);
     setActionError("");
+    setIsEditingInfo(false);
+    setEditError("");
+    window.setTimeout(() => {
+      if (lastActiveRowRef.current && typeof lastActiveRowRef.current.focus === "function") {
+        lastActiveRowRef.current.focus();
+      }
+    }, 30);
   }
 
   function openReview(registration, options = {}) {
-    setOpenMobileMenuId(null);
+    if (options.triggerEl) {
+      lastActiveRowRef.current = options.triggerEl;
+    }
     setMatchResult(null);
     setSelectedResident(null);
     setMatchError("");
@@ -426,7 +467,77 @@ export default function ResidentRegistrations({ focusRegistrationId = null }) {
     setManualError("");
     setConfirmModal(options.openReject ? "reject" : null);
     setRejectionReason("");
+    setIsEditingInfo(false);
+    setEditError("");
     setSelectedRequest(registration);
+  }
+
+  function startEditingInfo() {
+    if (!selectedRequest) return;
+    setEditForm({
+      first_name: selectedRequest.first_name || "",
+      middle_name: selectedRequest.middle_name || "",
+      last_name: selectedRequest.last_name || "",
+      birthdate: selectedRequest.birthdate ? String(selectedRequest.birthdate).slice(0, 10) : "",
+      barangay: selectedRequest.barangay || "",
+      address: selectedRequest.address || "",
+      contact_number: selectedRequest.contact_number || "",
+      email: selectedRequest.account_email || selectedRequest.email || "",
+    });
+    setEditError("");
+    setIsEditingInfo(true);
+  }
+
+  function cancelEditingInfo() {
+    if (editSaving) return;
+    setIsEditingInfo(false);
+    setEditError("");
+  }
+
+  async function saveRegistrationEdit(event) {
+    event.preventDefault();
+    if (!selectedRequest || editSaving) return;
+    setEditSaving(true);
+    setEditError("");
+    try {
+      const result = await api.updateResidentRegistration(selectedRequest.id, {
+        first_name: editForm.first_name.trim(),
+        middle_name: editForm.middle_name.trim(),
+        last_name: editForm.last_name.trim(),
+        birthdate: editForm.birthdate.trim(),
+        barangay: editForm.barangay.trim(),
+        address: editForm.address.trim(),
+        contact_number: editForm.contact_number.trim(),
+        email: editForm.email.trim().toLowerCase(),
+      });
+      const updatedReq = result.request || selectedRequest;
+      const updatedMatches = result.matches || null;
+
+      setSelectedRequest(updatedReq);
+      if (updatedMatches) {
+        setMatchResult(updatedMatches);
+        setMatchError("");
+        const available = (updatedMatches.matches || []).filter((item) => item.available);
+        if (updatedReq.status === "pending") {
+          setSelectedResident(
+            updatedMatches.status === "match" && available.length === 1 ? available[0] : null
+          );
+        }
+      }
+      setRequests((prev) =>
+        prev.map((item) => (item.id === updatedReq.id ? { ...item, ...updatedReq } : item))
+      );
+      setAllRequests((prev) =>
+        prev.map((item) => (item.id === updatedReq.id ? { ...item, ...updatedReq } : item))
+      );
+      setIsEditingInfo(false);
+      setRefreshKey((k) => k + 1);
+      showToast(result.message || "Account info updated and roster match re-analyzed.", "success");
+    } catch (error) {
+      setEditError(error.message || "Could not update registration info.");
+    } finally {
+      setEditSaving(false);
+    }
   }
 
   function selectMatch(match) {
@@ -611,16 +722,16 @@ export default function ResidentRegistrations({ focusRegistrationId = null }) {
 
     return (
       <div
-        className={`resident-match-card ${isSelected ? "is-selected" : ""} ${!isAvailable ? "is-unavailable" : ""}`}
+        className={`rr-match-card ${isSelected ? "is-selected" : ""} ${!isAvailable ? "is-unavailable" : ""}`}
         key={residentId ?? rosterName}
       >
-        <div className="resident-match-card-header">
-          <div className="resident-match-identity">
-            <strong className="resident-match-name">{rosterName}</strong>
+        <div className="rr-match-card-header">
+          <div className="rr-match-identity">
+            <strong className="rr-match-name">{rosterName}</strong>
             {(residentId != null || rosterBarangay) && (
-              <div className="resident-match-meta">
-                {residentId != null && <span className="resident-match-id">Roster #{residentId}</span>}
-                {rosterBarangay && <span className="resident-match-barangay">{rosterBarangay}</span>}
+              <div className="rr-match-meta">
+                {residentId != null && <span className="rr-match-id">Roster #{residentId}</span>}
+                {rosterBarangay && <span className="rr-match-barangay">{rosterBarangay}</span>}
               </div>
             )}
           </div>
@@ -628,32 +739,31 @@ export default function ResidentRegistrations({ focusRegistrationId = null }) {
             isAvailable ? (
               <button
                 type="button"
-                className={`resident-select-match ${isSelected ? "is-active" : ""}`}
+                className={`rr-select-match-btn ${isSelected ? "is-active" : ""}`}
                 onClick={() => selectMatch(match)}
               >
-                {isSelected && <FontAwesomeIcon icon={faCheck} aria-hidden="true" />}
+                {isSelected && <Check size={14} strokeWidth={2.2} aria-hidden="true" />}
                 <span>{isSelected ? "Selected" : "Select this match"}</span>
               </button>
             ) : (
-              <span className="resident-already-linked-chip">Already linked</span>
+              <span className="rr-already-linked-chip">Already linked</span>
             )
           ) : selectedRequest?.matched_resident_id === residentId ? (
-            <span className="resident-linked-badge">
-              <FontAwesomeIcon icon={faCheck} aria-hidden="true" />
+            <span className="rr-linked-badge">
+              <Check size={13} strokeWidth={2.2} aria-hidden="true" />
               <span>Linked</span>
             </span>
           ) : null}
         </div>
 
-        {/* Desktop Comparison Table */}
-        <div className="resident-comparison-table-wrap">
-          <table className="resident-comparison-table">
+        <div className="rr-table-box">
+          <table className="rr-submitted-table rr-comparison-table">
             <thead>
               <tr>
-                <th scope="col">Field</th>
-                <th scope="col">Submitted</th>
-                <th scope="col">Roster</th>
-                <th scope="col" className="is-match-col">Match</th>
+                <th scope="col">FIELD</th>
+                <th scope="col">SUBMITTED</th>
+                <th scope="col">ROSTER</th>
+                <th scope="col" className="is-match-col">MATCH</th>
               </tr>
             </thead>
             <tbody>
@@ -663,15 +773,16 @@ export default function ResidentRegistrations({ focusRegistrationId = null }) {
                 const matched = isFieldMatched(selectedRequest, match, field);
                 return (
                   <tr key={field.id} className={matched ? "is-match" : "is-mismatch"}>
-                    <td className="resident-cmp-field">{field.label}</td>
-                    <td className="resident-cmp-value">{submittedVal}</td>
-                    <td className="resident-cmp-value">{rosterVal}</td>
-                    <td className="resident-cmp-status">
-                      <span className={`resident-cmp-icon ${matched ? "is-match" : "is-mismatch"}`}>
-                        <FontAwesomeIcon
-                          icon={matched ? faCircleCheck : faTriangleExclamation}
-                          aria-hidden="true"
-                        />
+                    <td className="rr-field-col">{field.label}</td>
+                    <td className="rr-val-col">{submittedVal}</td>
+                    <td className="rr-val-col">{rosterVal}</td>
+                    <td className="rr-match-col">
+                      <span className={`rr-cmp-icon ${matched ? "is-match" : "is-mismatch"}`}>
+                        {matched ? (
+                          <CheckCircle2 size={16} strokeWidth={2} aria-hidden="true" />
+                        ) : (
+                          <AlertTriangle size={16} strokeWidth={2} aria-hidden="true" />
+                        )}
                         <span className="sr-only">{matched ? "Matches" : "Mismatch"}</span>
                       </span>
                     </td>
@@ -680,42 +791,6 @@ export default function ResidentRegistrations({ focusRegistrationId = null }) {
               })}
             </tbody>
           </table>
-        </div>
-
-        {/* Mobile Comparison Cards (<= 768px) */}
-        <div className="resident-comparison-mobile-list">
-          {COMPARISON_FIELDS.map((field) => {
-            const submittedVal = getComparisonValue(selectedRequest, field);
-            const rosterVal = getComparisonValue(residentRecord, field);
-            const matched = isFieldMatched(selectedRequest, match, field);
-            return (
-              <div
-                key={field.id}
-                className={`resident-comparison-mobile-card ${matched ? "is-match" : "is-mismatch"}`}
-              >
-                <div className="resident-comparison-mobile-top">
-                  <span className="resident-comparison-mobile-field">{field.label}</span>
-                  <span className={`resident-cmp-icon ${matched ? "is-match" : "is-mismatch"}`}>
-                    <FontAwesomeIcon
-                      icon={matched ? faCircleCheck : faTriangleExclamation}
-                      aria-hidden="true"
-                    />
-                    <span className="sr-only">{matched ? "Matches" : "Mismatch"}</span>
-                  </span>
-                </div>
-                <div className="resident-comparison-mobile-values">
-                  <div>
-                    <span>Submitted</span>
-                    <strong>{submittedVal}</strong>
-                  </div>
-                  <div>
-                    <span>Roster</span>
-                    <strong>{rosterVal}</strong>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
         </div>
       </div>
     );
@@ -738,16 +813,27 @@ export default function ResidentRegistrations({ focusRegistrationId = null }) {
 
   const activeReferenceMatch = selectedResident || displayedMatches[0] || null;
   const matchBanner = (() => {
+    if (selectedRequest?.status === "approved" && selectedRequest?.matched_resident_id != null) {
+      const linkedRecord = activeReferenceMatch ? getMatchResident(activeReferenceMatch) : null;
+      const linkedName = linkedRecord
+        ? linkedRecord.full_name || joinName(linkedRecord)
+        : "";
+      return {
+        className: "is-success",
+        text: linkedName
+          ? `Linked to ${linkedName} (Roster #${selectedRequest.matched_resident_id})`
+          : `Linked to Roster #${selectedRequest.matched_resident_id}`,
+      };
+    }
     if (!matchResult && !selectedResident) return null;
     if (!activeReferenceMatch || (matchResult?.status === "none" && !selectedResident)) {
-      return { className: "is-neutral", icon: faInfoCircle, text: "No roster match" };
+      return { className: "is-neutral", text: "No roster match" };
     }
     if (allFieldsMatch(selectedRequest, activeReferenceMatch)) {
-      return { className: "is-success", icon: faCircleCheck, text: "Match found" };
+      return { className: "is-success", text: "Match found" };
     }
     return {
       className: "is-warning",
-      icon: faTriangleExclamation,
       text: "Partial match: check the highlighted rows",
     };
   })();
@@ -775,16 +861,14 @@ export default function ResidentRegistrations({ focusRegistrationId = null }) {
       {/* Floating Toast Notification */}
       {toast && (
         <div className={`resident-floating-toast is-${toast.type}`} role="alert">
-          <div className="resident-toast-icon">
-            <FontAwesomeIcon
-              icon={
-                toast.type === "success"
-                  ? faCircleCheck
-                  : toast.type === "error"
-                  ? faTriangleExclamation
-                  : faInfoCircle
-              }
-            />
+          <div className="resident-toast-icon" aria-hidden="true">
+            {toast.type === "success" ? (
+              <CheckCircle2 size={18} strokeWidth={2} />
+            ) : toast.type === "error" ? (
+              <AlertTriangle size={18} strokeWidth={2} />
+            ) : (
+              <Info size={18} strokeWidth={2} />
+            )}
           </div>
           <span className="resident-toast-message">{toast.message}</span>
           <button
@@ -793,300 +877,295 @@ export default function ResidentRegistrations({ focusRegistrationId = null }) {
             onClick={() => setToast(null)}
             aria-label="Dismiss notification"
           >
-            <FontAwesomeIcon icon={faXmark} />
+            <X size={16} strokeWidth={2} aria-hidden="true" />
           </button>
         </div>
       )}
 
-      {/* Header */}
-      <header className="resident-registrations-header">
-        <div className="resident-header-left">
-          <p className="resident-registrations-eyebrow">Resident Management</p>
-          <h1 id="resident-registrations-title">Resident Registrations</h1>
-          <p className="resident-header-description">
+      {/* 1. Top Header */}
+      <header className="rr-header">
+        <div className="rr-header-titles">
+          <span className="rr-label-chip">
+            <span className="rr-label-chip-dot" aria-hidden="true" />
+            <span>Resident management</span>
+          </span>
+          <h1 id="resident-registrations-title" className="rr-title">
+            Resident Registrations
+          </h1>
+          <p className="rr-subtitle">
             Review submitted resident accounts, link verified applicants to the roster, and manually create resident accounts.
           </p>
         </div>
-        <div className="resident-header-actions">
-          <button
-            type="button"
-            className="resident-btn-create-account"
+        <div className="rr-header-actions">
+          <Button
+            variant="primary"
+            className="rr-create-account-btn"
             onClick={() => setIsCreateModalOpen(true)}
           >
-            <FontAwesomeIcon icon={faUserPlus} />
+            <UserPlus size={16} strokeWidth={2} aria-hidden="true" />
             <span>Create Resident Account</span>
-          </button>
-          
+          </Button>
         </div>
       </header>
 
-      {/* Status Filter Stat Cards */}
-      <section className="stat-card-grid cols-4" aria-label="Registration status filters">
-        {STATUS_CARDS.map((card) => {
-          const isSelected = activeStatus === card.id;
-          return (
-            <button
-              key={card.id}
-              type="button"
-              aria-pressed={isSelected}
-              className={`stat-card is-clickable is-${card.variant} ${isSelected ? "is-selected" : ""}`}
-              onClick={() => {
-                setActiveStatus(card.id);
-                setPage(1);
-                setOpenMobileMenuId(null);
-              }}
-            >
-              <div className="stat-card-content">
-                <span className="stat-card-label">{card.label}</span>
-                <strong className="stat-card-value">{counts[card.id]}</strong>
-                <span className="stat-card-hint">{card.sub}</span>
+      {/* 2. 4 Clickable StatCards (?filter=all|pending|approved|rejected) */}
+      {listLoading && allRequests.length === 0 ? (
+        <div className="rr-stats-grid" aria-hidden="true">
+          {Array.from({ length: 4 }).map((_, idx) => (
+            <div key={idx} className="rr-skel-stat-card">
+              <div className="rr-skel-stat-top">
+                <span className="rr-skel rr-skel-tile" />
+                <span className="rr-skel rr-skel-label" />
               </div>
-              <span className={`stat-card-icon stat-card-icon--${card.variant}`} aria-hidden="true">
-                <FontAwesomeIcon icon={card.icon} />
-              </span>
-            </button>
-          );
-        })}
-      </section>
+              <span className="rr-skel rr-skel-value" />
+              <span className="rr-skel rr-skel-helper" />
+            </div>
+          ))}
+        </div>
+      ) : (
+        <section className="rr-stats-grid" aria-label="Filter resident registrations by status">
+          <StatCard
+            icon={Layers}
+            iconTone="primary"
+            label="All"
+            value={counts.all}
+            showProgress={false}
+            helper="Every registration"
+            active={activeStatus === "all"}
+            onClick={() => handleStatusFilterChange("all")}
+          />
+          <StatCard
+            icon={Clock}
+            iconTone="warn"
+            label="Pending"
+            value={counts.pending}
+            showProgress={false}
+            helper="Awaiting review"
+            active={activeStatus === "pending"}
+            onClick={() => handleStatusFilterChange("pending")}
+          />
+          <StatCard
+            icon={CheckCircle2}
+            tint="success"
+            label="Approved"
+            value={counts.approved}
+            showProgress={false}
+            helper="Linked to roster"
+            active={activeStatus === "approved"}
+            onClick={() => handleStatusFilterChange("approved")}
+          />
+          <StatCard
+            icon={XCircle}
+            tint="danger"
+            label="Rejected"
+            value={counts.rejected}
+            showProgress={false}
+            helper="Not accepted"
+            active={activeStatus === "rejected"}
+            onClick={() => handleStatusFilterChange("rejected")}
+          />
+        </section>
+      )}
 
-      {/* Unified Table Card: Toolbar + Scrollable List/Table + Pagination */}
-      <section className="resident-table-card" aria-label="Resident registrations">
+      {/* 3. Single Table Card (--radius-xl): Toolbar + Sticky Header + Rows + Footer */}
+      <section className="rr-table-card" aria-label="Resident registrations">
         {/* Toolbar inside White Card */}
-        <div className="resident-registration-toolbar">
-          <label className="resident-registration-search">
-            <FontAwesomeIcon icon={faMagnifyingGlass} aria-hidden="true" />
-            <span className="sr-only">Search registrations</span>
+        <div className="rr-table-toolbar">
+          <div className="rr-search-field">
+            <Search size={16} strokeWidth={2} className="rr-search-icon" aria-hidden="true" />
             <input
+              type="search"
+              className="rr-search-input"
               value={search}
               onChange={(event) => {
                 setSearch(event.target.value);
                 setPage(1);
-                setOpenMobileMenuId(null);
               }}
               placeholder="Search name, email, contact, barangay..."
+              aria-label="Search registrations"
             />
             {search && (
               <button
                 type="button"
-                className="resident-search-clear-btn"
+                className="rr-search-clear"
                 onClick={() => {
                   setSearch("");
                   setPage(1);
-                  setOpenMobileMenuId(null);
                 }}
                 aria-label="Clear search"
               >
-                <FontAwesomeIcon icon={faXmark} />
+                <X size={14} strokeWidth={2} aria-hidden="true" />
               </button>
             )}
-          </label>
+          </div>
         </div>
 
-        {/* Scrollable Table / Card Body (Empty & Loading states live inside card) */}
-        <div ref={listScrollRef} className="resident-list-scroll">
+        {/* Table Body: Skeleton / Error / Empty / Rows */}
+        <div ref={listScrollRef} className="rr-table-scroll">
           {listLoading ? (
-            <div className="resident-registration-state" role="status">
-              <FontAwesomeIcon icon={faCircleNotch} spin /> Loading resident registrations…
+            <div className="rr-table-body" role="status" aria-busy="true" aria-label="Loading resident registrations">
+              <div className="rr-table-grid rr-table-head" aria-hidden="true">
+                <span>APPLICANT</span>
+                <span>BARANGAY</span>
+                <span>CONTACT</span>
+                <span>SUBMITTED</span>
+                <span>STATUS</span>
+                <span />
+              </div>
+              {Array.from({ length: 6 }).map((_, idx) => (
+                <div key={idx} className="rr-table-grid rr-skel-row" aria-hidden="true">
+                  <div className="rr-applicant-cell">
+                    <span className="rr-skel rr-skel-avatar" />
+                    <div className="rr-skel-stack">
+                      <span className="rr-skel rr-skel-name" />
+                      <span className="rr-skel rr-skel-email" />
+                    </div>
+                  </div>
+                  <span className="rr-skel rr-skel-chip" />
+                  <span className="rr-skel rr-skel-contact" />
+                  <span className="rr-skel rr-skel-date" />
+                  <span className="rr-skel rr-skel-pill" />
+                  <span />
+                </div>
+              ))}
             </div>
           ) : listError ? (
-            <div className="resident-registration-state is-error" role="alert">
-              <FontAwesomeIcon icon={faTriangleExclamation} />
-              <span>{listError}</span>
-              <button type="button" onClick={() => setRefreshKey((current) => current + 1)}>
-                Retry
-              </button>
+            <div className="rr-state-box" role="alert">
+              <span className="rr-state-icon is-error" aria-hidden="true">
+                <AlertTriangle size={22} strokeWidth={2} />
+              </span>
+              <h3>Could not load resident registrations</h3>
+              <p>{listError}</p>
+              <Button
+                variant="secondary"
+                onClick={() => setRefreshKey((current) => current + 1)}
+              >
+                Try again
+              </Button>
             </div>
           ) : visibleRequests.length === 0 ? (
-            <div className="resident-registration-state is-empty">
-              <div className="resident-empty-icon">
-                <FontAwesomeIcon icon={faEnvelope} />
-              </div>
-              <strong>
-                {activeStatus === "all"
-                  ? "No resident registrations"
-                  : `No ${activeStatus} registrations`}
-              </strong>
-              <span>
-                {search ? "Try a different search query." : "New resident requests will appear here."}
+            <div className="rr-state-box" role="status">
+              <span className="rr-state-icon" aria-hidden="true">
+                {search || activeStatus !== "all" ? (
+                  <Search size={22} strokeWidth={2} />
+                ) : (
+                  <Mail size={22} strokeWidth={2} />
+                )}
               </span>
+              <h3>
+                {activeStatus === "all" && !search
+                  ? "No resident registrations"
+                  : `No ${activeStatus === "all" ? "matching" : activeStatus} registrations`}
+              </h3>
+              <p>
+                {search || activeStatus !== "all"
+                  ? "Try adjusting your search query or status filter."
+                  : "New resident registration requests will appear here."}
+              </p>
+              {(search || activeStatus !== "all") && (
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    setSearch("");
+                    handleStatusFilterChange("all");
+                  }}
+                >
+                  Clear filters
+                </Button>
+              )}
             </div>
           ) : (
-            <>
-              {/* Desktop Table View with Sticky Column Headings */}
-              <div className="resident-registration-list" role="list" aria-label={`${activeStatus} registrations`}>
-                <div className="resident-table-header" aria-hidden="true">
-                  <span className="resident-th-cell">Applicant</span>
-                  <span className="resident-th-cell">Barangay</span>
-                  <span className="resident-th-cell">Contact</span>
-                  <span className="resident-th-cell">Submitted</span>
-                  <span className="resident-th-status">Status</span>
-                </div>
+            <div className="rr-table-body" role="list" aria-label={`${activeStatus} registrations`}>
+              <div className="rr-table-grid rr-table-head" aria-hidden="true">
+                <span>APPLICANT</span>
+                <span>BARANGAY</span>
+                <span>CONTACT</span>
+                <span>SUBMITTED</span>
+                <span>STATUS</span>
+                <span />
+              </div>
 
-                {paginatedRequests.map((item) => {
-                  const name = item.full_name || joinName(item) || "Unknown Resident";
-                  const initials = name
+              {paginatedRequests.map((item) => {
+                const name = item.full_name || joinName(item) || "Unknown Resident";
+                const initials =
+                  name
                     .split(" ")
                     .filter(Boolean)
                     .slice(0, 2)
                     .map((n) => n[0].toUpperCase())
-                    .join("");
+                    .join("") || "?";
+                const isSelected = selectedRequest?.id === item.id;
 
-                  return (
-                    <button
-                      type="button"
-                      role="listitem"
-                      className="resident-registration-row"
-                      key={item.id}
-                      onClick={() => openReview(item)}
-                    >
-                      <div className="resident-col-applicant">
-                        <div className="resident-row-avatar" aria-hidden="true">
-                          {initials}
-                        </div>
-                        <div className="resident-registration-person">
-                          <strong className="resident-row-name">{name}</strong>
-                          <small className="resident-row-email">{item.email}</small>
-                        </div>
-                      </div>
-                      <div className="resident-registration-row-detail resident-row-barangay">
-                        <span className="resident-badge-subtle">{item.barangay || "N/A"}</span>
-                      </div>
-                      <div className="resident-registration-row-detail resident-row-contact">
-                        {item.contact_number || "—"}
-                      </div>
-                      <div className="resident-registration-row-date">
-                        {formatDate(item.created_at?.slice(0, 10))}
-                      </div>
-                      <div className="resident-row-status-wrap">
-                        <span className={`resident-registration-status ${getResidentStatusPillClass(item.status)}`}>
-                          {item.status}
+                return (
+                  <button
+                    type="button"
+                    role="listitem"
+                    className={`rr-table-grid rr-table-row ${isSelected ? "is-selected" : ""}`}
+                    key={item.id}
+                    onClick={(e) => openReview(item, { triggerEl: e.currentTarget })}
+                    aria-label={`Review registration for ${name}, ${item.status || "pending"}`}
+                  >
+                    {/* APPLICANT */}
+                    <span className="rr-applicant-cell">
+                      <span className="rr-applicant-avatar" aria-hidden="true">
+                        {initials}
+                      </span>
+                      <span className="rr-applicant-copy">
+                        <span className="rr-applicant-name" title={name}>
+                          {name}
                         </span>
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
+                        <span className="rr-applicant-email" title={item.email || undefined}>
+                          {item.email || "Not provided"}
+                        </span>
+                      </span>
+                    </span>
 
-              {/* Mobile Compact Cards View with Three-Dot Menu (<= 768px) */}
-              <div className="resident-mobile-cards" role="list" aria-label={`${activeStatus} registrations`}>
-                {paginatedRequests.map((item) => {
-                  const name = item.full_name || joinName(item) || "Unknown Resident";
-                  const isMenuOpen = openMobileMenuId === item.id;
-                  const metaParts = [
-                    item.barangay || "N/A",
-                    item.contact_number || null,
-                    formatDate(item.created_at?.slice(0, 10)),
-                  ].filter(Boolean);
+                    {/* BARANGAY */}
+                    <span className="rr-barangay-cell">
+                      <span className="rr-barangay-chip">
+                        {item.barangay || "Not provided"}
+                      </span>
+                    </span>
 
-                  return (
-                    <div
-                      key={`mob-${item.id}`}
-                      role="button"
-                      tabIndex={0}
-                      className="resident-mobile-card"
-                      onClick={() => openReview(item)}
-                      onKeyDown={(e) => {
-                        if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) {
-                          e.preventDefault();
-                          openReview(item);
-                        }
-                      }}
-                    >
-                      <div className="resident-mobile-card-top">
-                        <div className="resident-mobile-card-title-group">
-                          <strong className="resident-mobile-card-name">{name}</strong>
-                          {item.email && (
-                            <span className="resident-mobile-card-email">{item.email}</span>
-                          )}
-                        </div>
+                    {/* CONTACT */}
+                    <span className="rr-contact-cell">
+                      {item.contact_number || "—"}
+                    </span>
 
-                        <div
-                          className="resident-mobile-card-actions resident-mobile-menu-anchor"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          <span className={`resident-registration-status ${getResidentStatusPillClass(item.status)}`}>
-                            {item.status}
-                          </span>
-                          <button
-                            type="button"
-                            className="resident-mobile-kebab-btn"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setOpenMobileMenuId((prev) => (prev === item.id ? null : item.id));
-                            }}
-                            aria-label={`Actions for ${name}`}
-                            aria-expanded={isMenuOpen}
-                            aria-haspopup="menu"
-                          >
-                            <FontAwesomeIcon icon={faEllipsisVertical} />
-                          </button>
+                    {/* SUBMITTED */}
+                    <span className="rr-submitted-cell">
+                      {formatDate(item.created_at?.slice(0, 10))}
+                    </span>
 
-                          {isMenuOpen && (
-                            <div
-                              className="resident-mobile-row-dropdown"
-                              role="menu"
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              {item.status === "pending" ? (
-                                <>
-                                  <button
-                                    type="button"
-                                    role="menuitem"
-                                    className="resident-mobile-menu-item is-primary"
-                                    onClick={() => openReview(item)}
-                                  >
-                                    <FontAwesomeIcon icon={faCheck} />
-                                    <span>Review & Approve</span>
-                                  </button>
-                                  <button
-                                    type="button"
-                                    role="menuitem"
-                                    className="resident-mobile-menu-item is-danger"
-                                    onClick={() => openReview(item, { openReject: true })}
-                                  >
-                                    <FontAwesomeIcon icon={faXmark} />
-                                    <span>Reject</span>
-                                  </button>
-                                </>
-                              ) : (
-                                <button
-                                  type="button"
-                                  role="menuitem"
-                                  className="resident-mobile-menu-item"
-                                  onClick={() => openReview(item)}
-                                >
-                                  <FontAwesomeIcon icon={faInfoCircle} />
-                                  <span>View Details</span>
-                                </button>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      </div>
+                    {/* STATUS */}
+                    <span className="rr-status-cell">
+                      <StatusPill variant={item.status} />
+                    </span>
 
-                      <div className="resident-mobile-card-meta">
-                        {metaParts.join(" · ")}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </>
+                    {/* CHEVRON */}
+                    <span className="rr-chevron-cell" aria-hidden="true">
+                      <ChevronRight size={16} strokeWidth={2} className="rr-row-chevron" />
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
           )}
         </div>
 
-        {/* Pagination Bar at Bottom of Card */}
+        {/* Footer */}
         {!listLoading && !listError && totalFiltered > 0 && (
-          <nav className="resident-pagination" aria-label="Pagination">
-            <span className="resident-pagination-info">
+          <footer className="rr-table-footer" aria-label="Pagination">
+            <span className="rr-footer-info">
               Showing {(safePage - 1) * pageSize + 1} to{" "}
               {Math.min(safePage * pageSize, totalFiltered)} of {totalFiltered}
             </span>
 
-            <div className="resident-pagination-controls">
-              <label className="resident-pagination-size">
-                <span className="resident-pagination-size-label">Rows per page</span>
+            <div className="rr-footer-controls">
+              <label className="rr-rows-per-page">
+                <span>Rows per page</span>
                 <select
+                  className="rr-rows-select"
                   value={pageSize}
                   onChange={(e) => {
                     setPageSize(Number(e.target.value));
@@ -1100,65 +1179,35 @@ export default function ResidentRegistrations({ focusRegistrationId = null }) {
                 </select>
               </label>
 
-              <button
-                type="button"
-                className="resident-page-nav-btn"
+              <Button
+                variant="secondary"
+                className="rr-footer-btn"
                 disabled={safePage <= 1}
                 onClick={() => setPage((p) => Math.max(1, p - 1))}
                 aria-label="Previous page"
               >
                 Previous
-              </button>
-
-              {totalPages > 1 && (
-                <div className="resident-pagination-pages">
-                  {paginationItems.map((item) =>
-                    typeof item === "string" ? (
-                      <span
-                        key={item}
-                        className="resident-pagination-ellipsis"
-                        aria-hidden="true"
-                      >
-                        …
-                      </span>
-                    ) : (
-                      <button
-                        key={item}
-                        type="button"
-                        className={`resident-page-num-btn ${item === safePage ? "is-active" : ""}`}
-                        aria-label={`Page ${item}`}
-                        aria-current={item === safePage ? "page" : undefined}
-                        onClick={() => setPage(item)}
-                      >
-                        {item}
-                      </button>
-                    )
-                  )}
-                </div>
-              )}
-
-              <span className="resident-pagination-page">
-                Page {safePage} of {totalPages}
-              </span>
-
-              <button
-                type="button"
-                className="resident-page-nav-btn"
+              </Button>
+              <Button
+                variant="secondary"
+                className="rr-footer-btn"
                 disabled={safePage >= totalPages}
                 onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
                 aria-label="Next page"
               >
                 Next
-              </button>
+              </Button>
             </div>
-          </nav>
+          </footer>
         )}
       </section>
 
       {/* Review Dialog */}
       <dialog
         ref={dialogRef}
-        className="resident-review-dialog"
+        className="resident-review-dialog rr-review-dialog"
+        role="dialog"
+        aria-modal="true"
         aria-labelledby="resident-review-title"
         onCancel={(event) => {
           if (actionLoading || resetLoading) {
@@ -1173,46 +1222,209 @@ export default function ResidentRegistrations({ focusRegistrationId = null }) {
         }}
       >
         {selectedRequest && (
-          <div className="resident-review-shell">
-            <header className="resident-review-header">
-              <div className="resident-review-header-info">
-                <div className="resident-review-meta-row">
-                  <span className="resident-registrations-eyebrow">Request #{selectedRequest.id}</span>
-                  <span className={`resident-registration-status ${getResidentStatusPillClass(selectedRequest.status)}`}>
-                    {selectedRequest.status}
-                  </span>
+          <div className="resident-review-shell rr-review-shell">
+            <header className="resident-review-header rr-review-header">
+              <div className="rr-review-header-left">
+                <span className="rr-review-icon-tile" aria-hidden="true">
+                  <UserCheck size={20} strokeWidth={2} />
+                </span>
+                <div className="resident-review-header-info rr-review-header-info">
+                  <div className="resident-review-meta-row rr-review-meta-row">
+                    <span className="rr-review-request-id">
+                      REQUEST #{selectedRequest.id}
+                    </span>
+                    <StatusPill variant={selectedRequest.status} />
+                  </div>
+                  <h2 id="resident-review-title" className="rr-review-title">
+                    Review resident registration
+                  </h2>
+                  {(selectedRequest.account_email || selectedRequest.email) && (
+                    <p className="resident-review-header-email rr-review-email">
+                      <Mail size={14} strokeWidth={2} aria-hidden="true" />
+                      <span>{selectedRequest.account_email || selectedRequest.email}</span>
+                    </p>
+                  )}
                 </div>
-                <h2 id="resident-review-title">Review resident registration</h2>
-                {selectedRequest.email && (
-                  <p className="resident-review-header-email">
-                    <FontAwesomeIcon icon={faEnvelope} aria-hidden="true" />
-                    <span>{selectedRequest.email}</span>
-                  </p>
-                )}
               </div>
-              <button
-                type="button"
-                className="resident-registration-icon-button"
-                onClick={closeReview}
-                aria-label="Close review"
-                disabled={actionLoading || resetLoading}
-              >
-                <FontAwesomeIcon icon={faXmark} />
-              </button>
+              <div className="rr-review-header-actions">
+                {!isEditingInfo && (
+                  <Button
+                    variant="secondary"
+                    className="rr-edit-info-btn"
+                    onClick={startEditingInfo}
+                    disabled={actionLoading || resetLoading || matchLoading}
+                  >
+                    <Pencil size={14} strokeWidth={2} aria-hidden="true" />
+                    <span>Edit info</span>
+                  </Button>
+                )}
+                <button
+                  type="button"
+                  className="rr-review-close-btn"
+                  onClick={closeReview}
+                  aria-label="Close"
+                  disabled={actionLoading || resetLoading || editSaving}
+                >
+                  <X size={18} strokeWidth={2} aria-hidden="true" />
+                </button>
+              </div>
             </header>
 
-            <div className="resident-review-body">
+            <div className="resident-review-body rr-review-body">
+              {isEditingInfo && (
+                <form className="rr-edit-card" onSubmit={saveRegistrationEdit}>
+                  <div className="rr-edit-card-head">
+                    <span className="rr-account-label">EDIT ACCOUNT &amp; REGISTRATION INFO</span>
+                    <span className="rr-edit-card-hint">
+                      Saving will automatically re-analyze the roster link match.
+                    </span>
+                  </div>
+
+                  {editError && (
+                    <p className="rr-review-inline-error" role="alert">
+                      <AlertTriangle size={15} strokeWidth={2} aria-hidden="true" />
+                      <span>{editError}</span>
+                    </p>
+                  )}
+
+                  <div className="rr-edit-grid-3">
+                    <label className="rr-edit-field">
+                      <span>First name *</span>
+                      <input
+                        type="text"
+                        required
+                        maxLength={100}
+                        value={editForm.first_name}
+                        onChange={(e) => setEditForm((f) => ({ ...f, first_name: e.target.value }))}
+                        disabled={editSaving}
+                      />
+                    </label>
+                    <label className="rr-edit-field">
+                      <span>Middle name</span>
+                      <input
+                        type="text"
+                        maxLength={100}
+                        value={editForm.middle_name}
+                        onChange={(e) => setEditForm((f) => ({ ...f, middle_name: e.target.value }))}
+                        disabled={editSaving}
+                      />
+                    </label>
+                    <label className="rr-edit-field">
+                      <span>Last name *</span>
+                      <input
+                        type="text"
+                        required
+                        maxLength={100}
+                        value={editForm.last_name}
+                        onChange={(e) => setEditForm((f) => ({ ...f, last_name: e.target.value }))}
+                        disabled={editSaving}
+                      />
+                    </label>
+                  </div>
+
+                  <div className="rr-edit-grid-2">
+                    <label className="rr-edit-field">
+                      <span>Email address *</span>
+                      <input
+                        type="email"
+                        required
+                        maxLength={120}
+                        value={editForm.email}
+                        onChange={(e) => setEditForm((f) => ({ ...f, email: e.target.value }))}
+                        disabled={editSaving}
+                      />
+                    </label>
+                    <label className="rr-edit-field">
+                      <span>Birthdate *</span>
+                      <input
+                        type="date"
+                        required
+                        value={editForm.birthdate}
+                        onChange={(e) => setEditForm((f) => ({ ...f, birthdate: e.target.value }))}
+                        disabled={editSaving}
+                      />
+                    </label>
+                  </div>
+
+                  <div className="rr-edit-grid-2">
+                    <label className="rr-edit-field">
+                      <span>Barangay *</span>
+                      <input
+                        type="text"
+                        required
+                        maxLength={100}
+                        list="rr-edit-barangay-list"
+                        value={editForm.barangay}
+                        onChange={(e) => setEditForm((f) => ({ ...f, barangay: e.target.value }))}
+                        disabled={editSaving}
+                      />
+                      <datalist id="rr-edit-barangay-list">
+                        {barangayOptions.map((name) => (
+                          <option key={name} value={name} />
+                        ))}
+                      </datalist>
+                    </label>
+                    <label className="rr-edit-field">
+                      <span>Contact number</span>
+                      <input
+                        type="text"
+                        maxLength={20}
+                        value={editForm.contact_number}
+                        onChange={(e) => setEditForm((f) => ({ ...f, contact_number: e.target.value }))}
+                        placeholder="09XXXXXXXXX"
+                        disabled={editSaving}
+                      />
+                    </label>
+                  </div>
+
+                  <label className="rr-edit-field">
+                    <span>Address / purok</span>
+                    <input
+                      type="text"
+                      maxLength={255}
+                      value={editForm.address}
+                      onChange={(e) => setEditForm((f) => ({ ...f, address: e.target.value }))}
+                      disabled={editSaving}
+                    />
+                  </label>
+
+                  <div className="rr-edit-actions">
+                    <Button
+                      variant="secondary"
+                      type="button"
+                      className="rr-review-footer-btn"
+                      onClick={cancelEditingInfo}
+                      disabled={editSaving}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      variant="primary"
+                      type="submit"
+                      className="rr-review-footer-btn"
+                      disabled={editSaving}
+                    >
+                      {editSaving ? (
+                        <Loader2 size={15} strokeWidth={2} className="rr-spin" aria-hidden="true" />
+                      ) : (
+                        <Check size={15} strokeWidth={2} aria-hidden="true" />
+                      )}
+                      <span>{editSaving ? "Saving & re-analyzing..." : "Save & re-analyze match"}</span>
+                    </Button>
+                  </div>
+                </form>
+              )}
               {matchLoading ? (
-                <div className="resident-review-state" role="status">
-                  <FontAwesomeIcon icon={faCircleNotch} spin />
+                <div className="rr-review-state" role="status">
+                  <Loader2 size={18} strokeWidth={2} className="rr-spin" aria-hidden="true" />
                   <span>Checking the resident roster…</span>
                 </div>
               ) : matchError ? (
-                <div className="resident-review-state is-error" role="alert">
-                  <FontAwesomeIcon icon={faTriangleExclamation} />
+                <div className="rr-review-state is-error" role="alert">
+                  <AlertTriangle size={18} strokeWidth={2} aria-hidden="true" />
                   <span>{matchError}</span>
-                  <button
-                    type="button"
+                  <Button
+                    variant="secondary"
                     onClick={() => {
                       setMatchError("");
                       setMatchLoading(true);
@@ -1220,90 +1432,83 @@ export default function ResidentRegistrations({ focusRegistrationId = null }) {
                     }}
                   >
                     Retry match check
-                  </button>
+                  </Button>
                 </div>
               ) : (
                 <>
+                  {/* 1. Blue Info Box for Roster Match Message */}
                   {matchBanner && (
-                    <div className={`resident-match-banner ${matchBanner.className}`} role="status">
-                      <FontAwesomeIcon icon={matchBanner.icon} aria-hidden="true" />
+                    <div className="rr-match-info-box" role="status">
+                      <Info size={16} strokeWidth={2} className="rr-match-info-icon" aria-hidden="true" />
                       <span>{matchBanner.text}</span>
                     </div>
                   )}
 
+                  {/* 2. Bordered Table (--radius-lg) with Grey Header Row (FIELD, SUBMITTED) */}
                   {displayedMatches.length > 0 ? (
                     displayedMatches.map(renderComparison)
                   ) : (
-                    /* Fallback submitted-only details when no roster match is found */
-                    <div className="resident-match-card is-submitted-only">
-                      <div className="resident-comparison-table-wrap">
-                        <table className="resident-comparison-table">
-                          <thead>
-                            <tr>
-                              <th scope="col">Field</th>
-                              <th scope="col">Submitted</th>
+                    <div className="rr-table-box">
+                      <table className="rr-submitted-table">
+                        <thead>
+                          <tr>
+                            <th scope="col">FIELD</th>
+                            <th scope="col">SUBMITTED</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {COMPARISON_FIELDS.map((field) => (
+                            <tr key={field.id}>
+                              <td className="rr-field-col">{field.label}</td>
+                              <td className="rr-val-col">{getComparisonValue(selectedRequest, field)}</td>
                             </tr>
-                          </thead>
-                          <tbody>
-                            {COMPARISON_FIELDS.map((field) => (
-                              <tr key={field.id}>
-                                <td className="resident-cmp-field">{field.label}</td>
-                                <td className="resident-cmp-value">{getComparisonValue(selectedRequest, field)}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                      <div className="resident-comparison-mobile-list">
-                        {COMPARISON_FIELDS.map((field) => (
-                          <div key={field.id} className="resident-comparison-mobile-card">
-                            <div className="resident-comparison-mobile-top">
-                              <span className="resident-comparison-mobile-field">{field.label}</span>
-                            </div>
-                            <div className="resident-comparison-mobile-values is-single">
-                              <div>
-                                <span>Submitted</span>
-                                <strong>{getComparisonValue(selectedRequest, field)}</strong>
-                              </div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
+                          ))}
+                        </tbody>
+                      </table>
                     </div>
                   )}
 
                   {matchResult?.status === "none" && isPendingRequest && (
-                    <form className="resident-manual-search" onSubmit={searchRoster}>
-                      <label htmlFor="resident-roster-search">Search the resident roster</label>
-                      <div className="resident-manual-search-controls">
+                    <form className="rr-manual-search" onSubmit={searchRoster}>
+                      <label className="rr-manual-search-label" htmlFor="resident-roster-search">
+                        Search the resident roster
+                      </label>
+                      <div className="rr-manual-search-controls">
                         <input
                           id="resident-roster-search"
+                          className="rr-manual-search-input"
                           value={manualSearch}
                           onChange={(event) => setManualSearch(event.target.value)}
                           placeholder="Enter a resident name"
                         />
-                        <button type="submit" disabled={manualLoading}>
-                          <FontAwesomeIcon icon={manualLoading ? faCircleNotch : faMagnifyingGlass} spin={manualLoading} />
+                        <Button variant="secondary" type="submit" disabled={manualLoading}>
+                          {manualLoading ? (
+                            <Loader2 size={15} strokeWidth={2} className="rr-spin" aria-hidden="true" />
+                          ) : (
+                            <Search size={15} strokeWidth={2} aria-hidden="true" />
+                          )}
                           <span>Search</span>
-                        </button>
+                        </Button>
                       </div>
-                      {manualError && <p className="resident-review-inline-error" role="alert">{manualError}</p>}
+                      {manualError && <p className="rr-review-inline-error" role="alert">{manualError}</p>}
                       {manualResults.map((resident) => (
                         <button
                           type="button"
-                          className={`resident-manual-result ${getMatchResidentId(selectedResident) === resident.id ? "is-selected" : ""}`}
+                          className={`rr-manual-result ${getMatchResidentId(selectedResident) === resident.id ? "is-selected" : ""}`}
                           key={resident.id}
                           onClick={() => setSelectedResident(resident)}
                           disabled={resident.already_linked}
                         >
-                          <span>
+                          <span className="rr-manual-result-info">
                             <strong>{resident.full_name}</strong>
                             <small>{resident.barangay ? `${resident.barangay} · ` : ""}{formatDate(resident.birthdate)}</small>
                             {resident.already_linked && (
-                              <small className="resident-manual-linked-warning">Already linked to another account</small>
+                              <small className="rr-manual-linked-warning">Already linked to another account</small>
                             )}
                           </span>
-                          <span>{resident.already_linked ? "Already linked" : `#${resident.id}`}</span>
+                          <span className="rr-manual-result-tag">
+                            {resident.already_linked ? "Already linked" : `#${resident.id}`}
+                          </span>
                         </button>
                       ))}
                     </form>
@@ -1312,52 +1517,61 @@ export default function ResidentRegistrations({ focusRegistrationId = null }) {
               )}
 
               {isPendingRequest && selectedResident?.already_linked && (
-                <p className="resident-registration-warning" role="alert">
-                  <FontAwesomeIcon icon={faTriangleExclamation} />
+                <p className="rr-registration-warning" role="alert">
+                  <AlertTriangle size={16} strokeWidth={2} aria-hidden="true" />
                   <span>This resident record is already linked to another account.</span>
                 </p>
               )}
 
               {selectedRequest.status === "rejected" && selectedRequest.rejection_reason && (
-                <div className="resident-reviewed-notice" role="status">
+                <div className="rr-reviewed-notice" role="status">
                   <strong>Rejection reason</strong>
                   <span>{selectedRequest.rejection_reason}</span>
                 </div>
               )}
 
-              {actionError && <p className="resident-review-inline-error" role="alert">{actionError}</p>}
+              {actionError && <p className="rr-review-inline-error" role="alert">{actionError}</p>}
 
               {decisionResult && !decisionResult.result.email_sent && (
-                <div className="resident-decision-result" role="status">
-                  <div className="resident-email-warning">
-                    <span>
-                      <FontAwesomeIcon icon={faTriangleExclamation} />
-                      Decision email not sent.
+                <div className="rr-decision-result" role="status">
+                  <div className="rr-email-warning">
+                    <span className="rr-email-warning-text">
+                      <AlertTriangle size={15} strokeWidth={2} aria-hidden="true" />
+                      <span>Decision email not sent.</span>
                     </span>
-                    <button type="button" onClick={resendDecisionEmail} disabled={actionLoading}>
-                      {actionLoading ? <FontAwesomeIcon icon={faCircleNotch} spin /> : <FontAwesomeIcon icon={faEnvelope} />}
+                    <Button variant="secondary" onClick={resendDecisionEmail} disabled={actionLoading}>
+                      {actionLoading ? (
+                        <Loader2 size={14} strokeWidth={2} className="rr-spin" aria-hidden="true" />
+                      ) : (
+                        <Mail size={14} strokeWidth={2} aria-hidden="true" />
+                      )}
                       <span>Resend email</span>
-                    </button>
+                    </Button>
                   </div>
                   {decisionResult.resendMessage && <small>{decisionResult.resendMessage}</small>}
                 </div>
               )}
 
+              {/* 3. Account Card (bg #F8FAFC, 1px border) */}
               {hasApprovedAccount && (
-                <section className="resident-account-section" aria-label="Account">
-                  <div className="resident-account-info">
-                    <span className="resident-account-title">Account</span>
-                    <span className="resident-account-subtitle">
-                      Active resident login: <strong>{resetTargetEmail}</strong>
+                <section className="rr-account-card" aria-label="Account">
+                  <div className="rr-account-info">
+                    <span className="rr-account-label">ACCOUNT</span>
+                    <span className="rr-account-login">
+                      Active resident login: <strong className="rr-account-email">{resetTargetEmail}</strong>
                     </span>
                   </div>
-                  <button
-                    type="button"
-                    className="resident-action-secondary resident-reset-pw-btn"
+                  <Button
+                    variant="secondary"
+                    className="rr-reset-pw-btn"
                     onClick={() => setConfirmModal("reset_password")}
                     disabled={resetLoading || actionLoading || resetCooldownSeconds > 0}
                   >
-                    <FontAwesomeIcon icon={resetLoading ? faCircleNotch : faEnvelope} spin={resetLoading} />
+                    {resetLoading ? (
+                      <Loader2 size={15} strokeWidth={2} className="rr-spin" aria-hidden="true" />
+                    ) : (
+                      <Mail size={15} strokeWidth={2} aria-hidden="true" />
+                    )}
                     <span>
                       {resetLoading
                         ? "Sending..."
@@ -1365,55 +1579,60 @@ export default function ResidentRegistrations({ focusRegistrationId = null }) {
                           ? `Send reset password email (${resetCooldownSeconds}s)`
                           : "Send reset password email"}
                     </span>
-                  </button>
+                  </Button>
                 </section>
               )}
             </div>
 
-            <footer className="resident-review-footer">
+            <footer className="resident-review-footer rr-review-footer">
               {isPendingRequest ? (
                 <>
-                  <button
-                    type="button"
-                    className="resident-action-secondary"
+                  <Button
+                    variant="secondary"
+                    className="rr-review-footer-btn"
                     onClick={closeReview}
                     disabled={actionLoading}
                   >
                     Close
-                  </button>
-                  <button
-                    type="button"
-                    className="resident-action-reject-outline"
+                  </Button>
+                  <Button
+                    variant="danger-outline"
+                    className="rr-review-footer-btn rr-review-reject-btn"
                     onClick={() => setConfirmModal("reject")}
                     disabled={actionLoading || matchLoading}
                   >
                     Reject
-                  </button>
-                  <button
-                    type="button"
-                    className="resident-action-primary"
+                  </Button>
+                  <Button
+                    variant="primary"
+                    className="rr-review-footer-btn"
                     onClick={() => setConfirmModal("approve")}
                     disabled={!canApprove}
                   >
-                    {actionLoading ? <FontAwesomeIcon icon={faCircleNotch} spin /> : <FontAwesomeIcon icon={faCheck} />}
+                    {actionLoading ? (
+                      <Loader2 size={16} strokeWidth={2} className="rr-spin" aria-hidden="true" />
+                    ) : (
+                      <Check size={16} strokeWidth={2} aria-hidden="true" />
+                    )}
                     <span>{actionLoading ? "Approving..." : "Approve"}</span>
-                  </button>
+                  </Button>
                 </>
               ) : (
-                <button
-                  type="button"
-                  className="resident-action-secondary"
+                <Button
+                  variant="secondary"
+                  className="rr-review-footer-btn"
                   onClick={closeReview}
                   disabled={actionLoading || resetLoading}
                 >
                   Close
-                </button>
+                </Button>
               )}
             </footer>
 
             {/* In-Dialog Confirmation Prompt (Approve / Reject / Reset Password) */}
             {confirmModal && (
               <div
+                ref={confirmOverlayRef}
                 className="resident-confirm-overlay"
                 role="alertdialog"
                 aria-modal="true"
@@ -1440,23 +1659,23 @@ export default function ResidentRegistrations({ focusRegistrationId = null }) {
                       ?
                     </p>
                     <div className="resident-confirm-actions">
-                      <button
-                        type="button"
-                        className="resident-action-secondary"
+                      <Button
+                        variant="secondary"
                         onClick={() => setConfirmModal(null)}
                         disabled={actionLoading}
                       >
                         Cancel
-                      </button>
-                      <button
-                        type="button"
-                        className="resident-action-primary"
+                      </Button>
+                      <Button
+                        variant="primary"
                         onClick={approveRequest}
                         disabled={actionLoading}
                       >
-                        {actionLoading && <FontAwesomeIcon icon={faCircleNotch} spin />}
+                        {actionLoading && (
+                          <Loader2 size={15} strokeWidth={2} className="rr-spin" aria-hidden="true" />
+                        )}
                         <span>{actionLoading ? "Approving..." : "Approve"}</span>
-                      </button>
+                      </Button>
                     </div>
                   </div>
                 )}
@@ -1481,22 +1700,23 @@ export default function ResidentRegistrations({ focusRegistrationId = null }) {
                       disabled={actionLoading}
                     />
                     <div className="resident-confirm-actions">
-                      <button
-                        type="button"
-                        className="resident-action-secondary"
+                      <Button
+                        variant="secondary"
                         onClick={() => setConfirmModal(null)}
                         disabled={actionLoading}
                       >
                         Cancel
-                      </button>
-                      <button
+                      </Button>
+                      <Button
+                        variant="danger"
                         type="submit"
-                        className="resident-action-danger"
                         disabled={actionLoading}
                       >
-                        {actionLoading && <FontAwesomeIcon icon={faCircleNotch} spin />}
+                        {actionLoading && (
+                          <Loader2 size={15} strokeWidth={2} className="rr-spin" aria-hidden="true" />
+                        )}
                         <span>{actionLoading ? "Rejecting..." : "Reject"}</span>
-                      </button>
+                      </Button>
                     </div>
                   </form>
                 )}
@@ -1506,23 +1726,23 @@ export default function ResidentRegistrations({ focusRegistrationId = null }) {
                     <h3 id="resident-confirm-title">Send reset password link?</h3>
                     <p>Send a reset password link to {resetTargetEmail}?</p>
                     <div className="resident-confirm-actions">
-                      <button
-                        type="button"
-                        className="resident-action-secondary"
+                      <Button
+                        variant="secondary"
                         onClick={() => setConfirmModal(null)}
                         disabled={resetLoading}
                       >
                         Cancel
-                      </button>
-                      <button
-                        type="button"
-                        className="resident-action-primary"
+                      </Button>
+                      <Button
+                        variant="primary"
                         onClick={sendResetPasswordEmail}
                         disabled={resetLoading}
                       >
-                        {resetLoading && <FontAwesomeIcon icon={faCircleNotch} spin />}
+                        {resetLoading && (
+                          <Loader2 size={15} strokeWidth={2} className="rr-spin" aria-hidden="true" />
+                        )}
                         <span>{resetLoading ? "Sending..." : "Send"}</span>
-                      </button>
+                      </Button>
                     </div>
                   </div>
                 )}

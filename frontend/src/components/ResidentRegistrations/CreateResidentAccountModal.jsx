@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
   faCheck,
@@ -63,6 +63,44 @@ function CreateResidentAccountDialog({ onClose, onSuccess }) {
   const [formError, setFormError] = useState("");
 
   const modalRef = useRef(null);
+
+  useEffect(() => {
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") {
+        if (!submitting) {
+          event.preventDefault();
+          onClose();
+        }
+        return;
+      }
+      if (event.key === "Tab") {
+        const container = modalRef.current;
+        if (!container) return;
+        const focusables = Array.from(
+          container.querySelectorAll(
+            'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+          )
+        ).filter((el) => el.offsetParent !== null);
+        if (focusables.length === 0) {
+          event.preventDefault();
+          return;
+        }
+        const first = focusables[0];
+        const last = focusables[focusables.length - 1];
+        if (event.shiftKey) {
+          if (document.activeElement === first || !container.contains(document.activeElement)) {
+            event.preventDefault();
+            last.focus();
+          }
+        } else if (document.activeElement === last || !container.contains(document.activeElement)) {
+          event.preventDefault();
+          first.focus();
+        }
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose, submitting]);
 
   // Search for unlinked roster residents
   const handleRosterSearch = useCallback(async (query) => {
@@ -360,7 +398,7 @@ function CreateResidentAccountDialog({ onClose, onSuccess }) {
                 </div>
               </div>
 
-              <div className="resident-form-group" style={{ marginTop: "12px" }}>
+              <div className="resident-form-group resident-form-group--spaced">
                 <div className="resident-label-row">
                   <label className="resident-form-label" htmlFor="account-password-input">
                     Initial Password <span>*</span>

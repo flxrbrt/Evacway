@@ -119,14 +119,11 @@ COMMENT ON EXTENSION postgis IS 'PostGIS geometry and geography spatial types an
 -- Name: pgrouting; Type: EXTENSION; Schema: -; Owner: -
 --
 
-CREATE EXTENSION IF NOT EXISTS pgrouting WITH SCHEMA public;
 
 
 --
--- Name: EXTENSION pgrouting; Type: COMMENT; Schema: -; Owner: -
 --
 
-COMMENT ON EXTENSION pgrouting IS 'pgRouting Extension';
 
 
 --
@@ -4519,7 +4516,7 @@ CREATE TABLE public.barangays (
     id integer NOT NULL,
     name character varying(100) NOT NULL,
     population integer,
-    geom extensions.geometry(Polygon,4326)
+    geom public.geometry(Polygon,4326)
 );
 
 
@@ -4679,7 +4676,7 @@ CREATE TABLE public.evacuation_center_buildings (
     id integer NOT NULL,
     evacuation_center_id integer NOT NULL,
     name character varying(100),
-    geom extensions.geometry(Polygon,4326),
+    geom public.geometry(Polygon,4326),
     created_at timestamp without time zone,
     updated_at timestamp without time zone,
     max_rooms integer,
@@ -4764,8 +4761,8 @@ CREATE TABLE public.evacuation_centers (
     hazard_exposure_score double precision,
     contact_number character varying(20),
     is_active boolean,
-    geom extensions.geometry(Polygon,4326),
-    entrance_geom extensions.geometry(MultiPoint,4326),
+    geom public.geometry(Polygon,4326),
+    entrance_geom public.geometry(MultiPoint,4326),
     managed_by integer,
     created_at timestamp without time zone,
     owner_name character varying(150) DEFAULT NULL::character varying,
@@ -4982,7 +4979,7 @@ CREATE TABLE public.hazard_reports (
     status character varying(20),
     response_notes text,
     validated_by integer,
-    geom extensions.geometry(Point,4326) NOT NULL,
+    geom public.geometry(Point,4326) NOT NULL,
     submitted_at timestamp without time zone,
     validated_at timestamp without time zone,
     photos jsonb DEFAULT '[]'::jsonb,
@@ -5020,7 +5017,7 @@ CREATE TABLE public.hazard_zones (
     name character varying(100) NOT NULL,
     hazard_type character varying(50) NOT NULL,
     risk_level character varying(20) NOT NULL,
-    geom extensions.geometry(MultiPolygon,4326) NOT NULL,
+    geom public.geometry(MultiPolygon,4326) NOT NULL,
     created_by integer,
     created_at timestamp without time zone
 );
@@ -5320,7 +5317,7 @@ CREATE TABLE public.road_segments (
     base_weight double precision,
     is_closed boolean,
     hazard_zone_id integer,
-    geom extensions.geometry(LineString,4326) NOT NULL,
+    geom public.geometry(LineString,4326) NOT NULL,
     closed_by_report_id integer
 );
 
@@ -6191,8 +6188,6 @@ COPY auth.webauthn_credentials (id, user_id, credential_id, public_key, attestat
 -- Data for Name: spatial_ref_sys; Type: TABLE DATA; Schema: extensions; Owner: -
 --
 
-COPY extensions.spatial_ref_sys (srid, auth_name, auth_srid, srtext, proj4text) FROM stdin;
-\.
 
 
 --

@@ -322,7 +322,7 @@
   border: 1.5px solid #2563eb;
   border-radius: 999px;
 
-  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.16);
+  box-shadow: var(--shadow-sm);
 
   cursor: pointer;
   user-select: none;
@@ -361,7 +361,7 @@
 .evacway-room-marker:hover {
   background: #eff6ff;
   border-color: #1d4ed8;
-  box-shadow: 0 4px 10px rgba(15, 23, 42, 0.22);
+  box-shadow: var(--shadow-md);
   z-index: 50;
 }
 
@@ -373,7 +373,7 @@
   gap: 4px;
   background: #ffffff;
   border: 1.5px solid #3b82f6;
-  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.14);
+  box-shadow: var(--shadow-xs);
 }
 
 .evacway-room-marker.is-placement-mode .evacway-room-icon {
@@ -422,7 +422,7 @@
   font-weight: 800;
   line-height: 1;
   text-align: center;
-  box-shadow: 0 3px 8px rgba(15, 23, 42, 0.32), 0 1px 3px rgba(0, 0, 0, 0.2);
+  box-shadow: var(--shadow-md);
   cursor: pointer;
   user-select: none;
   box-sizing: border-box;
@@ -437,7 +437,7 @@
   color: #ffffff !important;
   border-color: #ffffff !important;
   transform: scale(1.18);
-  box-shadow: 0 4px 14px rgba(234, 88, 12, 0.5), 0 2px 4px rgba(0, 0, 0, 0.2);
+  box-shadow: var(--shadow-md);
   z-index: 60 !important;
 }
 
@@ -448,7 +448,7 @@
   outline: 3px solid #fdba74;
   outline-offset: 1px;
   transform: scale(1.22);
-  box-shadow: 0 6px 18px rgba(234, 88, 12, 0.6), 0 2px 5px rgba(0, 0, 0, 0.25);
+  box-shadow: var(--shadow-lg);
   z-index: 70 !important;
 }
 
@@ -470,7 +470,7 @@
   padding: 2px 5px;
   border-radius: 999px;
   border: 1.5px solid #ffffff;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+  box-shadow: var(--shadow-sm);
   pointer-events: none;
 }
 
@@ -484,7 +484,7 @@
   border-radius: 50%;
   background: #2563eb;
   border: 2.5px solid #ffffff;
-  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.32);
+  box-shadow: var(--shadow-sm);
   cursor: pointer;
   user-select: none;
   box-sizing: border-box;
@@ -498,7 +498,7 @@
   background: #ea580c !important;
   border-color: #ffffff;
   transform: scale(1.5);
-  box-shadow: 0 3px 10px rgba(234, 88, 12, 0.5);
+  box-shadow: var(--shadow-md);
   z-index: 60 !important;
 }
 
@@ -507,7 +507,7 @@
   border-color: #ffffff;
   transform: scale(1.7);
   outline: 2px solid #fdba74;
-  box-shadow: 0 4px 12px rgba(234, 88, 12, 0.6);
+  box-shadow: var(--shadow-md);
   z-index: 70 !important;
 }
 
@@ -531,12 +531,12 @@
   background: #1d4ed8;
   color: #ffffff;
   border: 2.5px solid #ffffff;
-  font-family: var(--font-body, 'Public Sans', system-ui, sans-serif);
+  font-family: var(--font-body, 'Inter', system-ui, sans-serif);
   font-size: 13px;
   font-weight: 800;
   line-height: 1;
   text-align: center;
-  box-shadow: 0 3px 8px rgba(15, 23, 42, 0.35), 0 1px 3px rgba(0, 0, 0, 0.2);
+  box-shadow: var(--shadow-md);
   cursor: pointer;
   user-select: none;
   box-sizing: border-box;
@@ -550,7 +550,7 @@
   color: #ffffff !important;
   border-color: #ffffff !important;
   transform: scale(1.18);
-  box-shadow: 0 4px 14px rgba(234, 88, 12, 0.5);
+  box-shadow: var(--shadow-md);
   z-index: 60 !important;
 }
 
@@ -561,7 +561,7 @@
   outline: 3px solid #fdba74;
   outline-offset: 1px;
   transform: scale(1.22);
-  box-shadow: 0 6px 18px rgba(234, 88, 12, 0.6);
+  box-shadow: var(--shadow-lg);
   z-index: 70 !important;
 }
 
@@ -806,7 +806,7 @@
 
 .evacway-center-marker:hover .evacway-center-icon {
   transform: translateY(-2px) scale(1.08);
-  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.28), 0 2px 4px rgba(15, 23, 42, 0.15);
+  box-shadow: var(--shadow-lg);
 }
 
 .evacway-center-label {
@@ -1442,7 +1442,7 @@
   border-radius: 50%;
   color: #fff;
   background: #d48a18;
-  box-shadow: 0 3px 9px rgba(21, 42, 66, 0.3);
+  box-shadow: var(--shadow-md);
   font-size: 15px;
 }
 
@@ -1476,7 +1476,7 @@
   border-radius: 4px;
   color: #244360;
   background: #fff;
-  box-shadow: 0 1px 5px rgba(15, 36, 59, 0.2);
+  box-shadow: var(--shadow-sm);
   font-size: 10px;
   font-weight: 750;
   line-height: 1.25;
@@ -1822,7 +1822,7 @@
   border-radius: 50%;
   background: var(--ew-bg-surface, #ffffff);
   border: 3px solid var(--ew-brand-primary, #2563eb);
-  box-shadow: 0 2px 8px rgba(var(--ew-ink-rgb, 15, 23, 42), 0.3);
+  box-shadow: var(--shadow-sm);
   box-sizing: border-box;
   cursor: grab;
   transition: transform 0.1s ease, box-shadow 0.1s ease;
@@ -1845,14 +1845,14 @@
 .ew-vertex-handle:hover,
 .ew-vertex-handle.is-hovered {
   transform: scale(1.15);
-  box-shadow: 0 4px 16px rgba(var(--ew-ink-rgb, 15, 23, 42), 0.4);
+  box-shadow: var(--shadow-md);
   z-index: 10;
 }
 
 .ew-vertex-handle.dragging {
   cursor: grabbing;
   transform: scale(1.2);
-  box-shadow: 0 4px 16px rgba(var(--ew-ink-rgb, 15, 23, 42), 0.4);
+  box-shadow: var(--shadow-lg);
   z-index: 20;
 }
 
@@ -1888,7 +1888,7 @@
 
 .ew-vertex-handle.is-first-vertex:hover,
 .ew-vertex-handle.is-first-vertex.is-hovered {
-  box-shadow: 0 0 0 6px rgba(var(--ew-brand-primary-rgb, 37, 99, 235), 0.35), 0 4px 16px rgba(var(--ew-ink-rgb, 15, 23, 42), 0.4);
+  box-shadow: var(--shadow-focus), var(--shadow-md);
 }
 
 /* Touch accessibility: ensure 44x44 hit area via pseudo-element */
@@ -1910,7 +1910,7 @@
   border-radius: 50%;
   background: #2563eb;
   border: 2.5px solid #ffffff;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  box-shadow: var(--shadow-sm);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1921,7 +1921,7 @@
 }
 
 .cpf-entrance-marker:hover {
-  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.35);
+  box-shadow: var(--shadow-focus);
 }
 
 /* Blue dot marker for My Location */
@@ -1931,7 +1931,7 @@
   background-color: #2563eb;
   border: 3px solid #ffffff;
   border-radius: 50%;
-  box-shadow: 0 0 0 5px rgba(37, 99, 235, 0.4), 0 2px 6px rgba(0, 0, 0, 0.35);
+  box-shadow: var(--shadow-focus), var(--shadow-sm);
   pointer-events: none;
 }
 
@@ -1976,7 +1976,7 @@
   justify-content: center;
   color: #ffffff;
   border: 2.5px solid #ffffff;
-  box-shadow: 0 2px 8px rgba(14, 31, 58, 0.28);
+  box-shadow: var(--shadow-sm);
   transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   box-sizing: border-box;
 }
@@ -1992,7 +1992,7 @@
   width: 42px;
   height: 42px;
   border: 3px solid #ffffff;
-  box-shadow: 0 0 0 4px #2563eb, 0 4px 14px rgba(14, 31, 58, 0.35);
+  box-shadow: var(--shadow-focus), var(--shadow-md);
   transform: translateY(-2px);
 }
 
@@ -2111,7 +2111,7 @@
   border-radius: 50%;
   background: #dc2626;
   border: 3px solid #ffffff;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+  box-shadow: var(--shadow-md);
   pointer-events: none;
   box-sizing: border-box;
 }

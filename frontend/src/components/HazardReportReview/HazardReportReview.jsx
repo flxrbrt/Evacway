@@ -1,35 +1,34 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
+import {
+  AlertTriangle,
+  Camera,
+  Check,
+  CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
+  Clock,
+  Compass,
+  Construction,
+  Download,
+  ImageOff,
+  Layers,
+  MapPin,
+  Maximize2,
+  Mountain,
+  Route,
+  Search,
+  User,
+  Waves,
+  X,
+} from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 import { api, BASE_URL } from "../../services/api";
 import { queryKeys, useHazardReports, useRoadSegments } from "../../hooks/useEvacuationQueries";
-import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import {
-  faCheck,
-  faXmark,
-  faImage,
-  faCamera,
-  faLocationDot,
-  faClock,
-  faMagnifyingGlassPlus,
-  faRoad,
-  faWater,
-  faMountain,
-  faTriangleExclamation,
-  faSearch,
-  faLayerGroup,
-  faCompass,
-  faCircleCheck,
-  faChevronLeft,
-  faChevronRight,
-  faShieldHalved,
-  faFileCsv,
-  faFilter,
-  faUser,
-} from "@fortawesome/free-solid-svg-icons";
+import { Button, StatCard, StatusPill } from "../ui";
 import "./HazardReportReview.css";
 
 mapboxgl.accessToken = import.meta.env.VITE_MAPBOX_TOKEN;
@@ -62,12 +61,32 @@ function statusMeta(status) {
   return STATUS_META[status] || { label: status, color: "#64748b", bg: "#f1f5f9" };
 }
 
-function reportIcon(reportType = "") {
+function getHazardLucideIcon(reportType = "") {
   const type = String(reportType).toLowerCase();
-  if (type.includes("road") || type.includes("block") || type.includes("obstruct")) return faRoad;
-  if (type.includes("flood")) return faWater;
-  if (type.includes("landslide")) return faMountain;
-  return faTriangleExclamation;
+  if (type.includes("road") || type.includes("block") || type.includes("obstruct")) {
+    return Construction;
+  }
+  if (type.includes("flood")) return Waves;
+  if (type.includes("landslide")) return Mountain;
+  return AlertTriangle;
+}
+
+function getReporterInitials(name = "") {
+  const parts = String(name || "")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (parts.length === 0) return "?";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
+}
+
+function getStatusPillVariant(status = "") {
+  const normalized = String(status).toLowerCase();
+  if (normalized === "validated") return "validated";
+  if (normalized === "resolved") return "resolved";
+  if (normalized === "rejected") return "rejected";
+  return "pending";
 }
 
 function reportPhotoUrl(path) {
@@ -169,21 +188,20 @@ function getReportReporter(report, currentUserRole) {
   return { text: "Deleted user", isDeleted: true };
 }
 
+const VALID_STATUS_FILTERS = ["all", "pending", "validated", "resolved"];
+
 function HazardReportReview({ focusReportId, onOpenMap }) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { user } = useAuth();
 
-  const [statusFilter, setStatusFilter] = useState("all");
+  const rawFilter = String(searchParams.get("filter") || "all").toLowerCase();
+  const statusFilter = VALID_STATUS_FILTERS.includes(rawFilter) ? rawFilter : "all";
   const [typeFilter, setTypeFilter] = useState("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
-  const [isMobileViewport, setIsMobileViewport] = useState(() =>
-    typeof window !== "undefined" ? window.innerWidth <= 768 : false
-  );
-  const [mobileTypeSheetOpen, setMobileTypeSheetOpen] = useState(false);
-  const [draftTypeFilter, setDraftTypeFilter] = useState("all");
   const listScrollRef = useRef(null);
 
   const reportsQuery = useHazardReports("all");
@@ -208,6 +226,8 @@ function HazardReportReview({ focusReportId, onOpenMap }) {
   const drawerRef = useRef(null);
   const closeBtnRef = useRef(null);
   const lastActiveRowRef = useRef(null);
+  const lightboxRef = useRef(null);
+  const lightboxCloseBtnRef = useRef(null);
 
   const dynamicTypeFilters = useMemo(() => {
     const base = [...HAZARD_TYPE_FILTERS];
@@ -225,15 +245,20 @@ function HazardReportReview({ focusReportId, onOpenMap }) {
     return base;
   }, [reports]);
 
-  function clearAllFilters() {
-    setStatusFilter("all");
-    setTypeFilter("all");
-    setSearchQuery("");
+  function handleStatusFilterChange(nextStatus) {
+    const safeStatus = VALID_STATUS_FILTERS.includes(nextStatus) ? nextStatus : "all";
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.set("filter", safeStatus);
+      return next;
+    });
     setPage(1);
   }
 
-  function handleStatusFilterChange(nextStatus) {
-    setStatusFilter(nextStatus);
+  function clearAllFilters() {
+    handleStatusFilterChange("all");
+    setTypeFilter("all");
+    setSearchQuery("");
     setPage(1);
   }
 
@@ -245,41 +270,6 @@ function HazardReportReview({ focusReportId, onOpenMap }) {
   function handleSearchChange(nextSearch) {
     setSearchQuery(nextSearch);
     setPage(1);
-  }
-
-  useEffect(() => {
-    if (typeof window === "undefined" || !window.matchMedia) return undefined;
-    const mq = window.matchMedia("(max-width: 768px)");
-    const onChange = (event) => setIsMobileViewport(event.matches);
-    mq.addEventListener("change", onChange);
-    return () => mq.removeEventListener("change", onChange);
-  }, []);
-
-  useEffect(() => {
-    if (!mobileTypeSheetOpen) return undefined;
-    const onKeyDown = (event) => {
-      if (event.key === "Escape") {
-        setMobileTypeSheetOpen(false);
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [mobileTypeSheetOpen]);
-
-  function openMobileTypeSheet() {
-    setDraftTypeFilter(typeFilter);
-    setMobileTypeSheetOpen(true);
-  }
-
-  function applyMobileTypeSheet() {
-    handleTypeFilterChange(draftTypeFilter);
-    setMobileTypeSheetOpen(false);
-  }
-
-  function resetMobileTypeSheet() {
-    setDraftTypeFilter("all");
-    handleTypeFilterChange("all");
-    setMobileTypeSheetOpen(false);
   }
 
   // Mapbox mini-map refs
@@ -538,8 +528,10 @@ function HazardReportReview({ focusReportId, onOpenMap }) {
     }
   }, [selected]);
 
-  // Keyboard navigation for Lightbox and Drawer Escape / Arrow navigation
+  // Keyboard navigation, Escape close, and Focus Trap for Incident Modal & Lightbox
   useEffect(() => {
+    if (!selected && !lightbox) return undefined;
+
     function handleKeyDown(e) {
       if (e.key === "Escape") {
         if (lightbox) {
@@ -548,9 +540,48 @@ function HazardReportReview({ focusReportId, onOpenMap }) {
           return;
         }
         if (selected) {
+          e.preventDefault();
           closeDrawer();
+          return;
         }
       }
+
+      if (e.key === "Tab") {
+        const container = lightbox ? lightboxRef.current : drawerRef.current;
+        if (!container) return;
+
+        const focusables = Array.from(
+          container.querySelectorAll(
+            'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+          )
+        ).filter((el) => el.offsetParent !== null);
+
+        if (focusables.length === 0) {
+          e.preventDefault();
+          return;
+        }
+
+        const first = focusables[0];
+        const last = focusables[focusables.length - 1];
+
+        if (e.shiftKey) {
+          if (
+            document.activeElement === first ||
+            !container.contains(document.activeElement)
+          ) {
+            e.preventDefault();
+            last.focus();
+          }
+        } else if (
+          document.activeElement === last ||
+          !container.contains(document.activeElement)
+        ) {
+          e.preventDefault();
+          first.focus();
+        }
+        return;
+      }
+
       if (selectedPhotos.length > 1) {
         const isEditing = ["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement?.tagName);
         if (!isEditing && (lightbox || drawerRef.current?.contains(document.activeElement))) {
@@ -565,6 +596,20 @@ function HazardReportReview({ focusReportId, onOpenMap }) {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [lightbox, selected, selectedPhotos]);
+
+  // Focus management: move focus into lightbox on open, restore to modal on close
+  useEffect(() => {
+    if (lightbox) {
+      const id = setTimeout(() => {
+        lightboxCloseBtnRef.current?.focus();
+      }, 30);
+      return () => clearTimeout(id);
+    }
+    if (selected && drawerRef.current && !drawerRef.current.contains(document.activeElement)) {
+      closeBtnRef.current?.focus();
+    }
+    return undefined;
+  }, [lightbox, selected]);
 
   // Focus management: move focus into drawer on open
   useEffect(() => {
@@ -801,377 +846,365 @@ function HazardReportReview({ focusReportId, onOpenMap }) {
     return filteredReports.slice(start, start + pageSize);
   }, [filteredReports, safePage, pageSize]);
 
-  const paginationItems = useMemo(() => {
-    if (totalPages <= 5) {
-      return Array.from({ length: totalPages }, (_, i) => i + 1);
-    }
-    const pages = Array.from(
-      new Set(
-        [1, totalPages, safePage - 1, safePage, safePage + 1].filter(
-          (p) => p >= 1 && p <= totalPages
-        )
-      )
-    ).sort((a, b) => a - b);
-
-    const items = [];
-    for (let i = 0; i < pages.length; i++) {
-      const p = pages[i];
-      const prev = pages[i - 1];
-      if (i > 0) {
-        if (p - prev === 2) {
-          items.push(prev + 1);
-        } else if (p - prev > 2) {
-          items.push(`ellipsis-${prev}`);
-        }
-      }
-      items.push(p);
-    }
-    return items;
-  }, [totalPages, safePage]);
-
   const drawerActionButtons = selected ? (
     <>
-      <button
-        type="button"
+      <Button
+        variant="primary"
+        className="hr-modal-action-btn"
         onClick={() => handleValidate("validated")}
-        className="hr-drawer-btn is-validate"
         disabled={selected.status === "validated"}
         title="Validate hazard report"
       >
-        <FontAwesomeIcon icon={faCheck} />
+        <Check size={16} strokeWidth={2} aria-hidden="true" />
         <span>Validate</span>
-      </button>
+      </Button>
 
-      <button
-        type="button"
+      <Button
+        variant="danger-outline"
+        className="hr-modal-action-btn hr-modal-action-reject"
         onClick={() => handleValidate("rejected")}
-        className="hr-drawer-btn is-reject"
         disabled={selected.status === "rejected"}
         title="Reject report as invalid"
       >
-        <FontAwesomeIcon icon={faXmark} />
+        <X size={16} strokeWidth={2} aria-hidden="true" />
         <span>Reject</span>
-      </button>
+      </Button>
 
-      <button
-        type="button"
+      <Button
+        variant="secondary"
+        className="hr-modal-action-btn"
         onClick={handleResolve}
-        className="hr-drawer-btn is-resolve"
         disabled={selected.status === "resolved" || reopening}
         title="Mark incident resolved"
       >
-        <FontAwesomeIcon icon={reopening ? faXmark : faCircleCheck} />
+        <CheckCircle2 size={16} strokeWidth={2} aria-hidden="true" />
         <span>{reopening ? "Reopening…" : "Resolve"}</span>
-      </button>
+      </Button>
     </>
   ) : null;
 
   return (
     <div className="hr-page">
       <div className="hr-container">
-        {/* TOP COMMAND HEADER & METRIC KPI CARDS */}
-        <div className="hr-top-section">
-          <header className="hr-top-header">
-            <div className="hr-header-titles">
-              <div className="hr-badge-ticker">
-                <span className="hr-ticker-beacon" />
-                <span>Incident Command Feed</span>
-              </div>
-              <h1 className="hr-main-title">Hazard Reports & Road Dispatch</h1>
-              <p className="hr-subtitle">
+        {/* TOP COMMAND HEADER & DISPLAY-ONLY STAT CARDS */}
+        <div className="hr-top-section hr-top-redesigned">
+          <header className="hr-top-header-v2">
+            <div className="hr-header-titles-v2">
+              <span className="hr-command-chip">
+                <span className="hr-command-chip-dot" aria-hidden="true" />
+                <span>Incident command feed</span>
+              </span>
+              <h1 className="hr-main-title-v2">Hazard Reports &amp; Road Dispatch</h1>
+              <p className="hr-subtitle-v2">
                 Verify citizen-submitted road hazards, monitor 100m impact zones, and control dynamic route closures.
               </p>
             </div>
-            <div className="hr-header-actions">
-              <button
-                type="button"
+            <div className="hr-header-actions-v2">
+              <Button
+                variant="secondary"
                 onClick={exportCSV}
-                className="hr-export-btn"
+                disabled={filteredReports.length === 0}
                 title="Export matching incident reports to CSV"
-                aria-label="Export CSV"
               >
-                <FontAwesomeIcon icon={faFileCsv} />
-                <span className="hr-export-label">Export CSV</span>
-              </button>
+                <Download size={16} strokeWidth={2} aria-hidden="true" />
+                <span>Export CSV</span>
+              </Button>
             </div>
           </header>
 
-          {/* 4 CLICKABLE STAT CARDS */}
-          <section className="hr-kpi-grid" aria-label="Incident Overview Statistics">
-            <button
-              type="button"
-              onClick={() => handleStatusFilterChange("all")}
-              className={`hr-kpi-card is-total ${statusFilter === "all" ? "is-selected-card" : ""}`}
-              aria-pressed={statusFilter === "all"}
-            >
-              <div className="hr-kpi-info">
-                <span className="hr-kpi-label hr-kpi-label-desktop">Total Submissions</span>
-                <span className="hr-kpi-label-mobile">Total</span>
-                <strong className="hr-kpi-num">{totalCount}</strong>
-                <small className="hr-kpi-hint">All historical incident logs</small>
-              </div>
-              <span className="hr-kpi-icon-pill">
-                <FontAwesomeIcon icon={faLayerGroup} />
-              </span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => handleStatusFilterChange("pending")}
-              className={`hr-kpi-card is-pending ${statusFilter === "pending" ? "is-selected-card" : ""} ${pendingCount > 0 ? "has-amber-accent" : ""}`}
-              aria-pressed={statusFilter === "pending"}
-            >
-              <div className="hr-kpi-info">
-                <span className="hr-kpi-label hr-kpi-label-desktop">Pending Review</span>
-                <span className="hr-kpi-label-mobile">Pending</span>
-                <strong className="hr-kpi-num">{pendingCount}</strong>
-                <small className="hr-kpi-hint">
-                  {pendingCount > 0 ? "⚠️ Requires staff triage" : "All reports triaged"}
-                </small>
-              </div>
-              <span className="hr-kpi-icon-pill">
-                <FontAwesomeIcon icon={faTriangleExclamation} />
-              </span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => handleStatusFilterChange("validated")}
-              className={`hr-kpi-card is-active ${statusFilter === "validated" ? "is-selected-card" : ""}`}
-              aria-pressed={statusFilter === "validated"}
-            >
-              <div className="hr-kpi-info">
-                <span className="hr-kpi-label hr-kpi-label-desktop">Active Hazards</span>
-                <span className="hr-kpi-label-mobile">Active</span>
-                <strong className="hr-kpi-num">{validatedCount}</strong>
-                <small className="hr-kpi-hint">Confirmed & affecting routes</small>
-              </div>
-              <span className="hr-kpi-icon-pill">
-                <FontAwesomeIcon icon={faRoad} />
-              </span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => handleStatusFilterChange("resolved")}
-              className={`hr-kpi-card is-resolved ${statusFilter === "resolved" ? "is-selected-card" : ""}`}
-              aria-pressed={statusFilter === "resolved"}
-            >
-              <div className="hr-kpi-info">
-                <span className="hr-kpi-label hr-kpi-label-desktop">Hazards Cleared</span>
-                <span className="hr-kpi-label-mobile">Cleared</span>
-                <strong className="hr-kpi-num">{resolvedCount}</strong>
-                <small className="hr-kpi-hint">Roads safely reopened</small>
-              </div>
-              <span className="hr-kpi-icon-pill">
-                <FontAwesomeIcon icon={faCircleCheck} />
-              </span>
-            </button>
-          </section>
+          {/* 4 DISPLAY-ONLY STAT CARDS */}
+          {loading ? (
+            <div className="hr-stats-grid-v2" aria-hidden="true">
+              {Array.from({ length: 4 }).map((_, idx) => (
+                <div key={idx} className="hr-skel-stat-card">
+                  <div className="hr-skel-row">
+                    <span className="hr-skel hr-skel-tile" />
+                    <span className="hr-skel hr-skel-label" />
+                  </div>
+                  <span className="hr-skel hr-skel-value" />
+                  <span className="hr-skel hr-skel-helper" />
+                </div>
+              ))}
+            </div>
+          ) : (
+            <section className="hr-stats-grid-v2" aria-label="Filter hazard reports by status">
+              <StatCard
+                icon={Layers}
+                iconTone="primary"
+                label="Total submissions"
+                value={totalCount}
+                showProgress={false}
+                helper="All historical incident logs"
+                active={statusFilter === "all"}
+                onClick={() => handleStatusFilterChange("all")}
+              />
+              <StatCard
+                icon={AlertTriangle}
+                tint="warn"
+                label="Pending review"
+                value={pendingCount}
+                showProgress={false}
+                helper={pendingCount > 0 ? "Requires staff triage" : "All reports triaged"}
+                active={statusFilter === "pending"}
+                onClick={() => handleStatusFilterChange("pending")}
+              />
+              <StatCard
+                icon={Route}
+                tint="danger"
+                label="Active hazards"
+                value={validatedCount}
+                showProgress={false}
+                helper="Confirmed & affecting routes"
+                active={statusFilter === "validated"}
+                onClick={() => handleStatusFilterChange("validated")}
+              />
+              <StatCard
+                icon={CheckCircle2}
+                tint="success"
+                label="Hazards cleared"
+                value={resolvedCount}
+                showProgress={false}
+                helper="Roads safely reopened"
+                active={statusFilter === "resolved"}
+                onClick={() => handleStatusFilterChange("resolved")}
+              />
+            </section>
+          )}
         </div>
 
-        {/* WORKSPACE SHELL: LIST FULL WIDTH */}
-        <div className="hr-shell">
-          <aside className="hr-list-panel">
-            {/* SEARCH & FILTERS */}
-            <div className="hr-controls-bar">
-              <div className="hr-search-wrap">
-                <FontAwesomeIcon icon={faSearch} className="hr-search-icon" />
-                <input
-                  type="text"
-                  placeholder={isMobileViewport ? "Search reports" : "Search ID, street, reporter, keywords..."}
-                  value={searchQuery}
-                  onChange={(e) => handleSearchChange(e.target.value)}
-                  className="hr-search-input"
-                  aria-label="Search hazard reports"
-                />
-                {searchQuery && (
-                  <button
-                    type="button"
-                    onClick={() => handleSearchChange("")}
-                    className="hr-search-clear"
-                    aria-label="Clear search input"
-                  >
-                    <FontAwesomeIcon icon={faXmark} />
-                  </button>
-                )}
-              </div>
-
-              <select
-                id="hr-type-select"
-                value={typeFilter}
-                onChange={(e) => handleTypeFilterChange(e.target.value)}
-                className="hr-filter-select hr-desktop-type-select"
-                aria-label="Filter by hazard type"
-              >
-                {dynamicTypeFilters.map((t) => (
-                  <option key={t.key} value={t.key}>
-                    {t.label}
-                  </option>
-                ))}
-              </select>
-
-              <button
-                type="button"
-                className="hr-mobile-type-btn"
-                onClick={openMobileTypeSheet}
-                aria-label="Filter by hazard type"
-                aria-expanded={mobileTypeSheetOpen}
-              >
-                <FontAwesomeIcon icon={faFilter} />
-                {typeFilter !== "all" && (
-                  <span className="hr-mfilter-dot" aria-hidden="true" />
-                )}
-              </button>
+        {/* SINGLE TABLE CARD (--radius-xl) */}
+        <section className="hr-table-card" aria-label="Hazard reports list">
+          {/* TOOLBAR: SEARCH + ALL TYPES SELECT */}
+          <div className="hr-toolbar-v2">
+            <div className="hr-search-wrap-v2">
+              <Search
+                size={16}
+                strokeWidth={2}
+                className="hr-search-icon-v2"
+                aria-hidden="true"
+              />
+              <input
+                type="search"
+                placeholder="Search ID, street, reporter, keywords..."
+                value={searchQuery}
+                onChange={(e) => handleSearchChange(e.target.value)}
+                className="hr-search-input-v2"
+                aria-label="Search hazard reports"
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => handleSearchChange("")}
+                  className="hr-search-clear-v2"
+                  aria-label="Clear search"
+                >
+                  <X size={15} strokeWidth={2} aria-hidden="true" />
+                </button>
+              )}
             </div>
 
-            {/* SCROLLABLE LIST */}
-            <div ref={listScrollRef} className="hr-list-scroll">
-              {loading && <div className="hr-loading">Loading reports…</div>}
+            <select
+              id="hr-type-select"
+              value={typeFilter}
+              onChange={(e) => handleTypeFilterChange(e.target.value)}
+              className="hr-type-select-v2"
+              aria-label="Filter by hazard type"
+            >
+              {dynamicTypeFilters.map((t) => (
+                <option key={t.key} value={t.key}>
+                  {t.label}
+                </option>
+              ))}
+            </select>
+          </div>
 
-              {/* EMPTY STATE 1: No reports in system at all */}
-              {!loading && reports.length === 0 && (
-                <div className="hr-empty">
-                  <FontAwesomeIcon icon={faTriangleExclamation} className="hr-empty-icon" />
-                  <p className="hr-empty-title">No hazard reports yet</p>
-                  <p className="hr-empty-text">New citizen reports will appear here for review.</p>
+          {/* TABLE BODY: SKELETON / ERROR / EMPTY / ROWS */}
+          {loading ? (
+            <div
+              ref={listScrollRef}
+              className="hr-table-scroll"
+              aria-busy="true"
+              aria-label="Loading hazard reports"
+            >
+              <div className="hr-table-grid hr-table-head" aria-hidden="true">
+                <span>INCIDENT</span>
+                <span>REPORTER</span>
+                <span>REPORTED</span>
+                <span>STATUS</span>
+                <span />
+              </div>
+              {Array.from({ length: 6 }).map((_, idx) => (
+                <div key={idx} className="hr-table-grid hr-skel-row" aria-hidden="true">
+                  <div className="hr-incident-cell">
+                    <span className="hr-skel hr-skel-icon-tile" />
+                    <div className="hr-skel-stack">
+                      <span className="hr-skel hr-skel-street" />
+                      <span className="hr-skel hr-skel-brgy" />
+                    </div>
+                  </div>
+                  <div className="hr-reporter-cell">
+                    <span className="hr-skel hr-skel-avatar" />
+                    <span className="hr-skel hr-skel-name" />
+                  </div>
+                  <span className="hr-skel hr-skel-time" />
+                  <span className="hr-skel hr-skel-pill" />
+                  <span />
                 </div>
-              )}
-
-              {/* EMPTY STATE 2: Filters hide everything */}
-              {!loading && reports.length > 0 && filteredReports.length === 0 && (
-                <div className="hr-empty">
-                  <FontAwesomeIcon icon={faSearch} className="hr-empty-icon" />
-                  <p className="hr-empty-title">No matching reports</p>
-                  <button
-                    type="button"
-                    onClick={clearAllFilters}
-                    className="hr-clear-filters-btn"
-                  >
-                    Clear filters
-                  </button>
+              ))}
+            </div>
+          ) : reportsQuery.error ? (
+            <div className="hr-state-box" role="alert">
+              <span className="hr-state-icon is-error" aria-hidden="true">
+                <AlertTriangle size={20} strokeWidth={2} />
+              </span>
+              <h3>Could not load hazard reports</h3>
+              <p>
+                {reportsQuery.error?.message ||
+                  "Something went wrong while fetching hazard reports."}
+              </p>
+              <Button variant="secondary" onClick={() => reportsQuery.refetch()}>
+                Try again
+              </Button>
+            </div>
+          ) : reports.length === 0 ? (
+            <div className="hr-state-box" role="status">
+              <span className="hr-state-icon" aria-hidden="true">
+                <AlertTriangle size={20} strokeWidth={2} />
+              </span>
+              <h3>No hazard reports yet</h3>
+              <p>New citizen-submitted road hazards will appear here for review.</p>
+            </div>
+          ) : filteredReports.length === 0 ? (
+            <div className="hr-state-box" role="status">
+              <span className="hr-state-icon" aria-hidden="true">
+                <Search size={20} strokeWidth={2} />
+              </span>
+              <h3>No matching reports</h3>
+              <p>Try adjusting your status chip, hazard type, or search query.</p>
+              <Button variant="secondary" onClick={clearAllFilters}>
+                Clear filters
+              </Button>
+            </div>
+          ) : (
+            <>
+              <div ref={listScrollRef} className="hr-table-scroll">
+                <div className="hr-table-grid hr-table-head" role="row">
+                  <span role="columnheader">INCIDENT</span>
+                  <span role="columnheader">REPORTER</span>
+                  <span role="columnheader">REPORTED</span>
+                  <span role="columnheader">STATUS</span>
+                  <span role="columnheader" aria-hidden="true" />
                 </div>
-              )}
 
-              {/* FULL-WIDTH REPORT ROWS */}
-              {paginatedReports.map((r) => {
-                const meta = statusMeta(r.status);
-                const isSelected = selected?.id === r.id;
-                const streetOrPlace = getReportStreetOrPlace(r, roadSegmentsData);
-                const barangay = getReportBarangay(r, isSelected ? barangayName : null);
-                const reporter = getReportReporter(r, user?.role);
-                const photoCount = Array.isArray(r.photos) && r.photos.length > 0
-                  ? r.photos.length
-                  : (r.photo_url ? 1 : 0);
+                <div className="hr-table-rows" role="list">
+                  {paginatedReports.map((r) => {
+                    const isSelected = selected?.id === r.id;
+                    const streetOrPlace = getReportStreetOrPlace(r, roadSegmentsData);
+                    const barangay = getReportBarangay(r, isSelected ? barangayName : null);
+                    const reporter = getReportReporter(r, user?.role);
+                    const photoCount =
+                      Array.isArray(r.photos) && r.photos.length > 0
+                        ? r.photos.length
+                        : r.photo_url
+                          ? 1
+                          : 0;
+                    const IconComp = getHazardLucideIcon(r.report_type);
+                    const statusVariant = getStatusPillVariant(r.status);
+                    const tileToneClass =
+                      statusVariant === "validated"
+                        ? "is-validated"
+                        : statusVariant === "resolved"
+                          ? "is-resolved"
+                          : statusVariant === "pending"
+                            ? "is-pending"
+                            : "is-rejected";
 
-                return (
-                  <button
-                    key={r.id}
-                    type="button"
-                    onClick={(e) => openReport(r, e)}
-                    className={`hr-row-item ${isSelected ? "is-selected" : ""}`}
-                    style={{ borderLeftColor: meta.color }}
-                    aria-selected={isSelected}
-                  >
-                    <div className="hr-row-desktop-content">
-                      <div className="hr-row-main-group">
-                        <span className="hr-row-type-icon" style={{ color: meta.color }}>
-                          <FontAwesomeIcon icon={reportIcon(r.report_type)} />
-                        </span>
-                        <div className="hr-row-place-wrap">
-                          <strong className="hr-row-street">{streetOrPlace}</strong>
-                          <span className="hr-row-id">#{r.id}</span>
-                        </div>
-                        <span className="hr-row-barangay">{barangay}</span>
-                      </div>
-
-                      <div className="hr-row-meta-group">
-                        {photoCount > 1 && (
-                          <span className="hr-row-photos-badge" title={`${photoCount} photos attached`}>
-                            <FontAwesomeIcon icon={faCamera} />
-                            <span>{photoCount} photos</span>
+                    return (
+                      <button
+                        key={r.id}
+                        type="button"
+                        role="listitem"
+                        onClick={(e) => openReport(r, e)}
+                        className={`hr-table-grid hr-table-row ${isSelected ? "is-selected" : ""}`}
+                        aria-label={`Open incident #${r.id} at ${streetOrPlace}, ${statusMeta(r.status).label}`}
+                      >
+                        {/* INCIDENT */}
+                        <span className="hr-incident-cell">
+                          <span
+                            className={`hr-incident-tile ${tileToneClass}`}
+                            aria-hidden="true"
+                          >
+                            <IconComp size={18} strokeWidth={2} />
                           </span>
-                        )}
-
-                        <span
-                          className={`hr-row-reporter ${reporter.isDeleted ? "is-deleted" : ""}`}
-                          title={`Reporter: ${reporter.text}`}
-                        >
-                          <FontAwesomeIcon icon={faUser} />
-                          <span className="hr-row-reporter-name">{reporter.text}</span>
+                          <span className="hr-incident-copy">
+                            <span className="hr-incident-top">
+                              <span className="hr-incident-street">{streetOrPlace}</span>
+                              <span className="hr-incident-id">#{r.id}</span>
+                            </span>
+                            <span className="hr-incident-bottom">
+                              <span className="hr-brgy-chip">{barangay}</span>
+                              {photoCount > 1 && (
+                                <span
+                                  className="hr-photo-chip"
+                                  title={`${photoCount} photos attached`}
+                                >
+                                  <Camera size={12} strokeWidth={2} aria-hidden="true" />
+                                  <span>{photoCount}</span>
+                                </span>
+                              )}
+                            </span>
+                          </span>
                         </span>
 
-                        <span className="hr-row-time">
-                          <FontAwesomeIcon icon={faClock} />
+                        {/* REPORTER */}
+                        <span className="hr-reporter-cell">
+                          <span
+                            className={`hr-reporter-avatar ${reporter.isDeleted ? "is-deleted" : ""}`}
+                            aria-hidden="true"
+                          >
+                            {reporter.isDeleted ? "—" : getReporterInitials(reporter.text)}
+                          </span>
+                          <span
+                            className={`hr-reporter-name ${reporter.isDeleted ? "is-deleted" : ""}`}
+                            title={reporter.text}
+                          >
+                            {reporter.text}
+                          </span>
+                        </span>
+
+                        {/* REPORTED */}
+                        <span className="hr-reported-cell">
+                          <Clock size={15} strokeWidth={2} aria-hidden="true" />
                           <span>{formatRelativeTime(r.submitted_at)}</span>
                         </span>
 
-                        <span className={`hr-pill ${
-                            meta.label === "Pending" ? "hr-pill--pending" :
-                            meta.label === "Validated" ? "hr-pill--full" :
-                            meta.label === "Rejected" ? "hr-pill--closed" :
-                            meta.label === "Resolved" ? "hr-pill--available" :
-                            "hr-pill--pending"
-                          }`}>
-                          <span className="hr-status-dot" aria-hidden="true" />
-                          {meta.label}
+                        {/* STATUS */}
+                        <span className="hr-status-cell">
+                          <StatusPill variant={statusVariant} />
                         </span>
-                      </div>
-                    </div>
 
-                    <div className="hr-row-mobile-content">
-                      <div className="hr-mr-row1">
-                        <span className="hr-row-type-icon" style={{ color: meta.color }}>
-                          <FontAwesomeIcon icon={reportIcon(r.report_type)} />
+                        {/* CHEVRON */}
+                        <span className="hr-chevron-cell" aria-hidden="true">
+                          <ChevronRight size={16} strokeWidth={2} className="hr-row-chevron" />
                         </span>
-                        <strong className="hr-mr-street">{streetOrPlace}</strong>
-                        <span className={`hr-pill hr-mr-pill ${
-                            meta.label === "Pending" ? "hr-pill--pending" :
-                            meta.label === "Validated" ? "hr-pill--full" :
-                            meta.label === "Rejected" ? "hr-pill--closed" :
-                            meta.label === "Resolved" ? "hr-pill--available" :
-                            "hr-pill--pending"
-                          }`}>
-                          <span className="hr-status-dot" aria-hidden="true" />
-                          {meta.label}
-                        </span>
-                      </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
 
-                      <div className="hr-mr-row2">
-                        <span>{[ `#${r.id}`, barangay ].filter(Boolean).join(" · ")}</span>
-                        {" · "}
-                        <span className={reporter.isDeleted ? "hr-mr-deleted" : undefined}>
-                          {reporter.text}
-                        </span>
-                        {" · "}
-                        <span>{formatRelativeTime(r.submitted_at)}</span>
-                      </div>
-
-                      {photoCount > 0 && (
-                        <div className="hr-mr-row3">
-                          <span className="hr-row-photos-badge">
-                            <FontAwesomeIcon icon={faCamera} />
-                            <span>{photoCount} {photoCount === 1 ? "photo" : "photos"}</span>
-                          </span>
-                        </div>
-                      )}
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-
-            {!loading && filteredReports.length > 0 && (
-              <nav className="hr-pagination" aria-label="Pagination">
-                <span className="hr-pagination-info">
+              {/* FOOTER */}
+              <footer className="hr-table-footer">
+                <span className="hr-footer-info">
                   Showing {(safePage - 1) * pageSize + 1} to{" "}
                   {Math.min(safePage * pageSize, totalFiltered)} of {totalFiltered}
                 </span>
 
-                <div className="hr-pagination-controls">
-                  <label className="hr-pagination-size">
-                    <span className="hr-pagination-size-label">Rows per page</span>
+                <div className="hr-footer-controls">
+                  <label className="hr-rows-per-page">
+                    <span>Rows per page</span>
                     <select
+                      className="hr-rows-select"
                       value={pageSize}
                       onChange={(e) => {
                         setPageSize(Number(e.target.value));
@@ -1185,197 +1218,94 @@ function HazardReportReview({ focusReportId, onOpenMap }) {
                     </select>
                   </label>
 
-                  <button
-                    type="button"
-                    className="hr-page-nav-btn"
+                  <Button
+                    variant="secondary"
+                    className="hr-footer-btn"
                     disabled={safePage <= 1}
                     onClick={() => setPage((p) => Math.max(1, p - 1))}
-                    aria-label="Previous page"
                   >
                     Previous
-                  </button>
-
-                  {totalPages > 1 && (
-                    <div className="hr-pagination-pages">
-                      {paginationItems.map((item) =>
-                        typeof item === "string" ? (
-                          <span
-                            key={item}
-                            className="hr-pagination-ellipsis"
-                            aria-hidden="true"
-                          >
-                            …
-                          </span>
-                        ) : (
-                          <button
-                            key={item}
-                            type="button"
-                            className={`hr-page-num-btn ${
-                              item === safePage ? "is-active" : ""
-                            }`}
-                            aria-label={`Page ${item}`}
-                            aria-current={item === safePage ? "page" : undefined}
-                            onClick={() => setPage(item)}
-                          >
-                            {item}
-                          </button>
-                        )
-                      )}
-                    </div>
-                  )}
-
-                  <span className="hr-pagination-page">
-                    Page {safePage} of {totalPages}
-                  </span>
-
-                  <button
-                    type="button"
-                    className="hr-page-nav-btn"
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    className="hr-footer-btn"
                     disabled={safePage >= totalPages}
                     onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                    aria-label="Next page"
                   >
                     Next
-                  </button>
+                  </Button>
                 </div>
-              </nav>
-            )}
-          </aside>
-        </div>
-
-        {mobileTypeSheetOpen && (
-          <div
-            className="hr-mobile-sheet-backdrop"
-            role="presentation"
-            onClick={(e) => {
-              if (e.target === e.currentTarget) {
-                setMobileTypeSheetOpen(false);
-              }
-            }}
-          >
-            <div
-              className="hr-mobile-sheet"
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="hr-msheet-title"
-            >
-              <div className="hr-msheet-header">
-                <h3 id="hr-msheet-title" className="hr-msheet-title">
-                  Filter by Hazard Type
-                </h3>
-                <button
-                  type="button"
-                  className="hr-msheet-close"
-                  onClick={() => setMobileTypeSheetOpen(false)}
-                  aria-label="Close type filter"
-                >
-                  <FontAwesomeIcon icon={faXmark} />
-                </button>
-              </div>
-
-              <div className="hr-msheet-body" role="listbox" aria-label="Hazard types">
-                {dynamicTypeFilters.map((t) => {
-                  const isActive = draftTypeFilter === t.key;
-                  return (
-                    <button
-                      key={t.key}
-                      type="button"
-                      role="option"
-                      aria-selected={isActive}
-                      className={`hr-msheet-option ${isActive ? "is-active" : ""}`}
-                      onClick={() => setDraftTypeFilter(t.key)}
-                    >
-                      <span>{t.label}</span>
-                      {isActive && <FontAwesomeIcon icon={faCheck} />}
-                    </button>
-                  );
-                })}
-              </div>
-
-              <div className="hr-msheet-footer">
-                <button
-                  type="button"
-                  className="hr-msheet-btn is-secondary"
-                  onClick={resetMobileTypeSheet}
-                >
-                  Reset
-                </button>
-                <button
-                  type="button"
-                  className="hr-msheet-btn is-primary"
-                  onClick={applyMobileTypeSheet}
-                >
-                  Apply
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
+              </footer>
+            </>
+          )}
+        </section>
       </div>
 
-      {/* DETAIL DRAWER OVER DIMMED BACKDROP */}
+      {/* INCIDENT DETAIL MODAL OVER DIMMED BACKDROP */}
       {selected && (
-        <div className="hr-drawer-overlay" onClick={closeDrawer} role="presentation">
-          <aside
+        <div
+          className="hr-modal-backdrop"
+          onClick={closeDrawer}
+          role="presentation"
+        >
+          <section
             ref={drawerRef}
-            className="hr-drawer-panel"
+            className="hr-modal-dialog"
             onClick={(e) => e.stopPropagation()}
             role="dialog"
             aria-modal="true"
-            aria-label="Hazard Report Detail"
+            aria-labelledby="hr-incident-modal-title"
             tabIndex={-1}
           >
-            {/* STICKY HEADER WITH STATUS BADGE & ACTIONS */}
-            <div className="hr-drawer-sticky-header">
-              <div className="hr-drawer-header-top">
-                <div className="hr-drawer-badge-group">
-                  <span className={`hr-pill hr-pill--lg ${
-                      selected.status === "pending" ? "hr-pill--pending" :
-                      selected.status === "validated" ? "hr-pill--full" :
-                      selected.status === "rejected" ? "hr-pill--closed" :
-                      selected.status === "resolved" ? "hr-pill--available" :
-                      "hr-pill--pending"
-                    }`}>
-                    <span className="hr-status-dot" aria-hidden="true" />
-                    {statusMeta(selected.status).label}
-                  </span>
-                  <span className="hr-drawer-title-id">Incident #{selected.id}</span>
+            {/* FIXED HEADER & ACTION BAR */}
+            <div className="hr-modal-fixed-top">
+              <header className="hr-modal-header">
+                <div className="hr-modal-header-left">
+                  <StatusPill variant={getStatusPillVariant(selected.status)} />
+                  <h2 id="hr-incident-modal-title" className="hr-modal-title">
+                    Incident #{selected.id}
+                  </h2>
                 </div>
 
                 <button
                   type="button"
                   ref={closeBtnRef}
                   onClick={closeDrawer}
-                  className="hr-drawer-close-btn"
-                  aria-label="Close report details"
+                  className="hr-modal-close-btn"
+                  aria-label="Close"
                 >
-                  <FontAwesomeIcon icon={faXmark} />
+                  <X size={18} strokeWidth={2} aria-hidden="true" />
                 </button>
-              </div>
+              </header>
 
-              {/* ACTION BUTTONS: VALIDATE, REJECT, RESOLVE (EACH >= 44PX) */}
-              <div className="hr-drawer-header-actions">
+              {/* FIXED ACTION ROW: VALIDATE, REJECT, RESOLVE */}
+              <div className="hr-modal-action-bar">
                 {drawerActionButtons}
               </div>
             </div>
 
-            {/* MODAL BODY CONTENT */}
-            <div className="hr-drawer-body">
-              <div className="hr-drawer-grid">
-                {/* LEFT COLUMN: EVIDENCE, DESCRIPTION, DISPATCH NOTES */}
-                <div className="hr-drawer-col">
-                    {/* PHOTO SECTION */}
-                    <div className="hr-drawer-section hr-sec-photos">
-                      <span className="hr-drawer-section-title">Photographic Evidence</span>
-                      {selectedPhotos.length > 0 ? (
-                        <div
-                          className="hr-photo-view-box"
-                          role="group"
-                          aria-roledescription="carousel"
-                          aria-label="Hazard report photos carousel"
-                        >
-                          <div
-                            className="hr-photo-main"
+            {/* SCROLLABLE MODAL BODY */}
+            <div className="hr-modal-body">
+              <div className="hr-modal-grid">
+                {/* LEFT COLUMN: EVIDENCE, DESCRIPTION, QUICK RESPONSE NOTES */}
+                <div className="hr-modal-col">
+                  {/* PHOTOGRAPHIC EVIDENCE */}
+                  <section className="hr-modal-section" aria-label="Photographic evidence">
+                    <h3 className="hr-section-label">
+                      <Camera size={14} aria-hidden="true" />
+                      <span>Photographic evidence</span>
+                    </h3>
+                    {selectedPhotos.length > 0 ? (
+                      <div
+                        className="hr-photo-carousel"
+                        role="group"
+                        aria-roledescription="carousel"
+                        aria-label="Hazard report photos carousel"
+                      >
+                        <div className="hr-photo-stage">
+                          <button
+                            type="button"
+                            className="hr-photo-trigger"
                             onClick={(e) => {
                               e.stopPropagation();
                               setLightbox(true);
@@ -1383,324 +1313,330 @@ function HazardReportReview({ focusReportId, onOpenMap }) {
                             onTouchStart={handleTouchStart}
                             onTouchEnd={handleTouchEnd}
                             onKeyDown={handleCarouselKeyDown}
-                            role="button"
-                            tabIndex={0}
                             aria-label={
                               selectedPhotos.length > 1
-                                ? `Photo ${activePhotoIdx + 1} of ${selectedPhotos.length}. Click or press Enter to view in full size lightbox.`
-                                : "View photo in full size lightbox"
+                                ? `Photo ${activePhotoIdx + 1} of ${selectedPhotos.length}. Click or press Enter to view in full size.`
+                                : "View photo in full size"
                             }
                           >
-                            {/* Counter pill for multiple photos */}
-                            {selectedPhotos.length > 1 && (
-                              <div className="hr-carousel-counter-pill" aria-live="polite">
-                                {activePhotoIdx + 1} / {selectedPhotos.length}
-                              </div>
-                            )}
-
-                            {/* Previous Arrow Button */}
-                            {selectedPhotos.length > 1 && (
-                              <button
-                                type="button"
-                                className="hr-carousel-arrow is-prev"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handlePrevPhoto();
-                                }}
-                                aria-label="Previous photo"
-                              >
-                                <FontAwesomeIcon icon={faChevronLeft} />
-                              </button>
-                            )}
-
-                            {/* Main photo image or fallback */}
                             {failedImages[selectedPhotos[activePhotoIdx]] ? (
-                              <div className="hr-photo-placeholder" aria-label="Photo could not be loaded">
-                                <FontAwesomeIcon icon={faImage} className="hr-photo-placeholder-icon" />
+                              <span className="hr-photo-fallback" aria-label="Photo could not be loaded">
+                                <ImageOff size={24} aria-hidden="true" />
                                 <span>Image unavailable</span>
-                              </div>
+                              </span>
                             ) : (
                               <img
                                 src={reportPhotoUrl(selectedPhotos[activePhotoIdx])}
                                 alt={`${selected.report_type || "Hazard"} evidence ${activePhotoIdx + 1}`}
-                                className="hr-photo-img"
+                                className="hr-photo-media"
                                 onError={() => {
                                   const url = selectedPhotos[activePhotoIdx];
                                   setFailedImages((prev) => ({ ...prev, [url]: true }));
                                 }}
                               />
                             )}
+                          </button>
 
-                            {/* Next Arrow Button */}
-                            {selectedPhotos.length > 1 && (
-                              <button
-                                type="button"
-                                className="hr-carousel-arrow is-next"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleNextPhoto();
-                                }}
-                                aria-label="Next photo"
-                              >
-                                <FontAwesomeIcon icon={faChevronRight} />
-                              </button>
-                            )}
+                          {/* Counter pill for multiple photos */}
+                          {selectedPhotos.length > 1 && (
+                            <div className="hr-photo-counter" aria-live="polite">
+                              {activePhotoIdx + 1} / {selectedPhotos.length}
+                            </div>
+                          )}
 
-                            {/* Full Size button */}
+                          {/* Previous Arrow Button */}
+                          {selectedPhotos.length > 1 && (
                             <button
                               type="button"
-                              className="hr-photo-zoom-tag"
+                              className="hr-photo-nav is-prev"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                setLightbox(true);
+                                handlePrevPhoto();
                               }}
-                              aria-label="Open full size photo viewer"
+                              aria-label="Previous photo"
                             >
-                              <FontAwesomeIcon icon={faMagnifyingGlassPlus} />{" "}
+                              <ChevronLeft size={18} aria-hidden="true" />
+                            </button>
+                          )}
+
+                          {/* Next Arrow Button */}
+                          {selectedPhotos.length > 1 && (
+                            <button
+                              type="button"
+                              className="hr-photo-nav is-next"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleNextPhoto();
+                              }}
+                              aria-label="Next photo"
+                            >
+                              <ChevronRight size={18} aria-hidden="true" />
+                            </button>
+                          )}
+
+                          {/* Full Size button */}
+                          <button
+                            type="button"
+                            className="hr-photo-fullsize-btn"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setLightbox(true);
+                            }}
+                            aria-label="Open full size photo viewer"
+                          >
+                            <Maximize2 size={14} aria-hidden="true" />
+                            <span>
                               {selectedPhotos.length > 1
                                 ? `Full Size (${activePhotoIdx + 1}/${selectedPhotos.length})`
                                 : "Full Size"}
-                            </button>
+                            </span>
+                          </button>
+                        </div>
+
+                        {/* Pagination Dots */}
+                        {selectedPhotos.length > 1 && (
+                          <div
+                            className="hr-photo-dots"
+                            role="tablist"
+                            aria-label="Photo carousel pagination"
+                          >
+                            {selectedPhotos.map((_, idx) => (
+                              <button
+                                key={idx}
+                                type="button"
+                                className={`hr-photo-dot ${activePhotoIdx === idx ? "is-active" : ""}`}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setActivePhotoIdx(idx);
+                                }}
+                                role="tab"
+                                aria-selected={activePhotoIdx === idx}
+                                aria-label={`Go to photo ${idx + 1}`}
+                              />
+                            ))}
                           </div>
+                        )}
 
-                          {/* Pagination Dots */}
-                          {selectedPhotos.length > 1 && (
-                            <div
-                              className="hr-carousel-dots"
-                              role="tablist"
-                              aria-label="Photo carousel pagination"
-                            >
-                              {selectedPhotos.map((_, idx) => (
-                                <button
-                                  key={idx}
-                                  type="button"
-                                  className={`hr-carousel-dot ${activePhotoIdx === idx ? "is-active" : ""}`}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setActivePhotoIdx(idx);
-                                  }}
-                                  role="tab"
-                                  aria-selected={activePhotoIdx === idx}
-                                  aria-label={`Go to photo ${idx + 1}`}
-                                />
-                              ))}
-                            </div>
-                          )}
-
-                          {/* Thumbnail strip */}
-                          {selectedPhotos.length > 1 && (
-                            <div className="hr-thumbnail-row">
-                              {selectedPhotos.map((url, idx) => (
-                                <button
-                                  key={url + idx}
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setActivePhotoIdx(idx);
-                                  }}
-                                  className={`hr-thumb-btn ${activePhotoIdx === idx ? "is-active" : ""}`}
-                                  aria-label={`Thumbnail ${idx + 1}`}
-                                >
-                                  {failedImages[url] ? (
-                                    <div className="hr-thumb-placeholder">
-                                      <FontAwesomeIcon icon={faImage} />
-                                    </div>
-                                  ) : (
-                                    <img
-                                      src={reportPhotoUrl(url)}
-                                      alt={`Thumbnail ${idx + 1}`}
-                                      onError={() => {
-                                        setFailedImages((prev) => ({ ...prev, [url]: true }));
-                                      }}
-                                    />
-                                  )}
-                                </button>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      ) : (
-                        <div className="hr-no-photo-box">
-                          <FontAwesomeIcon icon={faImage} />
-                          <span>No photo provided</span>
-                        </div>
-                      )}
-                    </div>
+                        {/* Thumbnail strip */}
+                        {selectedPhotos.length > 1 && (
+                          <div className="hr-photo-thumbs">
+                            {selectedPhotos.map((url, idx) => (
+                              <button
+                                key={url + idx}
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setActivePhotoIdx(idx);
+                                }}
+                                className={`hr-photo-thumb ${activePhotoIdx === idx ? "is-active" : ""}`}
+                                aria-label={`Thumbnail ${idx + 1}`}
+                              >
+                                {failedImages[url] ? (
+                                  <span className="hr-photo-thumb-fallback">
+                                    <ImageOff size={14} aria-hidden="true" />
+                                  </span>
+                                ) : (
+                                  <img
+                                    src={reportPhotoUrl(url)}
+                                    alt={`Thumbnail ${idx + 1}`}
+                                    onError={() => {
+                                      setFailedImages((prev) => ({ ...prev, [url]: true }));
+                                    }}
+                                  />
+                                )}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="hr-photo-empty">
+                        <ImageOff size={22} aria-hidden="true" />
+                        <span>No photo provided</span>
+                      </div>
+                    )}
+                  </section>
 
                   {/* CITIZEN DESCRIPTION */}
-                  <div className="hr-drawer-section hr-sec-description">
-                    <span className="hr-drawer-section-title">Citizen Description</span>
-                    <p className="hr-drawer-description-text">
-                      {selected.description || "No specific details provided by resident."}
-                    </p>
-                  </div>
+                  <section className="hr-modal-section" aria-label="Citizen description">
+                    <h3 className="hr-section-label">Citizen description</h3>
+                    <div className="hr-description-card">
+                      <p className="hr-description-text">
+                        {selected.description || "No specific details provided by resident."}
+                      </p>
+                    </div>
+                  </section>
 
-                  {/* RESPONSE NOTES & LOG */}
-                  <div className="hr-drawer-section hr-sec-notes">
-                    <div className="hr-canned-row">
-                      <span className="hr-canned-label">Quick Response Notes:</span>
-                      <div className="hr-chips-wrap">
-                        {CANNED_RESPONSES.map((chip) => (
-                          <button
-                            key={chip}
-                            type="button"
-                            onClick={() => applyCannedChip(chip)}
-                            className="hr-canned-btn"
-                          >
-                            + {chip}
-                          </button>
-                        ))}
-                      </div>
+                  {/* QUICK RESPONSE NOTES & OFFICIAL NOTES */}
+                  <section className="hr-modal-section" aria-label="Quick response notes">
+                    <h3 className="hr-section-label">Quick response notes</h3>
+                    <div className="hr-quick-notes-pills">
+                      {CANNED_RESPONSES.map((chip) => (
+                        <button
+                          key={chip}
+                          type="button"
+                          onClick={() => applyCannedChip(chip)}
+                          className="hr-quick-note-pill"
+                        >
+                          + {chip}
+                        </button>
+                      ))}
                     </div>
 
-                    <label className="hr-textarea-label" htmlFor="hr-notes-input">
-                      Official Response Notes
-                    </label>
-                    <textarea
-                      id="hr-notes-input"
-                      value={responseNotes}
-                      onChange={(e) => setResponseNotes(e.target.value)}
-                      className="hr-textarea"
-                      placeholder="Enter dispatch notes, actions taken, or reason for decision…"
-                    />
-                  </div>
+                    <div className="hr-notes-field">
+                      <label className="hr-notes-label" htmlFor="hr-notes-input">
+                        Official response notes
+                      </label>
+                      <textarea
+                        id="hr-notes-input"
+                        value={responseNotes}
+                        onChange={(e) => setResponseNotes(e.target.value)}
+                        className="hr-notes-textarea"
+                        placeholder="Enter dispatch notes, actions taken, or reason for decision…"
+                      />
+                    </div>
+                  </section>
                 </div>
 
-                {/* RIGHT COLUMN: LOCATION, MINI-MAP, AFFECTED ROADS, AUDIT */}
-                <div className="hr-drawer-col">
-                  {/* LOCATION AS TEXT */}
-                  <div className="hr-drawer-section hr-sec-location">
-                    <span className="hr-drawer-section-title">
-                      <FontAwesomeIcon icon={faLocationDot} /> Location Details
-                    </span>
-                    <div className="hr-drawer-location-box">
-                      <div className="hr-drawer-loc-row">
-                        <span className="hr-drawer-loc-label">Street / Place:</span>
-                        <strong className="hr-drawer-loc-val">
+                {/* RIGHT COLUMN: LOCATION, VIEW ON MAP, MAP PREVIEW, AFFECTED STREETS, REPORTER & AUDIT */}
+                <div className="hr-modal-col">
+                  {/* LOCATION DETAILS */}
+                  <section className="hr-modal-section" aria-label="Location details">
+                    <h3 className="hr-section-label">
+                      <MapPin size={14} aria-hidden="true" />
+                      <span>Location details</span>
+                    </h3>
+                    <dl className="hr-detail-card hr-meta-list">
+                      <div className="hr-meta-row">
+                        <dt className="hr-meta-term">Street / Place</dt>
+                        <dd className="hr-meta-value is-strong">
                           {getReportStreetOrPlace(selected, roadSegmentsData)}
-                        </strong>
+                        </dd>
                       </div>
-                      <div className="hr-drawer-loc-row">
-                        <span className="hr-drawer-loc-label">Barangay:</span>
-                        <strong className="hr-drawer-loc-val">
+                      <div className="hr-meta-row">
+                        <dt className="hr-meta-term">Barangay</dt>
+                        <dd className="hr-meta-value is-strong">
                           {barangayLoading ? "Resolving..." : (barangayName || getReportBarangay(selected))}
-                        </strong>
+                        </dd>
                       </div>
-                      <div className="hr-drawer-loc-row">
-                        <span className="hr-drawer-loc-label">Coordinates:</span>
-                        <span className="hr-drawer-loc-coords">
+                      <div className="hr-meta-row">
+                        <dt className="hr-meta-term">Coordinates</dt>
+                        <dd className="hr-meta-value hr-meta-coords">
                           {Number(selected.latitude).toFixed(5)}, {Number(selected.longitude).toFixed(5)}
-                        </span>
+                        </dd>
                       </div>
-                    </div>
+                    </dl>
 
-                    {/* VIEW ON MAP BUTTON */}
                     <button
                       type="button"
                       onClick={handleViewOnMap}
-                      className="hr-view-map-btn"
+                      className="hr-view-on-map-btn"
                       title="View hazard on live interactive staff map"
                     >
-                      <FontAwesomeIcon icon={faCompass} />
+                      <Compass size={16} aria-hidden="true" />
                       <span>View on map</span>
                     </button>
-                  </div>
+                  </section>
 
-                  {/* MINI-MAP PREVIEW */}
-                  <div className="hr-drawer-section hr-sec-minimap">
-                    <div className="hr-minimap-wrap">
+                  {/* MAP PREVIEW */}
+                  <section className="hr-modal-section" aria-label="Map preview">
+                    <div className="hr-map-preview-frame">
                       <div ref={mapContainerRef} className="hr-minimap-container" />
                     </div>
+                  </section>
 
-                    {nearbyRoads.length > 0 && (
-                      <div className="hr-affected-roads-box">
-                        <span className="hr-subhead">
-                          <FontAwesomeIcon icon={faRoad} /> Affected Streets in 100m Radius
-                        </span>
-                        <div className="hr-road-tags-list">
-                          {nearbyRoads.map((name) => (
-                            <span key={name} className="hr-road-tag">
-                              {name}
-                            </span>
-                          ))}
-                        </div>
+                  {/* AFFECTED STREETS IN 100M RADIUS */}
+                  {nearbyRoads.length > 0 && (
+                    <section className="hr-modal-section" aria-label="Affected streets in 100m radius">
+                      <h3 className="hr-section-label">
+                        <Route size={14} aria-hidden="true" />
+                        <span>Affected streets in 100m radius</span>
+                      </h3>
+                      <div className="hr-affected-roads-pills">
+                        {nearbyRoads.map((name) => (
+                          <span key={name} className="hr-affected-road-pill">
+                            {name}
+                          </span>
+                        ))}
                       </div>
-                    )}
-                  </div>
+                    </section>
+                  )}
 
-                  {/* REPORTER INFO & VERIFICATION AUDIT */}
-                  <div className="hr-drawer-section hr-sec-audit">
-                    <span className="hr-drawer-section-title">
-                      <FontAwesomeIcon icon={faUser} /> Reporter & Audit
-                    </span>
-                    <div className="hr-reporter-info-card">
-                      <div className="hr-reporter-row">
-                        <span className="hr-reporter-label">Reported by:</span>
-                        <strong
-                          className={`hr-reporter-val ${
+                  {/* REPORTER & AUDIT */}
+                  <section className="hr-modal-section" aria-label="Reporter and audit">
+                    <h3 className="hr-section-label">
+                      <User size={14} aria-hidden="true" />
+                      <span>Reporter &amp; audit</span>
+                    </h3>
+                    <dl className="hr-detail-card hr-meta-list">
+                      <div className="hr-meta-row">
+                        <dt className="hr-meta-term">Reported by</dt>
+                        <dd
+                          className={`hr-meta-value is-strong ${
                             getReportReporter(selected, user?.role).isDeleted ? "is-deleted" : ""
                           }`}
                         >
                           {getReportReporter(selected, user?.role).text}
-                        </strong>
+                        </dd>
                       </div>
-                      <div className="hr-reporter-row">
-                        <span className="hr-reporter-label">Submission Channel:</span>
-                        <span className="hr-reporter-val">Evacway Resident Web App</span>
+                      <div className="hr-meta-row">
+                        <dt className="hr-meta-term">Submission channel</dt>
+                        <dd className="hr-meta-value">EvacWay Resident Web App</dd>
                       </div>
-                      <div className="hr-reporter-row">
-                        <span className="hr-reporter-label">Submitted:</span>
-                        <span className="hr-reporter-val">
+                      <div className="hr-meta-row">
+                        <dt className="hr-meta-term">Submitted</dt>
+                        <dd className="hr-meta-value">
                           {selected.submitted_at
                             ? new Date(selected.submitted_at).toLocaleString()
                             : "Unknown"}{" "}
                           ({formatRelativeTime(selected.submitted_at)})
-                        </span>
+                        </dd>
                       </div>
-                      <div className="hr-reporter-row">
-                        <span className="hr-reporter-label">Current Status:</span>
-                        <strong style={{ color: statusMeta(selected.status).color }}>
-                          {statusMeta(selected.status).label}
-                        </strong>
+                      <div className="hr-meta-row">
+                        <dt className="hr-meta-term">Current status</dt>
+                        <dd className="hr-meta-value">
+                          <StatusPill variant={getStatusPillVariant(selected.status)} />
+                        </dd>
                       </div>
-                      <div className="hr-reporter-row">
-                        <span className="hr-reporter-label">Verified By:</span>
-                        <span className="hr-reporter-val">
+                      <div className="hr-meta-row">
+                        <dt className="hr-meta-term">Verified by</dt>
+                        <dd className="hr-meta-value">
                           {selected.validated_by_name ||
                             (selected.validated_by
                               ? `Staff Officer #${selected.validated_by}`
                               : selected.status === "pending"
                               ? "Awaiting review"
                               : "System logged")}
-                        </span>
+                        </dd>
                       </div>
                       {selected.validated_at && (
-                        <div className="hr-reporter-row">
-                          <span className="hr-reporter-label">Verified At:</span>
-                          <span className="hr-reporter-val">
+                        <div className="hr-meta-row">
+                          <dt className="hr-meta-term">Verified at</dt>
+                          <dd className="hr-meta-value">
                             {new Date(selected.validated_at).toLocaleString()}
-                          </span>
+                          </dd>
                         </div>
                       )}
-                    </div>
-                  </div>
+                    </dl>
+                  </section>
                 </div>
               </div>
             </div>
 
             {/* FIXED MOBILE ACTION BAR (BOTTOM) */}
-            <div className="hr-drawer-mobile-footer">
-              <div className="hr-drawer-footer-actions">
+            <div className="hr-modal-mobile-footer">
+              <div className="hr-modal-mobile-actions">
                 {drawerActionButtons}
               </div>
             </div>
-          </aside>
+          </section>
         </div>
       )}
 
       {/* LIGHTBOX FOR FULL SIZE PHOTO VIEWING */}
       {lightbox && selectedPhotos.length > 0 && (
         <div
+          ref={lightboxRef}
           className="hr-lightbox-overlay"
           onClick={(e) => {
             e.stopPropagation();
@@ -1711,6 +1647,7 @@ function HazardReportReview({ focusReportId, onOpenMap }) {
           aria-label="Full size photo preview"
         >
           <button
+            ref={lightboxCloseBtnRef}
             type="button"
             className="hr-lightbox-close"
             onClick={(e) => {
@@ -1719,7 +1656,7 @@ function HazardReportReview({ focusReportId, onOpenMap }) {
             }}
             aria-label="Close photo preview"
           >
-            <FontAwesomeIcon icon={faXmark} />
+            <X size={20} aria-hidden="true" />
           </button>
 
           <div
@@ -1747,13 +1684,13 @@ function HazardReportReview({ focusReportId, onOpenMap }) {
                   }}
                   aria-label="Previous photo"
                 >
-                  <FontAwesomeIcon icon={faChevronLeft} />
+                  <ChevronLeft size={20} aria-hidden="true" />
                 </button>
               )}
 
               {failedImages[selectedPhotos[activePhotoIdx]] ? (
                 <div className="hr-lightbox-placeholder">
-                  <FontAwesomeIcon icon={faImage} />
+                  <ImageOff size={28} aria-hidden="true" />
                   <span>Photo could not be loaded</span>
                 </div>
               ) : (
@@ -1778,7 +1715,7 @@ function HazardReportReview({ focusReportId, onOpenMap }) {
                   }}
                   aria-label="Next photo"
                 >
-                  <FontAwesomeIcon icon={faChevronRight} />
+                  <ChevronRight size={20} aria-hidden="true" />
                 </button>
               )}
             </div>

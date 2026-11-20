@@ -118,6 +118,12 @@ export const api = {
   getResidentRegistrationMatches: (requestId) =>
     request(`/api/resident-registrations/${requestId}/matches`),
 
+  updateResidentRegistration: (requestId, payload) =>
+    request(`/api/resident-registrations/${requestId}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+
   approveResidentRegistration: (requestId, matchedResidentId) =>
     request(`/api/resident-registrations/${requestId}/approve`, {
       method: "POST",

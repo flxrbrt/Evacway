@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useMemo, Fragment } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
+import { useSearchParams } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faBuilding,
@@ -10,19 +10,20 @@ import {
   faTrash,
   faBuildingColumns,
   faUserPlus,
+  faUserCheck,
   faDoorOpen,
   faUsers,
   faPeopleGroup,
   faClockRotateLeft,
   faCircleCheck,
+  faTriangleExclamation,
   faLocationDot,
   faArrowsRotate,
   faDrawPolygon,
+  faChevronLeft,
   faChevronRight,
   faSearch,
   faDownload,
-  faList,
-  faTableCellsLarge,
   faXmark,
   faRightLeft,
   faUserMinus,
@@ -41,6 +42,7 @@ import {
 import { EmptyState } from './CenterList'
 import { FloatingMenuTrigger } from './FloatingMenu'
 import { familyTerm } from './utils'
+import { Breadcrumb, Button, ProgressBar, StatCard, StatusPill } from '../ui'
 import MappingBanner from './MappingBanner'
 import ReadinessChecklist from './ReadinessChecklist'
 import './CenterDetail.css'
@@ -387,16 +389,14 @@ export function CenterHeader({
 
   return (
     <>
-      <header className="ec-detail-header">
-        <nav className="ec-breadcrumb" aria-label="Breadcrumb">
-          <button type="button" className="ec-breadcrumb-link" onClick={onBack}>
-            <FontAwesomeIcon icon={faBuildingColumns} className="ec-breadcrumb-icon" />
-            <span>Evacuation Centers</span>
-          </button>
-          <span className="ec-breadcrumb-separator">›</span>
-          <span className="ec-breadcrumb-current">{name}</span>
-        </nav>
+      <Breadcrumb
+        items={[
+          { label: 'Evacuation Centers', onClick: onBack },
+          { label: name },
+        ]}
+      />
 
+      <header className="ec-detail-header">
         <div className="ec-title-row">
           <div className="ec-title-info">
             <div className="ec-title-line">
@@ -759,20 +759,6 @@ export function OverviewTab({
   )
 }
 
-const STRUCTURE_VIEW_STORAGE_KEY = 'evacway_structure_view_mode_v2'
-
-function getInitialStructureViewMode() {
-  if (typeof window === 'undefined') return 'grid'
-  try {
-    const saved = localStorage.getItem(STRUCTURE_VIEW_STORAGE_KEY)
-    if (saved === 'list' || saved === 'grid') return saved
-    if (window.innerWidth <= 768) return 'grid'
-  } catch (err) {
-    // ignore
-  }
-  return 'grid'
-}
-
 function getRoomHouseholdCount(room, averageHouseholdSize = null) {
   const families = room?.families || room?.assigned_families
   if (Array.isArray(families)) {
@@ -884,7 +870,6 @@ export function RoomDetailPage({
   room,
   building,
   buildingName,
-  buildingFloors,
   families = [],
   loading = false,
   error = null,
@@ -901,173 +886,341 @@ export function RoomDetailPage({
   onRetry,
 }) {
   const [familyToView, setFamilyToView] = useState(null)
-  const householdAssigned = families.length
-  const householdArrived = families.filter((family) => family?.is_checked_in).length
-  const totalMembers = families.reduce(
-    (total, family) => total + Number(family?.member_count || family?.family_members || family?.assigned_members || 1),
-    0
+
+  const familiesAssigned = families.length
+  const familiesArrived = families.filter((family) => Boolean(family?.is_checked_in)).length
+  const memberCounts = families.map((family) =>
+    Number(family?.member_count || family?.family_members || family?.assigned_members || 1)
   )
+  const totalMembers = memberCounts.reduce((sum, count) => sum + count, 0)
+
   const familySlots = Math.max(1, Number(room?.family_slots ?? 5))
   const peopleSpaces = Math.max(1, Number(room?.people_spaces ?? room?.capacity ?? 25))
-  const usedSlots = Number(room?.used_slots ?? householdAssigned)
+  const usedSlots = Number(room?.used_slots ?? familiesAssigned)
   const usedSpaces = Number(room?.used_spaces ?? (totalMembers || room?.assigned || 0))
-  const isOverCapacity = Boolean(room?.is_over_capacity) || usedSlots > familySlots || usedSpaces > peopleSpaces
+  const slotsLeft = Math.max(0, familySlots - usedSlots)
+  const spacesLeft = Math.max(0, peopleSpaces - usedSpaces)
+  const isOverCapacity =
+    Boolean(room?.is_over_capacity) || usedSlots > familySlots || usedSpaces > peopleSpaces
   const isFull = Boolean(room?.is_full) || usedSlots >= familySlots || usedSpaces >= peopleSpaces
+  const isSpacesFull = usedSpaces >= peopleSpaces
   const roomTitle = formatRoomLabel(room?.room_number)
   const isInactive = room?.is_active === false
-  if (notFound) {
-    return <main className="ec-room-detail-page"><div className="ec-room-households-state"><h1>Room not found</h1><p>This room may have been deleted or is unavailable.</p></div></main>
+
+  const statusPillVariant = isInactive
+    ? 'unmapped'
+    : isOverCapacity || isFull
+      ? 'full'
+      : 'available'
+  const statusPillLabel = isInactive
+    ? 'Inactive'
+    : isOverCapacity
+      ? 'Over capacity'
+      : isFull
+        ? 'Full'
+        : 'Available'
+
+  const hasBuilding = Boolean(building || room?.building_id != null)
+  const resolvedBuildingName = buildingName || building?.name || ''
+  const resolvedFloorLabel = formatFloorLabel(room?.floor ?? (hasBuilding ? 1 : null))
+  const subtitleParts = [resolvedBuildingName || 'Unassigned building', resolvedFloorLabel].filter(Boolean)
+
+  const breadcrumbItems = [
+    {
+      label: 'Evacuation Centers',
+      to: listHref || undefined,
+      onClick: listHref ? undefined : onBackToList,
+    },
+    {
+      label: center?.name || 'Evacuation Center',
+      to: centerHref || undefined,
+      onClick: centerHref ? undefined : onBack,
+    },
+    ...(hasBuilding
+      ? [
+          {
+            label: resolvedBuildingName || 'Building',
+            to: buildingHref || undefined,
+            onClick: buildingHref ? undefined : () => onOpenBuilding?.(building),
+          },
+        ]
+      : []),
+    { label: roomTitle },
+  ]
+
+  const familySlotsFooter =
+    usedSlots > familySlots
+      ? `Over limit by ${usedSlots - familySlots}`
+      : slotsLeft === 0
+        ? 'No slots left'
+        : `${slotsLeft} ${slotsLeft === 1 ? 'slot' : 'slots'} still free`
+
+  const peopleSpacesFooter =
+    usedSpaces > peopleSpaces
+      ? `Over capacity by ${usedSpaces - peopleSpaces}`
+      : spacesLeft === 0
+        ? 'No spaces left'
+        : `${spacesLeft} ${spacesLeft === 1 ? 'space' : 'spaces'} still free`
+
+  const arrivedFooter =
+    familiesAssigned === 0
+      ? 'No families assigned yet'
+      : familiesArrived === 0
+        ? 'Nobody checked in yet'
+        : familiesArrived >= familiesAssigned
+          ? 'All families checked in'
+          : `${familiesAssigned - familiesArrived} not yet arrived`
+
+  const assignedMembersFooter =
+    familiesAssigned === 0
+      ? 'No families assigned yet'
+      : familiesAssigned === 1
+        ? 'Across 1 family'
+        : familiesAssigned === 2
+          ? `${memberCounts[0]} + ${memberCounts[1]} across both families`
+          : familiesAssigned <= 4
+            ? `${memberCounts.join(' + ')} across ${familiesAssigned} families`
+            : `Across ${familiesAssigned} families`
+
+  let fullCapacityNote = null
+  if (isFull && !isInactive) {
+    if (spacesLeft === 0 && slotsLeft === 0) {
+      fullCapacityNote =
+        'No people spaces or family slots left. No new family fits until someone is unassigned or capacity is increased.'
+    } else if (spacesLeft === 0) {
+      fullCapacityNote = `No people spaces left. ${slotsLeft} ${
+        slotsLeft === 1 ? 'family slot is' : 'family slots are'
+      } free, but no new family fits until the room gets more spaces.`
+    } else {
+      fullCapacityNote = `No family slots left. ${spacesLeft} ${
+        spacesLeft === 1 ? 'people space is' : 'people spaces are'
+      } free, but no new family fits until the room gets more family slots.`
+    }
   }
+
+  if (notFound) {
+    return (
+      <main className="ec-room-detail-page">
+        <div className="ec-room-card ec-room-households-state">
+          <h1>Room not found</h1>
+          <p>This room may have been deleted or is unavailable.</p>
+        </div>
+      </main>
+    )
+  }
+
   if (!room && loading) {
-    return <main className="ec-room-detail-page"><div className="ec-room-households-state" role="status">Loading room details…</div></main>
+    return (
+      <main className="ec-room-detail-page" aria-busy="true">
+        <div className="ec-room-card ec-room-households-state" role="status">
+          Loading room details…
+        </div>
+      </main>
+    )
   }
 
   return (
     <main className="ec-room-detail-page">
-      <div className="ec-room-detail-topbar">
-        <nav className="ec-breadcrumb" aria-label="Breadcrumb">
-          <Link to={listHref || '#'} className="ec-breadcrumb-link" onClick={listHref ? undefined : onBackToList}>
-            <FontAwesomeIcon icon={faBuildingColumns} className="ec-breadcrumb-icon" />
-            <span>Evacuation Centers</span>
-          </Link>
-          <span className="ec-breadcrumb-separator">›</span>
-          <Link to={centerHref || '#'} className="ec-breadcrumb-link" onClick={centerHref ? undefined : onBack}>
-            {center?.name || 'Evacuation Center'}
-          </Link>
-          {(building || room?.building_id != null) && <>
-            <span className="ec-breadcrumb-separator">›</span>
-            <Link to={buildingHref || '#'} className="ec-breadcrumb-link" onClick={buildingHref ? undefined : () => onOpenBuilding?.(building)}>
-              {buildingName || building?.name || 'Building'}
-            </Link>
-          </>}
-          <span className="ec-breadcrumb-separator">›</span>
-          <span className="ec-breadcrumb-current">{roomTitle}</span>
-        </nav>
-      </div>
+      {/* 1. Breadcrumb */}
+      <Breadcrumb items={breadcrumbItems} />
 
-      <header className="ec-title-row ec-room-detail-header">
-        <div className="ec-title-info">
-          <div className="ec-title-line">
-            <h1 id="ec-room-detail-title" className="ec-detail-title">{roomTitle}</h1>
-            <HeaderStatusPill status={isInactive ? 'Inactive' : isOverCapacity ? 'Over capacity' : isFull ? 'Full' : 'Available'} />
+      {/* 2. Header */}
+      <header className="ec-room-header">
+        <div className="ec-room-heading">
+          <div className="ec-room-title-row">
+            <h1 id="ec-room-detail-title" className="ec-room-title">
+              {roomTitle}
+            </h1>
+            <StatusPill variant={statusPillVariant} label={statusPillLabel} />
           </div>
-          <div className="ec-title-meta-line">
-            <span>{[buildingName || 'Unassigned building', Number(buildingFloors ?? room?.building_floors ?? 1) > 1 ? formatFloorLabel(room?.floor) : ''].filter(Boolean).join(' · ')}</span>
-          </div>
+          <p className="ec-room-subtitle">{subtitleParts.join(' · ')}</p>
         </div>
-        <div className="ec-title-actions ec-room-detail-actions">
+
+        <div className="ec-room-header-actions">
           {onEditRoom && (
-            <button type="button" className="ec-btn-secondary-action" onClick={() => onEditRoom(room)}>
-              <FontAwesomeIcon icon={faPen} size="xs" />
+            <Button variant="secondary" onClick={() => onEditRoom(room)}>
+              <FontAwesomeIcon icon={faPen} size="xs" aria-hidden="true" />
               <span>Edit room</span>
-            </button>
+            </Button>
           )}
           {onAddHousehold && (
-            <button type="button" className="ec-btn-primary-action" onClick={onAddHousehold}>
-              <FontAwesomeIcon icon={faPlus} size="xs" />
+            <Button variant="primary" onClick={onAddHousehold}>
+              <FontAwesomeIcon icon={faPlus} size="xs" aria-hidden="true" />
               <span>Add family</span>
-            </button>
+            </Button>
           )}
         </div>
       </header>
 
-      <div className="ec-kpi-strip ec-room-detail-stats">
-        <div className="ec-kpi-card">
-          <span className="ec-kpi-label">Family slots</span>
-          <span className="ec-kpi-val">{usedSlots} / {familySlots}</span>
-          <span className="ec-kpi-label">People spaces</span>
-          <span className="ec-kpi-val">{usedSpaces} / {peopleSpaces}</span>
-        </div>
-        <div className="ec-kpi-card">
-          <span className="ec-kpi-label">Assigned families</span>
-          <span className="ec-kpi-val">{householdAssigned}</span>
-        </div>
-        <div className="ec-kpi-card">
-          <span className="ec-kpi-label">Families arrived</span>
-          <span className="ec-kpi-val">{householdArrived}</span>
-        </div>
-        <div className="ec-kpi-card">
-          <span className="ec-kpi-label">Assigned members</span>
-          <span className="ec-kpi-val">{totalMembers}</span>
-        </div>
-      </div>
+      {/* 3. Four StatCards */}
+      <section className="ec-room-stats-grid" aria-label="Room summary">
+        <StatCard
+          icon={faDoorOpen}
+          label="Family slots"
+          value={usedSlots}
+          max={familySlots}
+          showProgress
+          progressValue={usedSlots}
+          progressMax={familySlots}
+          footer={familySlotsFooter}
+        />
+        <StatCard
+          icon={faUsers}
+          className={isSpacesFull ? 'ec-room-stat--danger' : ''}
+          label="People spaces"
+          value={usedSpaces}
+          max={peopleSpaces}
+          showProgress
+          progressValue={usedSpaces}
+          progressMax={peopleSpaces}
+          footer={peopleSpacesFooter}
+        />
+        <StatCard
+          icon={faUserCheck}
+          label="Families arrived"
+          value={familiesArrived}
+          max={familiesAssigned}
+          showProgress
+          progressValue={familiesArrived}
+          progressMax={Math.max(familiesAssigned, 1)}
+          footer={arrivedFooter}
+        />
+        <StatCard
+          icon={faPeopleGroup}
+          label="Assigned members"
+          value={totalMembers}
+          showProgress={false}
+          footer={assignedMembersFooter}
+        />
+      </section>
 
-      <section className="ec-families-card ec-room-families" aria-labelledby="ec-room-households-title">
-        <div className="ec-families-card-header ec-room-families-header">
-          <div className="ec-households-title-line">
-            <h2 id="ec-room-households-title" className="ec-households-card-title">Families in this room</h2>
-            <span className="ec-room-households-count">{families.length}</span>
-          </div>
-          <p>Manage the families assigned to {roomTitle}.</p>
+      {fullCapacityNote && (
+        <div className="ec-room-cap-note" role="status">
+          <FontAwesomeIcon
+            icon={faTriangleExclamation}
+            className="ec-room-cap-note-icon"
+            aria-hidden="true"
+          />
+          <span>{fullCapacityNote}</span>
         </div>
+      )}
 
-        {loading ? (
-          <div className="ec-room-households-state" role="status">Loading assigned families…</div>
-        ) : error ? (
-          <div className="ec-room-households-state" role="alert">
-            <span>Could not load this room’s families.</span>
-            {onRetry && <button type="button" className="ec-btn-secondary-action" onClick={onRetry}>Try again</button>}
+      {/* 4. Families in this room (full width) */}
+      <div className="ec-room-body-row">
+        <section
+          className="ec-room-card ec-room-families-panel"
+          aria-labelledby="ec-room-families-title"
+        >
+          <div className="ec-room-panel-header">
+            <div className="ec-room-panel-title-line">
+              <h2 id="ec-room-families-title" className="ec-room-panel-title">
+                Families in this room
+              </h2>
+              <span className="ec-room-count-badge">{families.length}</span>
+            </div>
+            <p className="ec-room-panel-subtitle">Manage who is assigned to {roomTitle}</p>
           </div>
-        ) : families.length === 0 ? (
-          <div className="ec-room-households-empty">
-            <FontAwesomeIcon icon={faPeopleGroup} aria-hidden="true" />
-            <h3>No families assigned yet</h3>
-            <p>Add a family to begin managing this room’s occupants.</p>
-            {onAddHousehold && (
-              <button type="button" className="ec-btn-primary-action" onClick={onAddHousehold}>
-                <FontAwesomeIcon icon={faPlus} size="xs" />
-                <span>Add family</span>
-              </button>
-            )}
-          </div>
-        ) : (
-          <div className="ec-room-households-list">
-            {families.map((family, index) => {
-              const id = family.family_id ?? family.id ?? `household-${index}`
-              const name = family.household_head_name || family.head_name || 'Unnamed family'
-              const members = Number(family.member_count || family.family_members || family.assigned_members || 1)
-              const arrived = Boolean(family.is_checked_in)
-              return (
-                <article className="ec-room-household-row" key={id}>
-                  <button
-                    type="button"
-                    className="ec-room-household-trigger"
-                    onClick={() => setFamilyToView(family)}
-                    aria-label={`View members of ${name}`}
-                  >
-                    <span className="ec-room-household-avatar" aria-hidden="true">
-                      {name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0].toUpperCase()).join('') || 'HH'}
-                    </span>
-                    <span className="ec-room-household-info">
-                      <strong>{name}</strong>
-                      <span>{members} {members === 1 ? 'member' : 'members'} · {arrived ? 'Arrived' : 'Not arrived'}</span>
-                    </span>
-                  </button>
-                  {arrived && <span className="ec-room-household-arrived">Arrived</span>}
-                  {onUnassignHousehold && (
+
+          {loading ? (
+            <div className="ec-room-households-state" role="status">
+              Loading assigned families…
+            </div>
+          ) : error ? (
+            <div className="ec-room-households-state" role="alert">
+              <span>Could not load this room’s families.</span>
+              {onRetry && (
+                <Button variant="secondary" onClick={onRetry}>
+                  Try again
+                </Button>
+              )}
+            </div>
+          ) : families.length === 0 ? (
+            <div className="ec-room-households-empty">
+              <span className="ec-room-empty-icon" aria-hidden="true">
+                <FontAwesomeIcon icon={faPeopleGroup} />
+              </span>
+              <h3>No families assigned yet</h3>
+              <p>Add a family to begin managing who is assigned to {roomTitle}.</p>
+              {onAddHousehold && (
+                <Button variant="primary" onClick={onAddHousehold}>
+                  <FontAwesomeIcon icon={faPlus} size="xs" aria-hidden="true" />
+                  <span>Add family</span>
+                </Button>
+              )}
+            </div>
+          ) : (
+            <div className="ec-room-family-list" role="list">
+              {families.map((family, index) => {
+                const id = family.family_id ?? family.id ?? `family-${index}`
+                const name = family.head_name || family.household_head_name || 'Unnamed family'
+                const initials =
+                  name
+                    .split(/\s+/)
+                    .filter(Boolean)
+                    .slice(0, 2)
+                    .map((part) => part[0].toUpperCase())
+                    .join('') || 'FM'
+                const members = Number(
+                  family.member_count || family.family_members || family.assigned_members || 1
+                )
+                const arrived = Boolean(family.is_checked_in)
+
+                return (
+                  <div key={id} className="ec-room-family-row" role="listitem">
                     <button
                       type="button"
-                      className="ec-room-household-remove"
-                      onClick={() => onUnassignHousehold(family)}
-                      aria-label={`Unassign ${name} from ${roomTitle}`}
+                      className="ec-room-family-main"
+                      onClick={() => setFamilyToView(family)}
+                      aria-label={`View members of ${name}`}
                     >
-                      Unassign
+                      <span className="ec-room-family-avatar" aria-hidden="true">
+                        {initials}
+                      </span>
+                      <span className="ec-room-family-copy">
+                        <span className="ec-room-family-name">{name}</span>
+                        <span className="ec-room-family-meta">
+                          <span>
+                            {members} {members === 1 ? 'member' : 'members'}
+                          </span>
+                          <span aria-hidden="true">·</span>
+                          <span
+                            className={`ec-room-arrival-pill ${arrived ? 'is-arrived' : 'is-not-arrived'}`}
+                          >
+                            {arrived ? 'Arrived' : 'Not arrived'}
+                          </span>
+                        </span>
+                      </span>
                     </button>
-                  )}
-                </article>
-              )
-            })}
-          </div>
-        )}
-      </section>
+
+                    {onUnassignHousehold && (
+                      <Button
+                        variant="danger-outline"
+                        onClick={() => onUnassignHousehold(family)}
+                        aria-label={`Unassign ${name} from ${roomTitle}`}
+                      >
+                        Unassign
+                      </Button>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </section>
+      </div>
+
       {familyToView && (
         <HouseholdMembersModal
           family={familyToView}
           onClose={() => setFamilyToView(null)}
-          onUnassign={onUnassignHousehold ? () => {
-            setFamilyToView(null)
-            onUnassignHousehold(familyToView)
-          } : undefined}
+          onUnassign={
+            onUnassignHousehold
+              ? () => {
+                  setFamilyToView(null)
+                  onUnassignHousehold(familyToView)
+                }
+              : undefined
+          }
         />
       )}
     </main>
@@ -1187,20 +1340,10 @@ export function StructureTab({
   const canAddBuilding = structureMode === 'buildings_and_rooms'
   const canAddRoom = !isSingleVenue
 
-  const [viewMode, setViewModeState] = useState(getInitialStructureViewMode)
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState('all') // 'all' | 'available' | 'full'
   const [buildingFilter, setBuildingFilter] = useState('all')
   const [floorFilter, setFloorFilter] = useState('all')
-
-  const setViewMode = useCallback((mode) => {
-    setViewModeState(mode)
-    try {
-      localStorage.setItem(STRUCTURE_VIEW_STORAGE_KEY, mode)
-    } catch (err) {
-      // ignore
-    }
-  }, [])
 
   const centerAssigned = Number(
     center?.assigned ?? center?.total_assigned ?? center?.occupied ?? 0
@@ -1407,7 +1550,7 @@ export function StructureTab({
           {buildings.length > 0 && <label className="ec-building-filter"><span>Building</span><select value={buildingFilter} onChange={(e) => { setBuildingFilter(e.target.value); setFloorFilter('all') }}><option value="all">All buildings</option>{buildings.map(b => <option key={b.id} value={String(b.id)}>{b.name}</option>)}{rooms.some(r=>r.building_id==null)&&<option value="unassigned">Unassigned rooms</option>}</select></label>}
           {buildings.some(b=>Number(b.floors||1)>1)&&<label className="ec-building-filter"><span>Floor</span><select value={floorFilter} onChange={e=>setFloorFilter(e.target.value)}><option value="all">All floors</option>{Array.from(new Set([...buildings.flatMap(b=>Array.from({length:Number(b.floors||1)},(_,i)=>i+1)),...rooms.map(r=>r.floor).filter(f=>f!=null)])).sort((a,b)=>a-b).map(f=><option key={f} value={String(f)}>{formatFloorLabel(f)}</option>)}</select></label>}
           <div className="ec-status-filter-group">{[['all','All',selectedRooms.length],['available','Available',availableCount],['full','Full',fullCount]].map(([v,l,n])=><button key={v} type="button" className={'ec-filter-pill '+(statusFilter===v?'is-active':'')} onClick={()=>setStatusFilter(v)}>{l}<span className="ec-filter-count">{n}</span></button>)}</div>
-        </div><div className="ec-view-toggle"><button type="button" className={'ec-view-toggle-btn '+(viewMode==='list'?'is-active':'')} onClick={()=>setViewMode('list')} aria-label="Table view"><FontAwesomeIcon icon={faList}/></button><button type="button" className={'ec-view-toggle-btn '+(viewMode==='grid'?'is-active':'')} onClick={()=>setViewMode('grid')} aria-label="Tile view"><FontAwesomeIcon icon={faTableCellsLarge}/></button></div>
+        </div>
       </div>
       {canAddBuilding ? (
         <div className="ec-structure-building-overview">
@@ -1442,17 +1585,8 @@ export function StructureTab({
           })}
           {filteredGroups.filter(({ building }) => Boolean(building)).length === 0 && <EmptyState icon={faBuilding} title="No buildings yet" text="Add a building first, then add rooms inside it." />}
         </div>
-      ) : !selectedRooms.length ? <EmptyState icon={faDoorOpen} title="No rooms yet" text="Use Add to create the first room." /> : !totalMatchingRooms ? <EmptyState icon={faSearch} title="No rooms found" text="No rooms match your filters." /> : viewMode === 'grid' ? (
+      ) : !selectedRooms.length ? <EmptyState icon={faDoorOpen} title="No rooms yet" text="Use Add to create the first room." /> : !totalMatchingRooms ? <EmptyState icon={faSearch} title="No rooms found" text="No rooms match your filters." /> : (
         <div className="ec-room-tile-grid">{selectedRooms.filter(isRoomMatching).sort((a, b) => Number(roomStatus(a) === 'full') - Number(roomStatus(b) === 'full')).map((room, index) => <RoomCard key={room.id} room={room} averageHouseholdSize={averageHouseholdSize} householdAssigned={roomHouseholdAssigned(room)} householdArrived={roomHouseholdArrived(room)} index={index} onEditRoom={onEditRoom} onOpenRoom={onOpenRoom} />)}</div>
-      ) : (
-        <div className="ec-room-table-wrap"><table className="ec-structure-table ec-structure-table-occupancy"><thead><tr><th>Room</th><th title="Capacity and assigned families">Occupancy</th><th title="Families arrived">Arrived</th><th>Status</th></tr></thead><tbody>
-          {selectedRooms.filter(isRoomMatching).sort((a, b) => Number(roomStatus(a) === 'full') - Number(roomStatus(b) === 'full')).map((room) => {
-            const usage = roomCapacityUsage(room), state = roomStatus(room)
-            return <tr key={room.id} className="ec-room-row" tabIndex={0} role="button" onClick={() => (onOpenRoom || onEditRoom)?.(room)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); (onOpenRoom || onEditRoom)?.(room) } }}>
-              <td>{formatRoomLabel(room.room_number)}</td><td><span className="ec-table-occupancy"><span className="ec-room-occupancy"><span style={{ width: usage.percent + '%' }} /></span><strong>Slots {usage.usedSlots}/{usage.slots} · Spaces {usage.usedSpaces}/{usage.spaces}</strong></span></td><td title="Families arrived">{roomHouseholdArrived(room)}</td><td><span className={'ec-room-tile-status is-' + state}>{usage.over ? 'Over capacity' : state === 'full' ? 'Full' : state === 'empty' ? 'Empty' : 'Available'}</span></td>
-            </tr>
-          })}
-        </tbody></table></div>
       )}
     </div>
   )
@@ -1471,6 +1605,23 @@ export function HouseholdsTab({
   const showBuildingSub = structureMode === 'buildings_and_rooms'
   const [searchTerm, setSearchTerm] = useState('')
   const [familyToView, setFamilyToView] = useState(null)
+  const centerIdKey = center?.id ?? null
+  const [paginationState, setPaginationState] = useState({ centerId: centerIdKey, page: 1 })
+  const [pageSize, setPageSize] = useState(10)
+
+  const setCurrentPage = useCallback(
+    (nextPageOrUpdater) => {
+      setPaginationState((prev) => {
+        const basePage = prev.centerId === centerIdKey ? prev.page : 1
+        const nextPage =
+          typeof nextPageOrUpdater === 'function'
+            ? nextPageOrUpdater(basePage)
+            : nextPageOrUpdater
+        return { centerId: centerIdKey, page: nextPage }
+      })
+    },
+    [centerIdKey]
+  )
 
   const buildingById = useMemo(() => {
     const map = new Map()
@@ -1508,6 +1659,45 @@ export function HouseholdsTab({
     })
   }, [centerFamilies, searchTerm])
 
+  const totalPages = Math.max(1, Math.ceil(filteredFamilies.length / pageSize))
+  const currentPage = paginationState.centerId === centerIdKey ? paginationState.page : 1
+  const safePage = Math.min(currentPage, totalPages)
+  const pageStart = filteredFamilies.length === 0 ? 0 : (safePage - 1) * pageSize + 1
+  const pageEnd = Math.min(safePage * pageSize, filteredFamilies.length)
+
+  const paginatedFamilies = useMemo(() => {
+    const start = (safePage - 1) * pageSize
+    return filteredFamilies.slice(start, start + pageSize)
+  }, [filteredFamilies, safePage, pageSize])
+
+  const paginationItems = useMemo(() => {
+    if (totalPages <= 5) {
+      return Array.from({ length: totalPages }, (_, i) => i + 1)
+    }
+    const pages = Array.from(
+      new Set(
+        [1, totalPages, safePage - 1, safePage, safePage + 1].filter(
+          (p) => p >= 1 && p <= totalPages
+        )
+      )
+    ).sort((a, b) => a - b)
+
+    const items = []
+    for (let i = 0; i < pages.length; i += 1) {
+      const p = pages[i]
+      const prev = pages[i - 1]
+      if (i > 0) {
+        if (p - prev === 2) {
+          items.push(prev + 1)
+        } else if (p - prev > 2) {
+          items.push(`ellipsis-${prev}`)
+        }
+      }
+      items.push(p)
+    }
+    return items
+  }, [totalPages, safePage])
+
   return (
     <div className="ec-households-card">
       <div className="ec-households-card-header">
@@ -1525,7 +1715,10 @@ export function HouseholdsTab({
             className="ec-search-input"
             placeholder="Search family..."
             value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
+            onChange={(e) => {
+              setSearchTerm(e.target.value)
+              setCurrentPage(1)
+            }}
           />
         </div>
       </div>
@@ -1541,147 +1734,226 @@ export function HouseholdsTab({
           }
         />
       ) : (
-        <table className="ec-modern-table">
-          <thead>
-            <tr>
-              <th scope="col" style={{ width: '30%' }}>FAMILY</th>
-              <th scope="col" style={{ width: '21%' }}>{isOpenArea ? 'CENTER' : 'ROOM'}</th>
-              <th scope="col" style={{ width: '12%' }}>MEMBERS</th>
-              <th scope="col" style={{ width: '14%' }}>STATUS</th>
-              <th scope="col" style={{ width: '23%' }}>ACTIONS</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filteredFamilies.map((fam, idx) => {
-              const famKey =
-                fam.id ?? fam.family_id ?? fam.family_code ?? fam.resident_id ?? `fam-${idx}`
-              const headName = fam.household_head_name || fam.head_name || 'Unnamed'
-              const initials =
-                headName
-                  .split(' ')
-                  .filter(Boolean)
-                  .slice(0, 2)
-                  .map((n) => n[0].toUpperCase())
-                  .join('') || 'HH'
-              const memberCount = fam.member_count || fam.family_members || 1
-              const isCheckedIn = Boolean(fam.is_checked_in)
-              const roomRaw = !isOpenArea ? (fam.room_number || (fam.room_id ? `Room ${fam.room_id}` : null)) : null
-              const hasRoom = Boolean(roomRaw && roomRaw !== 'Not assigned')
+        <>
+          <table className="ec-modern-table">
+            <thead>
+              <tr>
+                <th scope="col" className="ec-col-family">FAMILY</th>
+                <th scope="col" className="ec-col-location">{isOpenArea ? 'CENTER' : 'ROOM'}</th>
+                <th scope="col" className="ec-col-members">MEMBERS</th>
+                <th scope="col" className="ec-col-status">STATUS</th>
+                <th scope="col" className="ec-col-actions">ACTIONS</th>
+              </tr>
+            </thead>
+            <tbody>
+              {paginatedFamilies.map((fam, idx) => {
+                const famKey =
+                  fam.id ?? fam.family_id ?? fam.family_code ?? fam.resident_id ?? `fam-${idx}`
+                const headName = fam.household_head_name || fam.head_name || 'Unnamed'
+                const initials =
+                  headName
+                    .split(' ')
+                    .filter(Boolean)
+                    .slice(0, 2)
+                    .map((n) => n[0].toUpperCase())
+                    .join('') || 'HH'
+                const memberCount = fam.member_count || fam.family_members || 1
+                const isCheckedIn = Boolean(fam.is_checked_in)
+                const roomRaw = !isOpenArea ? (fam.room_number || (fam.room_id ? `Room ${fam.room_id}` : null)) : null
+                const hasRoom = Boolean(roomRaw && roomRaw !== 'Not assigned')
 
-              let buildingName = null
-              if (hasRoom && showBuildingSub) {
-                if (fam.room_id != null && roomBuildingMap.has(String(fam.room_id))) {
-                  buildingName = roomBuildingMap.get(String(fam.room_id))
-                } else if (roomBuildingMap.has(String(roomRaw).toLowerCase())) {
-                  buildingName = roomBuildingMap.get(String(roomRaw).toLowerCase())
+                let buildingName = null
+                if (hasRoom && showBuildingSub) {
+                  if (fam.room_id != null && roomBuildingMap.has(String(fam.room_id))) {
+                    buildingName = roomBuildingMap.get(String(fam.room_id))
+                  } else if (roomBuildingMap.has(String(roomRaw).toLowerCase())) {
+                    buildingName = roomBuildingMap.get(String(roomRaw).toLowerCase())
+                  }
                 }
-              }
 
-              return (
-                <tr
-                  key={famKey}
-                  className="ec-table-row ec-family-click-row"
-                  tabIndex={0}
-                  aria-label={`View members of ${headName}`}
-                  onClick={() => setFamilyToView(fam)}
-                  onKeyDown={(event) => {
-                    if (event.target !== event.currentTarget) return
-                    if (event.key === 'Enter' || event.key === ' ') {
-                      event.preventDefault()
-                      setFamilyToView(fam)
-                    }
+                return (
+                  <tr
+                    key={famKey}
+                    className="ec-table-row ec-family-click-row"
+                    tabIndex={0}
+                    aria-label={`View members of ${headName}`}
+                    onClick={() => setFamilyToView(fam)}
+                    onKeyDown={(event) => {
+                      if (event.target !== event.currentTarget) return
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault()
+                        setFamilyToView(fam)
+                      }
+                    }}
+                  >
+                    <td data-label="FAMILY" className="ec-col-family">
+                      <button
+                        type="button"
+                        className="ec-household-view-btn"
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          setFamilyToView(fam)
+                        }}
+                        aria-label={`View members of ${headName}`}
+                      >
+                        <div className="ec-household-user-cell">
+                          <div className="ec-avatar-circle" aria-hidden="true">
+                            {initials}
+                          </div>
+                          <div className="ec-household-text">
+                            <span className="ec-household-name" title={headName}>{headName}</span>
+                            <span className="ec-household-role">Family Head</span>
+                          </div>
+                        </div>
+                      </button>
+                    </td>
+                    <td data-label={isOpenArea ? 'CENTER' : 'ROOM'} className="ec-col-location">
+                      {isOpenArea ? (
+                        <span className="ec-hh-room-name">{center?.name || 'Evacuation Center'}</span>
+                      ) : hasRoom ? (
+                        <div className="ec-hh-room-cell">
+                          <span className="ec-hh-room-name">{roomRaw}</span>
+                          {buildingName && (
+                            <span className="ec-hh-building-sub">{buildingName}</span>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="ec-room-pill is-unassigned">Not assigned</span>
+                      )}
+                    </td>
+                    <td data-label="MEMBERS" className="ec-col-members">
+                      <span className="ec-members-chip">
+                        <FontAwesomeIcon icon={faUsers} />
+                        <span>{memberCount}</span>
+                      </span>
+                    </td>
+                    <td data-label="STATUS" className="ec-col-status">
+                      {isCheckedIn ? (
+                        <span className="ec-status-pill is-arrived">
+                          <span className="ec-status-dot is-arrived" />
+                          <span>Arrived</span>
+                        </span>
+                      ) : (
+                        <span className="ec-status-pill is-not-arrived">
+                          <span className="ec-status-dot is-not-arrived" />
+                          <span>Not arrived</span>
+                        </span>
+                      )}
+                    </td>
+                    <td data-label="ACTIONS" className="ec-col-actions">
+                      {fam.family_id != null && (
+                        <div className="ec-household-actions">
+                          {onMove && (
+                            <button
+                              type="button"
+                              className="ec-household-action-btn"
+                              onClick={(event) => {
+                                event.stopPropagation()
+                                onMove(fam)
+                              }}
+                              title="Reassign family"
+                              aria-label={`Reassign ${headName}`}
+                            >
+                              <FontAwesomeIcon icon={faRightLeft} aria-hidden="true" />
+                            </button>
+                          )}
+                          {onUnassign && (
+                            <button
+                              type="button"
+                              className="ec-household-action-btn is-danger"
+                              onClick={(event) => {
+                                event.stopPropagation()
+                                onUnassign(fam)
+                              }}
+                              title="Unassign family"
+                              aria-label={`Unassign ${headName}`}
+                            >
+                              <FontAwesomeIcon icon={faUserMinus} aria-hidden="true" />
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+
+          <nav className="ec-pagination" aria-label="Families pagination">
+            <span className="ec-pagination-info">
+              Showing {pageStart}–{pageEnd} of {filteredFamilies.length}{' '}
+              {filteredFamilies.length === 1 ? 'family' : 'families'}
+            </span>
+
+            <div className="ec-pagination-controls">
+              <label className="ec-pagination-size">
+                <span className="ec-pagination-size-label">Rows per page</span>
+                <select
+                  value={pageSize}
+                  onChange={(e) => {
+                    setPageSize(Number(e.target.value))
+                    setCurrentPage(1)
                   }}
+                  aria-label="Rows per page"
                 >
-                  <td data-label="FAMILY">
-                    <button
-                      type="button"
-                      className="ec-household-view-btn"
-                      onClick={() => setFamilyToView(fam)}
-                      aria-label={`View members of ${headName}`}
-                    >
-                      <div className="ec-household-user-cell">
-                        <div className="ec-avatar-circle" aria-hidden="true">
-                          {initials}
-                        </div>
-                        <div className="ec-household-text">
-                          <span className="ec-household-name">{headName}</span>
-                          <span className="ec-household-role">Family Head</span>
-                        </div>
-                      </div>
-                    </button>
-                  </td>
-                  <td data-label={isOpenArea ? 'CENTER' : 'ROOM'}>
-                    {isOpenArea ? (
-                      <span className="ec-hh-room-name">{center?.name || 'Evacuation Center'}</span>
-                    ) : hasRoom ? (
-                      <div className="ec-hh-room-cell">
-                        <span className="ec-hh-room-name">{roomRaw}</span>
-                        {buildingName && (
-                          <span className="ec-hh-building-sub">{buildingName}</span>
-                        )}
-                      </div>
-                    ) : (
-                      <span className="ec-room-pill is-unassigned">Not assigned</span>
-                    )}
-                  </td>
-                  <td data-label="MEMBERS">
-                    <span className="ec-members-chip">
-                      <FontAwesomeIcon icon={faUsers} />
-                      <span>{memberCount}</span>
-                    </span>
-                  </td>
-                  <td data-label="STATUS">
-                    {isCheckedIn ? (
-                      <span className="ec-status-pill is-arrived">
-                        <span className="ec-status-dot is-arrived" />
-                        <span>Arrived</span>
+                  <option value={10}>10</option>
+                  <option value={25}>25</option>
+                  <option value={50}>50</option>
+                </select>
+              </label>
+
+              <button
+                type="button"
+                className="ec-page-nav-btn"
+                disabled={safePage <= 1}
+                onClick={() => setCurrentPage(Math.max(1, safePage - 1))}
+                aria-label="Previous page"
+              >
+                <FontAwesomeIcon icon={faChevronLeft} aria-hidden="true" />
+                <span>Previous</span>
+              </button>
+
+              {totalPages > 1 && (
+                <div className="ec-pagination-pages">
+                  {paginationItems.map((item) =>
+                    typeof item === 'string' ? (
+                      <span key={item} className="ec-pagination-ellipsis" aria-hidden="true">
+                        …
                       </span>
                     ) : (
-                      <span className="ec-status-pill is-not-arrived">
-                        <span className="ec-status-dot is-not-arrived" />
-                        <span>Not arrived</span>
-                      </span>
-                    )}
-                  </td>
-                  <td data-label="ACTIONS">
-                    {fam.family_id != null && (
-                      <div className="ec-household-actions">
-                        {onMove && (
-                          <button
-                            type="button"
-                            className="ec-household-action-btn"
-                            onClick={(event) => {
-                              event.stopPropagation()
-                              onMove(fam)
-                            }}
-                            aria-label={`Reassign ${headName}`}
-                          >
-                            <FontAwesomeIcon icon={faRightLeft} />
-                            <span>Reassign</span>
-                          </button>
-                        )}
-                        {onUnassign && (
-                          <button
-                            type="button"
-                            className="ec-family-action-btn is-danger"
-                            onClick={(event) => {
-                              event.stopPropagation()
-                              onUnassign(fam)
-                            }}
-                            aria-label={`Unassign ${headName}`}
-                          >
-                            <FontAwesomeIcon icon={faUserMinus} />
-                            <span>Unassign</span>
-                          </button>
-                        )}
-                      </div>
-                    )}
-                  </td>
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
+                      <button
+                        key={item}
+                        type="button"
+                        className={`ec-page-num-btn ${item === safePage ? 'is-active' : ''}`}
+                        aria-label={`Page ${item}`}
+                        aria-current={item === safePage ? 'page' : undefined}
+                        onClick={() => setCurrentPage(item)}
+                      >
+                        {item}
+                      </button>
+                    )
+                  )}
+                </div>
+              )}
+
+              <span className="ec-pagination-page-compact">
+                Page {safePage} of {totalPages}
+              </span>
+
+              <button
+                type="button"
+                className="ec-page-nav-btn"
+                disabled={safePage >= totalPages}
+                onClick={() => setCurrentPage(Math.min(totalPages, safePage + 1))}
+                aria-label="Next page"
+              >
+                <span>Next</span>
+                <FontAwesomeIcon icon={faChevronRight} aria-hidden="true" />
+              </button>
+            </div>
+          </nav>
+        </>
       )}
       {familyToView && (
         <HouseholdMembersModal

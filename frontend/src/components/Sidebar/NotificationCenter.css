@@ -262,8 +262,13 @@
   transition: background 120ms ease;
 }
 
-.notification-item:hover { background: #f8fafc; }
-.notification-item.is-unread { background: #f0f7ff; }
+.notification-item:hover {
+  background: #f8fafc;
+}
+
+.notification-item.is-unread {
+  background: #f0f7ff;
+}
 
 .notification-item.is-emergency .notification-item-icon {
   color: #ffffff;
@@ -301,7 +306,7 @@
   color: #0f172a;
 }
 
-.notification-item-copy > span {
+.notification-item-copy>span {
   color: #334155;
   font-size: 12px;
   line-height: 1.4;
@@ -398,5 +403,7 @@
 }
 
 @media (max-width: 720px) {
-  .sidebar-navigation .notification-center { margin-left: 4px; }
+  .sidebar-navigation .notification-center {
+    margin-left: 4px;
+  }
 }

@@ -274,7 +274,7 @@ def get_center_buildings(center_id):
 
 
 # =========================================================
-# 2. CREATE BUILDING (Staff only)
+# 2. CREATE BUILDING 
 # =========================================================
 @buildings_bp.route('/api/evacuation-centers/<int:center_id>/buildings', methods=['POST'])
 @role_required('admin', 'lgu_personnel')
@@ -579,7 +579,7 @@ def update_building(building_id):
 
 
 # =========================================================
-# 4. DELETE BUILDING (Staff only - unlinks rooms)
+# 4. DELETE BUILDING 
 # =========================================================
 @buildings_bp.route('/api/buildings/<int:building_id>', methods=['DELETE'])
 @role_required('admin', 'lgu_personnel')
@@ -927,7 +927,7 @@ def get_building_details(building_id):
         b_status_color = "#d97706"
     else:
         b_status = "Available" if total_people_spaces > 0 else "Closed"
-        b_status_color = "#16a34a" if total_capacity > 0 else "#94a3b8"
+        b_status_color = "#16a34a" if total_people_spaces > 0 else "#94a3b8"
 
     return jsonify({
         "floors": building.floors,

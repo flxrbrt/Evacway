@@ -10,34 +10,34 @@
  * 8. No horizontal scrolling at 320 px.
  */
 
-@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700;12..96,800&family=JetBrains+Mono:wght@400;500;600&family=Public+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
 :root {
   /* Fonts */
-  --font-display: 'Bricolage Grotesque', 'Public Sans', system-ui, -apple-system, sans-serif;
-  --font-body: 'Public Sans', system-ui, -apple-system, sans-serif;
+  --font-display: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-body: 'Inter', system-ui, -apple-system, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 
-  /* Brand */
-  --brand: #2563eb;
-  --brand-hover: #1d4ed8;
-  --brand-soft: #eff6ff;
+  /* Brand (aligned with index.css tokens) */
+  --brand: var(--primary);
+  --brand-hover: var(--primary-hover);
+  --brand-soft: var(--primary-50);
+  --brand-border: var(--primary-200);
 
-  /* Neutrals */
-  --ink: #0e1f3a;
-  --text: #26344a;
-  --muted: #5b6b82; /* 4.5:1 contrast on white */
-  --border: #e3e8f0;
-  --surface: #ffffff;
-  --bg: #f6f8fb;
+  /* Neutrals (aligned with index.css tokens) */
+  --ink: var(--text);
+  --muted: #5B6B82;
+  --border: #E5E9F0;
+  --surface: #FFFFFF;
+  --bg: #F5F7FB;
 
-  /* Semantic (text / soft background) - Red means danger ONLY; amber means caution ONLY */
-  --success: #15803d;
-  --success-soft: #e8f6ec;
-  --warning: #b45309;
-  --warning-soft: #fff4e0;
-  --danger: #b91c1c;
-  --danger-soft: #fdecec;
+  /* Semantic (aligned with index.css tokens) */
+  --success: #16A34A;
+  --success-soft: var(--success-bg);
+  --warning: var(--warn);
+  --warning-soft: var(--warn-bg);
+  --danger: #DC2626;
+  --danger-soft: var(--danger-bg);
   --neutral: #475569;
   --neutral-soft: #eef2f6;
 
@@ -47,7 +47,7 @@
   --text-base: 16px;
   --text-lg: 20px;
   --text-xl: 24px;
-  --text-2xl: 32px;
+  --text-2xl: 28px;
 
   /* Font Weights */
   --weight-normal: 400;
@@ -69,16 +69,15 @@
   --space-12: 48px;
 
   /* Radius */
-  --radius-control: 8px;
-  --radius-card: 12px;
-  --radius-panel: 14px;
-  --radius-full: 999px;
+  --radius-control: var(--radius-md);
+  --radius-card: var(--radius-lg);
+  --radius-panel: var(--radius-lg);
+  --radius-full: var(--radius-pill);
 
-  /* Shadows */
   /* Controls & Focus */
-  --control-height: 44px;
+  --control-height: 40px;
   --control-height-sm: 36px;
-  --focus-ring: 0 0 0 2px var(--surface), 0 0 0 4px var(--brand);
+  --focus-ring: 0 0 0 2px var(--surface), 0 0 0 4px var(--primary);
 
   /* Motion */
   --motion-duration: 150ms;
@@ -87,26 +86,25 @@
 
   /* Backward Compatibility with index.css legacy variables */
   --paper: var(--bg);
-  --brand-dark: var(--brand-hover);
-  --tint: var(--brand-soft);
+  --brand-dark: var(--primary-hover);
+  --tint: var(--primary-50);
   --flood: #0284c7;
-  --slide: var(--warning);
+  --slide: var(--warn);
   --alert: var(--danger);
   --line: var(--border);
-  --radius: var(--radius-control);
+  --radius: var(--radius-sm);
 
   --bg-0: var(--bg);
   --bg-1: var(--surface);
   --bg-2: var(--bg);
-  --text-0: var(--ink);
-  --text-1: var(--text);
-  --text-2: var(--muted);
-  --ew-text-muted: var(--muted); /* 4.5:1 on canvas and white (§8) */
+  --text-0: var(--text);
+  --text-1: var(--text-2);
+  --ew-text-muted: var(--muted);
   --safe: var(--success);
-  --safe-dim: var(--success-soft);
-  --danger-dim: var(--danger-soft);
-  --caution: var(--warning);
-  --info: var(--brand);
+  --safe-dim: var(--success-bg);
+  --danger-dim: var(--danger-bg);
+  --caution: var(--warn);
+  --info: var(--primary);
 }
 
 /* Base Headings & Typography */
@@ -451,6 +449,17 @@ code, kbd, samp, pre {
   box-sizing: border-box;
 }
 
+.ds-card--clickable {
+  cursor: pointer;
+  transition: box-shadow 150ms ease, transform 150ms ease, border-color 150ms ease;
+}
+
+.ds-card--clickable:hover {
+  border-color: var(--primary-200);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
+}
+
 @media (max-width: 768px) {
   .ds-card {
     padding: var(--space-4);
@@ -559,10 +568,10 @@ code, kbd, samp, pre {
 .ds-table th {
   height: 44px;
   padding: 0 var(--space-4);
-  font-size: var(--text-xs);
-  font-weight: var(--weight-semibold);
+  font-size: 11px;
+  font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.07em;
   color: var(--muted);
   background-color: var(--bg);
   border-bottom: 1px solid var(--border);

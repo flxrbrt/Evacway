@@ -1,35 +1,35 @@
 import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
+import { useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
+import {
+  AlertTriangle,
+  Ban,
+  Check,
+  KeyRound,
+  Mail,
+  MoreVertical,
+  Pencil,
+  Phone,
+  Plus,
+  RotateCcw,
+  Search,
+  ShieldCheck,
+  UserCheck,
+  Users,
+  UserX,
+  X,
+} from "lucide-react";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
-  faUsers,
-  faUserCheck,
-  faUserSlash,
-  faUserShield,
-  faEllipsisVertical,
-  faPlus,
-  faSearch,
-  faRotateLeft,
   faXmark,
-  faEye,
-  faPen,
-  faKey,
-  faBan,
-  faCheck,
   faTriangleExclamation,
-  faEnvelope,
-  faPhone,
 } from "@fortawesome/free-solid-svg-icons";
 import { api } from "../../services/api";
 import { useAuth } from "../../context/AuthContext";
 import { queryKeys, useUsers } from "../../hooks/useEvacuationQueries";
+import { Button, RoleChip, StatCard, StatusPill } from "../ui";
 import "./UserManagement.css";
-
-const ROLE_LABELS = {
-  admin: "Admin",
-  lgu_personnel: "LGU Personnel",
-};
 
 function initials(name = "") {
   return (
@@ -42,17 +42,52 @@ function initials(name = "") {
   );
 }
 
+function getEditErrorField(message) {
+  if (!message) return null;
+  const lower = String(message).toLowerCase();
+  if (lower.includes("email")) return "email";
+  if (lower.includes("role")) return "role";
+  if (lower.includes("contact") || lower.includes("phone")) return "contact_number";
+  if (lower.includes("name")) return "name";
+  return null;
+}
+
 function UserManagement() {
   const { user: currentUser } = useAuth();
   const queryClient = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
   const usersQuery = useUsers();
   const users = useMemo(() => usersQuery.data || [], [usersQuery.data]);
 
-  // Filter and search states
+  // Search input state; role and status filters live in the URL query string
   const [searchQuery, setSearchQuery] = useState("");
-  const [roleFilter, setRoleFilter] = useState("");
-  const [statusFilter, setStatusFilter] = useState("");
-  const [totalCardSelected, setTotalCardSelected] = useState(false);
+  const rawRoleParam = searchParams.get("role") || "";
+  const roleFilter =
+    rawRoleParam === "admin" || rawRoleParam === "lgu_personnel" ? rawRoleParam : "";
+  const rawStatusParam = searchParams.get("status") || "";
+  const statusFilter =
+    rawStatusParam === "active" || rawStatusParam === "inactive" ? rawStatusParam : "";
+
+  const updateFilterParams = useCallback(
+    ({ role, status }) => {
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          if (role !== undefined) {
+            if (role) next.set("role", role);
+            else next.delete("role");
+          }
+          if (status !== undefined) {
+            if (status) next.set("status", status);
+            else next.delete("status");
+          }
+          return next;
+        },
+        { replace: true }
+      );
+    },
+    [setSearchParams]
+  );
 
   // Dropdown action menu state ({ userId, top, bottom, right, openAbove } | null)
   const [openActionMenu, setOpenActionMenu] = useState(null);
@@ -93,6 +128,8 @@ function UserManagement() {
   const [resetCooldown, setResetCooldown] = useState(0);
   const [resetSuccess, setResetSuccess] = useState(null);
   const resetRequestRef = useRef({ sending: false, nextAllowedAt: 0 });
+  const detailsModalRef = useRef(null);
+  const previouslyFocusedRef = useRef(null);
 
   useEffect(() => {
     if (resetCooldown <= 0) return undefined;
@@ -124,8 +161,8 @@ function UserManagement() {
   const adminCount = users.filter((u) => u.role === "admin").length;
 
   const selectedStatCard = useMemo(() => {
-    if (roleFilter === "admin" && !statusFilter) {
-      return "admins";
+    if (!roleFilter && !statusFilter) {
+      return "total";
     }
     if (statusFilter === "active" && !roleFilter) {
       return "active";
@@ -133,46 +170,36 @@ function UserManagement() {
     if (statusFilter === "inactive" && !roleFilter) {
       return "inactive";
     }
-    if (!roleFilter && !statusFilter && totalCardSelected) {
-      return "total";
+    if (roleFilter === "admin" && !statusFilter) {
+      return "admins";
     }
     return null;
-  }, [roleFilter, statusFilter, totalCardSelected]);
+  }, [roleFilter, statusFilter]);
 
-  // Stat card clicking logic (toggles the filter; clicking selected card clears it)
+  // Stat card clicking logic (URL-backed: clicking selected card again clears it)
   function handleStatCardClick(cardKey) {
-    if (selectedStatCard === cardKey) {
-      setTotalCardSelected(false);
-      if (cardKey === "active" || cardKey === "inactive") {
-        setStatusFilter("");
-      } else if (cardKey === "admins") {
-        setRoleFilter("");
-      }
+    if (cardKey === "total") {
+      updateFilterParams({ role: "", status: "" });
       return;
     }
 
-    setTotalCardSelected(cardKey === "total");
-    if (cardKey === "total") {
-      setRoleFilter("");
-      setStatusFilter("");
-    } else if (cardKey === "active") {
-      setStatusFilter("active");
+    if (selectedStatCard === cardKey) {
+      updateFilterParams({ role: "", status: "" });
+      return;
+    }
+
+    if (cardKey === "active") {
+      updateFilterParams({ role: "", status: "active" });
     } else if (cardKey === "inactive") {
-      setStatusFilter("inactive");
+      updateFilterParams({ role: "", status: "inactive" });
     } else if (cardKey === "admins") {
-      setRoleFilter("admin");
+      updateFilterParams({ role: "admin", status: "" });
     }
   }
 
-  const isAnyFilterActive = Boolean(
-    searchQuery.trim() || roleFilter || statusFilter || selectedStatCard
-  );
-
   function clearAllFilters() {
     setSearchQuery("");
-    setRoleFilter("");
-    setStatusFilter("");
-    setTotalCardSelected(false);
+    updateFilterParams({ role: "", status: "" });
   }
 
   // Filtered users list
@@ -247,7 +274,58 @@ function UserManagement() {
     setResetError("");
     setResetErrorUserId(null);
     setResetSuccess(null);
+    const trigger = previouslyFocusedRef.current;
+    previouslyFocusedRef.current = null;
+    if (trigger && typeof trigger.focus === "function") {
+      window.requestAnimationFrame(() => trigger.focus());
+    }
   }, []);
+
+  // Focus trap for the Account profile / Edit account dialog
+  useEffect(() => {
+    if (!selectedUser) return undefined;
+    previouslyFocusedRef.current =
+      previouslyFocusedRef.current || document.activeElement;
+
+    const dialogEl = detailsModalRef.current;
+    const focusableSelector =
+      'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+    if (dialogEl && !dialogEl.contains(document.activeElement)) {
+      const firstFocusable = dialogEl.querySelector(focusableSelector);
+      if (firstFocusable) {
+        firstFocusable.focus();
+      } else {
+        dialogEl.focus();
+      }
+    }
+
+    function handleTrapTab(e) {
+      if (e.key !== "Tab" || !detailsModalRef.current) return;
+      const focusables = Array.from(
+        detailsModalRef.current.querySelectorAll(focusableSelector)
+      ).filter((el) => el.offsetParent !== null);
+      if (focusables.length === 0) {
+        e.preventDefault();
+        detailsModalRef.current.focus();
+        return;
+      }
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      if (e.shiftKey) {
+        if (document.activeElement === first || !detailsModalRef.current.contains(document.activeElement)) {
+          e.preventDefault();
+          last.focus();
+        }
+      } else if (document.activeElement === last || !detailsModalRef.current.contains(document.activeElement)) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+
+    document.addEventListener("keydown", handleTrapTab);
+    return () => document.removeEventListener("keydown", handleTrapTab);
+  }, [selectedUser, modalMode]);
 
   // Global escape key handler to close menus/modals
   useEffect(() => {
@@ -463,7 +541,7 @@ function UserManagement() {
     }
   }
 
-  const displayError = usersQuery.error || actionError;
+  const editErrorField = getEditErrorField(editError);
   const activeMenuUser = openActionMenu
     ? filteredUsers.find((u) => u.id === openActionMenu.userId) || null
     : null;
@@ -473,7 +551,7 @@ function UserManagement() {
     <div className="um-page">
       <div className="um-root">
         {/* PAGE HEADER */}
-        <div className="um-header">
+        <header className="um-header">
           <div className="um-header-copy">
             <h1 className="um-title">Users</h1>
             <p className="um-subtitle">
@@ -481,529 +559,471 @@ function UserManagement() {
             </p>
           </div>
 
-          <button
-            type="button"
+          <Button
+            variant="primary"
             onClick={() => setShowForm(true)}
             className="um-add-btn"
-            aria-label="Add new user account"
           >
-            <FontAwesomeIcon icon={faPlus} className="um-add-icon" />
+            <Plus size={16} strokeWidth={2.2} aria-hidden="true" />
             <span>Add User</span>
-          </button>
-        </div>
+          </Button>
+        </header>
 
-        {/* ERROR BANNER */}
-        {displayError && (
+        {/* ACTION ERROR BANNER (mutation errors) */}
+        {actionError && (
           <div className="um-error-banner" role="alert">
-            <FontAwesomeIcon icon={faTriangleExclamation} />
-            <span>{displayError.message || String(displayError)}</span>
+            <AlertTriangle size={16} aria-hidden="true" />
+            <span>{actionError}</span>
           </div>
         )}
 
-        {/* 1. STAT CARDS: CLICKABLE FILTERS */}
-        <section className="stat-card-grid cols-4 um-summary-grid" aria-label="User account filters">
-          <button
-            type="button"
-            className={`stat-card is-clickable is-neutral ${selectedStatCard === "total" ? "is-selected" : ""}`}
-            onClick={() => handleStatCardClick("total")}
-            aria-pressed={selectedStatCard === "total"}
-            title="Filter by all accounts"
-          >
-            <div className="stat-card-content">
-              <span className="stat-card-label">Total</span>
-              <strong className="stat-card-value">{totalCount}</strong>
-              <span className="stat-card-hint">All user accounts</span>
-            </div>
-            <span className="stat-card-icon stat-card-icon--neutral" aria-hidden="true">
-              <FontAwesomeIcon icon={faUsers} />
-            </span>
-          </button>
-
-          <button
-            type="button"
-            className={`stat-card is-clickable is-resolved ${selectedStatCard === "active" ? "is-selected" : ""}`}
-            onClick={() => handleStatCardClick("active")}
-            aria-pressed={selectedStatCard === "active"}
-            title="Filter by active accounts"
-          >
-            <div className="stat-card-content">
-              <span className="stat-card-label">Active</span>
-              <strong className="stat-card-value">{activeCount}</strong>
-              <span className="stat-card-hint">Active user accounts</span>
-            </div>
-            <span className="stat-card-icon stat-card-icon--resolved" aria-hidden="true">
-              <FontAwesomeIcon icon={faUserCheck} />
-            </span>
-          </button>
-
-          <button
-            type="button"
-            className={`stat-card is-clickable is-closed ${selectedStatCard === "inactive" ? "is-selected" : ""}`}
-            onClick={() => handleStatCardClick("inactive")}
-            aria-pressed={selectedStatCard === "inactive"}
-            title="Filter by inactive accounts"
-          >
-            <div className="stat-card-content">
-              <span className="stat-card-label">Inactive</span>
-              <strong className="stat-card-value">{inactiveCount}</strong>
-              <span className="stat-card-hint">Inactive user accounts</span>
-            </div>
-            <span className="stat-card-icon stat-card-icon--closed" aria-hidden="true">
-              <FontAwesomeIcon icon={faUserSlash} />
-            </span>
-          </button>
-
-          <button
-            type="button"
-            className={`stat-card is-clickable is-pending ${selectedStatCard === "admins" ? "is-selected" : ""}`}
-            onClick={() => handleStatCardClick("admins")}
-            aria-pressed={selectedStatCard === "admins"}
-            title="Filter by administrator accounts"
-          >
-            <div className="stat-card-content">
-              <span className="stat-card-label">Admins</span>
-              <strong className="stat-card-value">{adminCount}</strong>
-              <span className="stat-card-hint">Administrator accounts</span>
-            </div>
-            <span className="stat-card-icon stat-card-icon--pending" aria-hidden="true">
-              <FontAwesomeIcon icon={faUserShield} />
-            </span>
-          </button>
+        {/* 1. STAT CARDS: CLICKABLE URL FILTERS */}
+        <section className="um-stats-grid" aria-label="User account filters">
+          {usersQuery.isLoading ? (
+            [0, 1, 2, 3].map((slot) => (
+              <div key={slot} className="um-stat-skeleton" aria-hidden="true">
+                <div className="um-stat-skeleton__top">
+                  <span className="um-stat-skeleton__icon" />
+                  <span className="um-stat-skeleton__label" />
+                </div>
+                <span className="um-stat-skeleton__value" />
+                <span className="um-stat-skeleton__footer" />
+              </div>
+            ))
+          ) : (
+            <>
+              <StatCard
+                icon={Users}
+                iconTone="primary"
+                tint="default"
+                label="Total"
+                value={totalCount}
+                footer="All user accounts"
+                selected={selectedStatCard === "total"}
+                onClick={() => handleStatCardClick("total")}
+              />
+              <StatCard
+                icon={UserCheck}
+                tint="success"
+                label="Active"
+                value={activeCount}
+                footer="Active user accounts"
+                selected={selectedStatCard === "active"}
+                onClick={() => handleStatCardClick("active")}
+              />
+              <StatCard
+                icon={UserX}
+                tint="neutral"
+                label="Inactive"
+                value={inactiveCount}
+                footer="Inactive user accounts"
+                selected={selectedStatCard === "inactive"}
+                onClick={() => handleStatCardClick("inactive")}
+              />
+              <StatCard
+                icon={ShieldCheck}
+                iconTone="primary"
+                tint="default"
+                label="Admins"
+                value={adminCount}
+                footer="Administrator accounts"
+                selected={selectedStatCard === "admins"}
+                onClick={() => handleStatCardClick("admins")}
+              />
+            </>
+          )}
         </section>
 
-        {/* 2. FILTERS TOOLBAR WITH LABELS & CLEAR BUTTON */}
-        <div className="um-toolbar">
-          <div className="um-filter-control um-filter-control--search">
-            <label htmlFor="um-search-input" className="um-control-label">
-              Search users
-            </label>
-            <div className="um-search-wrap">
-              <FontAwesomeIcon icon={faSearch} className="um-search-icon" aria-hidden="true" />
+        {/* 2. UNIFIED TABLE CARD (TOOLBAR + TABLE / STATES + FOOTER) */}
+        <section className="um-table-card" aria-label="Users directory">
+          <div className="um-table-toolbar">
+            <div className="um-search-field">
+              <label htmlFor="um-search-input" className="sr-only">
+                Search users
+              </label>
+              <Search size={16} className="um-search-icon" aria-hidden="true" />
               <input
                 id="um-search-input"
                 type="search"
-                placeholder="Search by name, email, or phone…"
+                placeholder="Search by name, email, or phone..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="um-input um-search-input"
+                className="um-toolbar-input"
               />
             </div>
-          </div>
 
-          <div className="um-filter-control">
-            <label htmlFor="um-role-select" className="um-control-label">
-              Role
-            </label>
-            <select
-              id="um-role-select"
-              value={roleFilter}
-              onChange={(e) => {
-                setTotalCardSelected(false);
-                setRoleFilter(e.target.value);
-              }}
-              className="um-input um-select-filter"
-            >
-              <option value="">All Roles</option>
-              <option value="admin">Admin</option>
-              <option value="lgu_personnel">LGU Personnel</option>
-            </select>
-          </div>
+            <div className="um-toolbar-selects">
+              <div className="um-select-field">
+                <label htmlFor="um-role-select" className="sr-only">
+                  Filter by role
+                </label>
+                <select
+                  id="um-role-select"
+                  value={roleFilter}
+                  onChange={(e) => updateFilterParams({ role: e.target.value })}
+                  className="um-toolbar-select"
+                >
+                  <option value="">All Roles</option>
+                  <option value="admin">Admin</option>
+                  <option value="lgu_personnel">LGU Personnel</option>
+                </select>
+              </div>
 
-          <div className="um-filter-control">
-            <label htmlFor="um-status-select" className="um-control-label">
-              Status
-            </label>
-            <select
-              id="um-status-select"
-              value={statusFilter}
-              onChange={(e) => {
-                setTotalCardSelected(false);
-                setStatusFilter(e.target.value);
-              }}
-              className="um-input um-select-filter"
-            >
-              <option value="">All Statuses</option>
-              <option value="active">Active</option>
-              <option value="inactive">Inactive</option>
-            </select>
-          </div>
-
-          {isAnyFilterActive && (
-            <div className="um-filter-clear-wrap">
-              <button
-                type="button"
-                onClick={clearAllFilters}
-                className="um-clear-btn"
-                aria-label="Clear all active filters"
-              >
-                <FontAwesomeIcon icon={faRotateLeft} />
-                <span>Clear filters</span>
-              </button>
+              <div className="um-select-field">
+                <label htmlFor="um-status-select" className="sr-only">
+                  Filter by status
+                </label>
+                <select
+                  id="um-status-select"
+                  value={statusFilter}
+                  onChange={(e) => updateFilterParams({ status: e.target.value })}
+                  className="um-toolbar-select"
+                >
+                  <option value="">All Statuses</option>
+                  <option value="active">Active</option>
+                  <option value="inactive">Inactive</option>
+                </select>
+              </div>
             </div>
-          )}
-        </div>
+          </div>
 
-        {/* RESULT COUNT */}
-        <div className="um-result-bar">
-          <span className="um-result-count">
-            {isAnyFilterActive ? (
-              <>Showing <strong>{filteredUsers.length}</strong> of {totalCount} users</>
-            ) : (
-              <><strong>{filteredUsers.length}</strong> {filteredUsers.length === 1 ? "user" : "users"} registered</>
-            )}
-          </span>
-        </div>
-
-        {/* 3. CONTENT AREA: SKELETON / EMPTY / TABLE + CARDS */}
-        {usersQuery.isLoading ? (
-          <div className="um-table-wrapper" aria-busy="true" aria-label="Loading users list">
-            <table className="um-table">
-              <thead>
-                <tr>
-                  <th scope="col" className="um-th-user">User</th>
-                  <th scope="col" className="um-th-role">Role</th>
-                  <th scope="col" className="um-th-phone">Phone</th>
-                  <th scope="col" className="um-th-status">STATUS</th>
-                  <th scope="col" className="um-th-actions">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {[1, 2, 3, 4, 5].map((idx) => (
-                  <tr key={idx} className="um-table-row um-skeleton-row">
-                    <td>
-                      <div className="um-skeleton-user">
-                        <div className="um-skeleton um-skeleton-avatar" />
-                        <div className="um-skeleton-copy">
-                          <div className="um-skeleton um-skeleton-line um-skeleton-line--long" />
-                          <div className="um-skeleton um-skeleton-line um-skeleton-line--short" />
-                        </div>
-                      </div>
-                    </td>
-                    <td>
-                      <div className="um-skeleton um-skeleton-badge" />
-                    </td>
-                    <td>
-                      <div className="um-skeleton um-skeleton-line um-skeleton-line--medium" />
-                    </td>
-                    <td>
-                      <div className="um-skeleton um-skeleton-pill" />
-                    </td>
-                    <td className="um-td-actions">
-                      <div className="um-skeleton um-skeleton-btn" />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : users.length === 0 ? (
-          <div className="um-empty-state">
-            <div className="um-empty-icon-wrap">
-              <FontAwesomeIcon icon={faUsers} />
-            </div>
-            <h2 className="um-empty-title">No accounts yet</h2>
-            <p className="um-empty-text">
-              Add an LGU personnel or administrator account to get started.
-            </p>
-            <button
-              type="button"
-              onClick={() => setShowForm(true)}
-              className="um-add-btn"
-            >
-              <FontAwesomeIcon icon={faPlus} />
-              <span>Add First User</span>
-            </button>
-          </div>
-        ) : filteredUsers.length === 0 ? (
-          <div className="um-empty-state">
-            <div className="um-empty-icon-wrap">
-              <FontAwesomeIcon icon={faSearch} />
-            </div>
-            <h2 className="um-empty-title">No users match your filters</h2>
-            <p className="um-empty-text">
-              Try adjusting your search query or reset your role and status filters.
-            </p>
-            <button
-              type="button"
-              onClick={clearAllFilters}
-              className="um-clear-btn um-empty-clear-btn"
-            >
-              <FontAwesomeIcon icon={faRotateLeft} />
-              <span>Clear filters</span>
-            </button>
-          </div>
-        ) : (
-          <div className="um-list-container">
-            {/* DESKTOP TABLE VIEW (Visible > 768px) */}
-            <div className="um-table-wrapper">
+          {usersQuery.isLoading ? (
+            <div className="um-table-scroll" aria-busy="true" aria-label="Loading users list">
               <table className="um-table">
                 <thead>
                   <tr>
-                    <th scope="col" className="um-th-user">User</th>
-                    <th scope="col" className="um-th-role">Role</th>
-                    <th scope="col" className="um-th-phone">Phone</th>
+                    <th scope="col" className="um-th-user">USER</th>
+                    <th scope="col" className="um-th-role">ROLE</th>
+                    <th scope="col" className="um-th-phone">PHONE</th>
                     <th scope="col" className="um-th-status">STATUS</th>
-                    <th scope="col" className="um-th-actions">Actions</th>
+                    <th scope="col" className="um-th-actions">ACTIONS</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredUsers.map((u) => {
-                    const isMuted = !u.is_active;
-                    const isMenuOpen = openActionMenu?.userId === u.id;
-
-                    return (
-                      <tr
-                        key={u.id}
-                        className={`um-table-row ${isMuted ? "is-muted" : ""}`}
-                      >
-                        {/* USER CELL */}
-                        <td className="um-td-user">
-                          <button
-                            type="button"
-                            className="um-user-cell-btn"
-                            onClick={() => openDetailsModal(u, "overview")}
-                            aria-label={`View account details for ${u.name}`}
-                          >
-                            <div
-                              className={`um-avatar ${
-                                u.role === "admin" ? "is-admin" : "is-personnel"
-                              }`}
-                              aria-hidden="true"
-                            >
-                              {initials(u.name)}
-                            </div>
-                            <div className="um-user-cell-info">
-                              <span className="um-user-name">{u.name}</span>
-                              <span className="um-user-email">{u.email}</span>
-                            </div>
-                          </button>
-                        </td>
-
-                        {/* ROLE BADGE */}
-                        <td className="um-td-role">
-                          <span
-                            className={`um-role-badge ${
-                              u.role === "admin" ? "is-admin" : "is-personnel"
-                            }`}
-                          >
-                            {ROLE_LABELS[u.role] || u.role.replace("_", " ")}
-                          </span>
-                        </td>
-
-                        {/* PHONE */}
-                        <td className="um-td-phone">
-                          <span className="um-phone-text">
-                            {u.contact_number || "—"}
-                          </span>
-                        </td>
-
-                        {/* STATUS PILL */}
-                        <td className="um-td-status">
-                          <span className={`um-status-pill ${
-                            u.is_active ? "um-status-pill--available" : "um-status-pill--closed"
-                          }`}>
-                            <span className="um-status-dot" aria-hidden="true" />
-                            {u.is_active ? "Active" : "Inactive"}
-                          </span>
-                        </td>
-
-                        {/* ROW ACTION MENU ("⋯") */}
-                        <td className="um-td-actions um-action-cell">
-                          <div className="um-action-menu-wrap">
-                            <button
-                              type="button"
-                              className={`um-action-trigger-btn ${isMenuOpen ? "is-open" : ""}`}
-                              onClick={(e) => toggleRowActionMenu(u, e.currentTarget)}
-                              aria-label={`Actions for ${u.name}`}
-                              aria-haspopup="true"
-                              aria-expanded={isMenuOpen}
-                              title="More options"
-                            >
-                              <FontAwesomeIcon icon={faEllipsisVertical} />
-                            </button>
+                  {[1, 2, 3, 4, 5].map((idx) => (
+                    <tr key={idx} className="um-skeleton-row">
+                      <td>
+                        <div className="um-skeleton-user">
+                          <div className="um-skeleton um-skeleton-avatar" />
+                          <div className="um-skeleton-copy">
+                            <div className="um-skeleton um-skeleton-line um-skeleton-line--long" />
+                            <div className="um-skeleton um-skeleton-line um-skeleton-line--short" />
                           </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
+                        </div>
+                      </td>
+                      <td>
+                        <div className="um-skeleton um-skeleton-badge" />
+                      </td>
+                      <td>
+                        <div className="um-skeleton um-skeleton-line um-skeleton-line--medium" />
+                      </td>
+                      <td>
+                        <div className="um-skeleton um-skeleton-pill" />
+                      </td>
+                      <td className="um-td-actions">
+                        <div className="um-skeleton um-skeleton-btn" />
+                      </td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>
+          ) : usersQuery.isError ? (
+            <div className="um-state-box" role="alert">
+              <div className="um-state-icon um-state-icon--danger" aria-hidden="true">
+                <AlertTriangle size={22} />
+              </div>
+              <h2 className="um-state-title">Could not load users</h2>
+              <p className="um-state-text">
+                {usersQuery.error?.message || "Something went wrong while fetching user accounts."}
+              </p>
+              <Button variant="secondary" onClick={() => usersQuery.refetch()}>
+                <RotateCcw size={15} aria-hidden="true" />
+                <span>Try again</span>
+              </Button>
+            </div>
+          ) : users.length === 0 ? (
+            <div className="um-state-box">
+              <div className="um-state-icon" aria-hidden="true">
+                <Users size={22} />
+              </div>
+              <h2 className="um-state-title">No accounts yet</h2>
+              <p className="um-state-text">
+                Add an LGU personnel or administrator account to get started.
+              </p>
+              <Button variant="primary" onClick={() => setShowForm(true)}>
+                <Plus size={16} strokeWidth={2.2} aria-hidden="true" />
+                <span>Add User</span>
+              </Button>
+            </div>
+          ) : filteredUsers.length === 0 ? (
+            <div className="um-state-box">
+              <div className="um-state-icon" aria-hidden="true">
+                <Search size={22} />
+              </div>
+              <h2 className="um-state-title">No users match your filters</h2>
+              <p className="um-state-text">
+                Try adjusting your search or resetting the role and status filters.
+              </p>
+              <Button variant="secondary" onClick={clearAllFilters}>
+                <RotateCcw size={15} aria-hidden="true" />
+                <span>Clear filters</span>
+              </Button>
+            </div>
+          ) : (
+            <>
+              {/* DESKTOP TABLE VIEW (Visible > 768px) */}
+              <div className="um-table-scroll">
+                <table className="um-table">
+                  <thead>
+                    <tr>
+                      <th scope="col" className="um-th-user">USER</th>
+                      <th scope="col" className="um-th-role">ROLE</th>
+                      <th scope="col" className="um-th-phone">PHONE</th>
+                      <th scope="col" className="um-th-status">STATUS</th>
+                      <th scope="col" className="um-th-actions">ACTIONS</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredUsers.map((u) => {
+                      const isMuted = !u.is_active;
+                      const isMenuOpen = openActionMenu?.userId === u.id;
 
-            {openActionMenu && activeMenuUser && activeMenuRestriction &&
-              createPortal(
-                <div
-                  data-um-menu="true"
-                  className={`um-action-menu-dropdown um-action-menu-dropdown--portal ${
-                    openActionMenu.openAbove ? "is-upward" : ""
-                  }`}
-                  style={{
-                    right: `${openActionMenu.right}px`,
-                    ...(openActionMenu.openAbove
-                      ? { bottom: `${openActionMenu.bottom}px` }
-                      : { top: `${openActionMenu.top}px` }),
-                  }}
-                  role="menu"
-                  aria-label={`Actions for ${activeMenuUser.name}`}
-                >
-                  <button
-                    type="button"
-                    className="um-menu-item"
-                    role="menuitem"
-                    onClick={() => {
-                      setOpenActionMenu(null);
-                      openDetailsModal(activeMenuUser, "edit");
-                    }}
-                  >
-                    <FontAwesomeIcon icon={faPen} className="um-menu-icon" />
-                    <span>Edit</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    className="um-menu-item"
-                    role="menuitem"
-                    disabled={resettingPassword || resetCooldown > 0}
-                    onClick={() => {
-                      setOpenActionMenu(null);
-                      openDetailsModal(activeMenuUser);
-                      handleResetPassword(activeMenuUser);
-                    }}
-                  >
-                    <FontAwesomeIcon icon={faKey} className="um-menu-icon" />
-                    <span>Email password reset</span>
-                  </button>
-
-                  {activeMenuUser.is_active ? (
-                    !activeMenuRestriction.isSelf && (
-                      <button
-                        type="button"
-                        className="um-menu-item is-danger"
-                        role="menuitem"
-                        disabled={
-                          activeMenuRestriction.disabled ||
-                          togglingId === activeMenuUser.id
-                        }
-                        title={activeMenuRestriction.tooltip || undefined}
-                        onClick={() => {
-                          setOpenActionMenu(null);
-                          setDeactivatingUser(activeMenuUser);
-                        }}
-                      >
-                        <FontAwesomeIcon icon={faBan} className="um-menu-icon" />
-                        <span>Deactivate</span>
-                      </button>
-                    )
-                  ) : (
-                    <button
-                      type="button"
-                      className="um-menu-item is-success"
-                      role="menuitem"
-                      disabled={togglingId === activeMenuUser.id}
-                      onClick={() => {
-                        setOpenActionMenu(null);
-                        handleReactivate(activeMenuUser);
-                      }}
-                    >
-                      <FontAwesomeIcon icon={faCheck} className="um-menu-icon" />
-                      <span>Reactivate</span>
-                    </button>
-                  )}
-                </div>,
-                document.body
-              )}
-
-            {/* MOBILE STACKED CARDS VIEW (Visible <= 768px) */}
-            <div className="um-cards-wrapper">
-              {filteredUsers.map((u) => {
-                const isMuted = !u.is_active;
-                const isMenuOpen = openActionMenu?.userId === u.id;
-
-                return (
-                  <article
-                    key={u.id}
-                    className={`um-user-card ${isMuted ? "is-muted" : ""}`}
-                  >
-                    <div className="um-card-header">
-                      <button
-                        type="button"
-                        className="um-card-user-btn"
-                        onClick={() => openDetailsModal(u, "overview")}
-                        aria-label={`View account details for ${u.name}`}
-                      >
-                        <div
-                          className={`um-avatar ${
-                            u.role === "admin" ? "is-admin" : "is-personnel"
-                          }`}
-                          aria-hidden="true"
+                      return (
+                        <tr
+                          key={u.id}
+                          className={`um-table-row ${isMuted ? "is-muted" : ""}`}
+                          onClick={() => openDetailsModal(u, "overview")}
                         >
-                          {initials(u.name)}
-                        </div>
+                          {/* USER CELL */}
+                          <td className="um-td-user">
+                            <button
+                              type="button"
+                              className="um-user-row-btn"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openDetailsModal(u, "overview");
+                              }}
+                              aria-label={`Open account profile for ${u.name}`}
+                            >
+                              <span
+                                className={`um-avatar ${
+                                  u.role === "admin" ? "is-admin" : "is-personnel"
+                                }`}
+                                aria-hidden="true"
+                              >
+                                {initials(u.name)}
+                              </span>
+                              <span className="um-user-cell-info">
+                                <span className="um-user-name">{u.name}</span>
+                                <span className="um-user-email">{u.email}</span>
+                              </span>
+                            </button>
+                          </td>
 
-                        <div className="um-card-header-meta">
-                          <div className="um-card-title-row">
-                            <h2 className="um-card-name">{u.name}</h2>
-                            <span className={`um-status-pill ${
-                              u.is_active ? "um-status-pill--available" : "um-status-pill--closed"
-                            }`}>
-                              <span className="um-status-dot" aria-hidden="true" />
-                              {u.is_active ? "Active" : "Inactive"}
+                          {/* ROLE CHIP */}
+                          <td className="um-td-role">
+                            <RoleChip role={u.role} />
+                          </td>
+
+                          {/* PHONE */}
+                          <td className="um-td-phone">
+                            <span className="um-phone-text">
+                              {u.contact_number || "—"}
                             </span>
-                          </div>
-                          <p className="um-card-email">{u.email}</p>
-                        </div>
-                      </button>
+                          </td>
 
-                      <div className="um-action-cell um-card-action-cell">
+                          {/* STATUS PILL */}
+                          <td className="um-td-status">
+                            <StatusPill variant={u.is_active ? "active" : "inactive"} />
+                          </td>
+
+                          {/* ROW ACTION MENU ("⋮") */}
+                          <td
+                            className="um-td-actions um-action-cell"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <div className="um-action-menu-wrap">
+                              <button
+                                type="button"
+                                className={`um-action-trigger-btn ${isMenuOpen ? "is-open" : ""}`}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  toggleRowActionMenu(u, e.currentTarget);
+                                }}
+                                aria-label={`More actions for ${u.name}`}
+                                aria-haspopup="menu"
+                                aria-expanded={isMenuOpen}
+                              >
+                                <MoreVertical size={16} aria-hidden="true" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* MOBILE STACKED CARDS VIEW (Visible <= 768px) */}
+              <div className="um-cards-wrapper">
+                {filteredUsers.map((u) => {
+                  const isMuted = !u.is_active;
+                  const isMenuOpen = openActionMenu?.userId === u.id;
+
+                  return (
+                    <article
+                      key={u.id}
+                      className={`um-user-card ${isMuted ? "is-muted" : ""}`}
+                    >
+                      <div className="um-card-header">
                         <button
                           type="button"
-                          className={`um-action-trigger-btn ${isMenuOpen ? "is-open" : ""}`}
-                          onClick={(e) => toggleRowActionMenu(u, e.currentTarget)}
-                          aria-label={`Actions for ${u.name}`}
-                          aria-haspopup="true"
-                          aria-expanded={isMenuOpen}
+                          className="um-card-user-btn"
+                          onClick={() => openDetailsModal(u, "overview")}
+                          aria-label={`Open account profile for ${u.name}`}
                         >
-                          <FontAwesomeIcon icon={faEllipsisVertical} />
+                          <span
+                            className={`um-avatar ${
+                              u.role === "admin" ? "is-admin" : "is-personnel"
+                            }`}
+                            aria-hidden="true"
+                          >
+                            {initials(u.name)}
+                          </span>
+
+                          <span className="um-card-header-meta">
+                            <span className="um-card-title-row">
+                              <span className="um-card-name">{u.name}</span>
+                              <StatusPill variant={u.is_active ? "active" : "inactive"} />
+                            </span>
+                            <span className="um-card-email">{u.email}</span>
+                          </span>
                         </button>
-                      </div>
-                    </div>
 
-                    <div className="um-card-body">
-                      <div className="um-card-meta-line">
-                        <span className="um-meta-label">Role</span>
-                        <span
-                          className={`um-role-badge ${
-                            u.role === "admin" ? "is-admin" : "is-personnel"
-                          }`}
-                        >
-                          {ROLE_LABELS[u.role] || u.role.replace("_", " ")}
-                        </span>
+                        <div className="um-action-cell um-card-action-cell">
+                          <button
+                            type="button"
+                            className={`um-action-trigger-btn ${isMenuOpen ? "is-open" : ""}`}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleRowActionMenu(u, e.currentTarget);
+                            }}
+                            aria-label={`More actions for ${u.name}`}
+                            aria-haspopup="menu"
+                            aria-expanded={isMenuOpen}
+                          >
+                            <MoreVertical size={16} aria-hidden="true" />
+                          </button>
+                        </div>
                       </div>
 
-                      <div className="um-card-meta-line">
-                        <span className="um-meta-label">Phone</span>
+                      <div className="um-card-body">
+                        <RoleChip role={u.role} />
                         <span className="um-phone-text">
                           {u.contact_number || "—"}
                         </span>
                       </div>
-                    </div>
+                    </article>
+                  );
+                })}
+              </div>
+            </>
+          )}
 
-                    <div className="um-card-footer">
-                      <button
-                        type="button"
-                        onClick={() => openDetailsModal(u, "overview")}
-                        className="um-card-quick-btn"
-                      >
-                        <FontAwesomeIcon icon={faEye} />
-                        <span>View Details</span>
-                      </button>
-                    </div>
-                  </article>
-                );
-              })}
+          {!usersQuery.isLoading && !usersQuery.isError && (
+            <div className="um-table-footer">
+              <span className="um-footer-count">
+                Showing <strong>{filteredUsers.length}</strong> of{" "}
+                <strong>{totalCount}</strong> users
+              </span>
             </div>
-          </div>
-        )}
+          )}
+        </section>
+
+        {openActionMenu && activeMenuUser && activeMenuRestriction &&
+          createPortal(
+            <div
+              data-um-menu="true"
+              className={`um-action-menu-dropdown um-action-menu-dropdown--portal ${
+                openActionMenu.openAbove ? "is-upward" : ""
+              }`}
+              style={{
+                right: `${openActionMenu.right}px`,
+                ...(openActionMenu.openAbove
+                  ? { bottom: `${openActionMenu.bottom}px` }
+                  : { top: `${openActionMenu.top}px` }),
+              }}
+              role="menu"
+              aria-label={`More actions for ${activeMenuUser.name}`}
+            >
+              <button
+                type="button"
+                className="um-menu-item"
+                role="menuitem"
+                onClick={() => {
+                  setOpenActionMenu(null);
+                  openDetailsModal(activeMenuUser, "edit");
+                }}
+              >
+                <Pencil size={15} className="um-menu-icon" aria-hidden="true" />
+                <span>Edit</span>
+              </button>
+
+              <button
+                type="button"
+                className="um-menu-item"
+                role="menuitem"
+                disabled={resettingPassword || resetCooldown > 0}
+                onClick={() => {
+                  setOpenActionMenu(null);
+                  openDetailsModal(activeMenuUser);
+                  handleResetPassword(activeMenuUser);
+                }}
+              >
+                <KeyRound size={15} className="um-menu-icon" aria-hidden="true" />
+                <span>Email password reset</span>
+              </button>
+
+              {activeMenuUser.is_active ? (
+                !activeMenuRestriction.isSelf && (
+                  <button
+                    type="button"
+                    className="um-menu-item is-danger"
+                    role="menuitem"
+                    disabled={
+                      activeMenuRestriction.disabled ||
+                      togglingId === activeMenuUser.id
+                    }
+                    title={activeMenuRestriction.tooltip || undefined}
+                    onClick={() => {
+                      setOpenActionMenu(null);
+                      setDeactivatingUser(activeMenuUser);
+                    }}
+                  >
+                    <Ban size={15} className="um-menu-icon" aria-hidden="true" />
+                    <span>Deactivate</span>
+                  </button>
+                )
+              ) : (
+                <button
+                  type="button"
+                  className="um-menu-item is-success"
+                  role="menuitem"
+                  disabled={togglingId === activeMenuUser.id}
+                  onClick={() => {
+                    setOpenActionMenu(null);
+                    handleReactivate(activeMenuUser);
+                  }}
+                >
+                  <Check size={15} className="um-menu-icon" aria-hidden="true" />
+                  <span>Reactivate</span>
+                </button>
+              )}
+            </div>,
+            document.body
+          )}
       </div>
 
       {/* 4. CONFIRM DEACTIVATE MODAL */}
@@ -1215,6 +1235,8 @@ function UserManagement() {
           role="presentation"
         >
           <div
+            ref={detailsModalRef}
+            tabIndex={-1}
             className="um-modal um-modal--details"
             onClick={(e) => e.stopPropagation()}
             role="dialog"
@@ -1222,30 +1244,42 @@ function UserManagement() {
             aria-labelledby="um-details-title"
           >
             {/* MODAL HEADER */}
-            <div className="um-modal-header">
-              <div className="um-modal-header-copy">
-                <h2 className="um-modal-title" id="um-details-title">
-                  {modalMode === "edit" ? "Edit Account" : "Account Profile"}
-                </h2>
+            <div className="um-modal-header um-details-header">
+              <div className="um-modal-header-main">
+                {modalMode === "edit" && (
+                  <span className="um-modal-icon-tile" aria-hidden="true">
+                    <Pencil size={18} />
+                  </span>
+                )}
+                <div className="um-modal-header-copy">
+                  <h2 className="um-details-title" id="um-details-title">
+                    {modalMode === "edit" ? "Edit account" : "Account profile"}
+                  </h2>
+                  {modalMode === "edit" && (
+                    <p className="um-modal-subtitle">
+                      Update name, role and contact details.
+                    </p>
+                  )}
+                </div>
               </div>
               <div className="um-modal-header-actions">
                 {modalMode !== "edit" && (
-                  <button
-                    type="button"
+                  <Button
+                    variant="secondary"
                     onClick={() => setModalMode("edit")}
-                    className="um-inline-edit-btn"
+                    className="um-modal-edit-btn"
                   >
-                    <FontAwesomeIcon icon={faPen} />
+                    <Pencil size={14} aria-hidden="true" />
                     <span>Edit details</span>
-                  </button>
+                  </Button>
                 )}
                 <button
                   type="button"
                   onClick={closeUserModal}
                   className="um-modal-close"
-                  aria-label="Close modal"
+                  aria-label="Close"
                 >
-                  <FontAwesomeIcon icon={faXmark} />
+                  <X size={18} aria-hidden="true" />
                 </button>
               </div>
             </div>
@@ -1253,9 +1287,9 @@ function UserManagement() {
             {/* IF IN EDIT MODE: DISPLAY IN-PLACE EDIT FORM */}
             {modalMode === "edit" ? (
               <form onSubmit={handleUpdateUser} className="um-modal-form">
-                {editError && (
+                {editError && !editErrorField && (
                   <div className="um-form-error" role="alert">
-                    <FontAwesomeIcon icon={faTriangleExclamation} />
+                    <AlertTriangle size={15} aria-hidden="true" />
                     <span>{editError}</span>
                   </div>
                 )}
@@ -1267,15 +1301,23 @@ function UserManagement() {
                     </label>
                     <input
                       id="edit-name"
-                      className="um-input"
+                      className={`um-input ${editErrorField === "name" ? "is-invalid" : ""}`}
                       value={editForm.name}
                       required
                       maxLength={100}
+                      aria-invalid={editErrorField === "name" ? "true" : undefined}
+                      aria-describedby={editErrorField === "name" ? "edit-name-error" : undefined}
                       onChange={(e) =>
                         setEditForm({ ...editForm, name: e.target.value })
                       }
                       autoFocus
                     />
+                    {editErrorField === "name" && (
+                      <p id="edit-name-error" className="um-field-error" role="alert">
+                        <AlertTriangle size={13} aria-hidden="true" />
+                        <span>{editError}</span>
+                      </p>
+                    )}
                   </div>
 
                   <div className="um-form-group">
@@ -1284,8 +1326,10 @@ function UserManagement() {
                     </label>
                     <select
                       id="edit-role"
-                      className="um-input"
+                      className={`um-input um-input--select ${editErrorField === "role" ? "is-invalid" : ""}`}
                       value={editForm.role}
+                      aria-invalid={editErrorField === "role" ? "true" : undefined}
+                      aria-describedby={editErrorField === "role" ? "edit-role-error" : undefined}
                       onChange={(e) =>
                         setEditForm({ ...editForm, role: e.target.value })
                       }
@@ -1293,6 +1337,12 @@ function UserManagement() {
                       <option value="lgu_personnel">LGU Personnel</option>
                       <option value="admin">Administrator</option>
                     </select>
+                    {editErrorField === "role" && (
+                      <p id="edit-role-error" className="um-field-error" role="alert">
+                        <AlertTriangle size={13} aria-hidden="true" />
+                        <span>{editError}</span>
+                      </p>
+                    )}
                   </div>
 
                   <div className="um-form-group">
@@ -1301,14 +1351,22 @@ function UserManagement() {
                     </label>
                     <input
                       id="edit-email"
-                      className="um-input"
+                      className={`um-input ${editErrorField === "email" ? "is-invalid" : ""}`}
                       type="email"
                       value={editForm.email}
                       required
+                      aria-invalid={editErrorField === "email" ? "true" : undefined}
+                      aria-describedby={editErrorField === "email" ? "edit-email-error" : undefined}
                       onChange={(e) =>
                         setEditForm({ ...editForm, email: e.target.value })
                       }
                     />
+                    {editErrorField === "email" && (
+                      <p id="edit-email-error" className="um-field-error" role="alert">
+                        <AlertTriangle size={13} aria-hidden="true" />
+                        <span>{editError}</span>
+                      </p>
+                    )}
                   </div>
 
                   <div className="um-form-group">
@@ -1317,9 +1375,11 @@ function UserManagement() {
                     </label>
                     <input
                       id="edit-phone"
-                      className="um-input"
+                      className={`um-input ${editErrorField === "contact_number" ? "is-invalid" : ""}`}
                       value={editForm.contact_number}
                       maxLength={20}
+                      aria-invalid={editErrorField === "contact_number" ? "true" : undefined}
+                      aria-describedby={editErrorField === "contact_number" ? "edit-phone-error" : undefined}
                       onChange={(e) =>
                         setEditForm({
                           ...editForm,
@@ -1327,60 +1387,57 @@ function UserManagement() {
                         })
                       }
                     />
+                    {editErrorField === "contact_number" && (
+                      <p id="edit-phone-error" className="um-field-error" role="alert">
+                        <AlertTriangle size={13} aria-hidden="true" />
+                        <span>{editError}</span>
+                      </p>
+                    )}
                   </div>
                 </div>
 
-                <div className="um-modal-footer">
-                  <button
-                    type="button"
+                <div className="um-modal-footer um-edit-footer">
+                  <Button
+                    variant="secondary"
+                    className="um-edit-footer-btn"
                     onClick={() => {
                       setModalMode("overview");
                       setEditError("");
                     }}
-                    className="um-cancel-btn"
                   >
                     Cancel
-                  </button>
-                  <button
+                  </Button>
+                  <Button
+                    variant="primary"
                     type="submit"
-                    className="um-save-btn"
+                    className="um-edit-footer-btn"
                     disabled={savingUser}
                   >
                     {savingUser ? "Saving…" : "Save changes"}
-                  </button>
+                  </Button>
                 </div>
               </form>
             ) : (
-              /* VIEW MODE: DETAILS ONLY (NO TABS / NO ACTIVITY) */
+              /* VIEW MODE: ACCOUNT PROFILE */
               <div className="um-modal-content">
                 <div className="um-profile-body">
                   <div className="um-profile-banner">
-                    <div
-                      className={`um-avatar is-large ${
+                    <span
+                      className={`um-avatar is-profile ${
                         selectedUser.role === "admin" ? "is-admin" : "is-personnel"
                       }`}
                       aria-hidden="true"
                     >
                       {initials(selectedUser.name)}
-                    </div>
+                    </span>
 
                     <div className="um-profile-meta">
                       <h3 className="um-profile-name">{selectedUser.name}</h3>
                       <div className="um-profile-badge-row">
-                        <span
-                          className={`um-role-badge ${
-                            selectedUser.role === "admin" ? "is-admin" : "is-personnel"
-                          }`}
-                        >
-                          {ROLE_LABELS[selectedUser.role] ||
-                            selectedUser.role.replace("_", " ")}
-                        </span>
-                        <span className={`um-status-pill ${
-                            selectedUser.is_active ? "um-status-pill--available" : "um-status-pill--closed"
-                          }`}>
-                          <span className="um-status-dot" aria-hidden="true" />
-                          {selectedUser.is_active ? "Active" : "Inactive"}
-                        </span>
+                        <RoleChip role={selectedUser.role} />
+                        <StatusPill
+                          variant={selectedUser.is_active ? "active" : "inactive"}
+                        />
                       </div>
                     </div>
                   </div>
@@ -1388,7 +1445,7 @@ function UserManagement() {
                   <div className="um-detail-grid">
                     <div className="um-detail-card">
                       <div className="um-detail-label">
-                        <FontAwesomeIcon icon={faEnvelope} />
+                        <Mail size={13} aria-hidden="true" />
                         <span>Email address</span>
                       </div>
                       <div className="um-detail-value">{selectedUser.email}</div>
@@ -1396,10 +1453,10 @@ function UserManagement() {
 
                     <div className="um-detail-card">
                       <div className="um-detail-label">
-                        <FontAwesomeIcon icon={faPhone} />
+                        <Phone size={13} aria-hidden="true" />
                         <span>Contact number</span>
                       </div>
-                      <div className="um-detail-value">
+                      <div className="um-detail-value um-detail-value--num">
                         {selectedUser.contact_number || "Not specified"}
                       </div>
                     </div>
@@ -1407,22 +1464,24 @@ function UserManagement() {
                 </div>
 
                 {/* MODAL FOOTER WITH PASSWORD RESET ON LEFT & CLOSE ON RIGHT */}
-                <div className="um-modal-footer um-modal-footer--split">
+                <div className="um-modal-footer um-modal-footer--split um-profile-footer">
                   <div className="um-reset-action">
-                    <button
-                      type="button"
-                      className="um-secondary-btn"
+                    <Button
+                      variant="secondary"
+                      className="um-profile-footer-btn"
                       onClick={() => handleResetPassword(selectedUser)}
                       disabled={resettingPassword || resetCooldown > 0}
                     >
-                      <FontAwesomeIcon icon={faKey} />
+                      <KeyRound size={15} aria-hidden="true" />
                       <span>
                         {resettingPassword ? "Sending reset email..." : "Send reset email"}
                       </span>
-                    </button>
+                    </Button>
 
                     {resetSuccess?.userId === selectedUser.id && (
-                      <p className="um-email-hint is-available" role="status">{resetSuccess.message}</p>
+                      <p className="um-email-hint is-available" role="status">
+                        {resetSuccess.message}
+                      </p>
                     )}
 
                     {resetError && resetErrorUserId === selectedUser.id && (
@@ -1440,13 +1499,13 @@ function UserManagement() {
                     )}
                   </div>
 
-                  <button
-                    type="button"
+                  <Button
+                    variant="secondary"
+                    className="um-profile-footer-btn"
                     onClick={closeUserModal}
-                    className="um-primary-action-btn"
                   >
                     Close
-                  </button>
+                  </Button>
                 </div>
               </div>
             )}

@@ -239,6 +239,12 @@ def _resident_match_result(registration):
         for (resident_id,) in User.query.with_entities(User.resident_id).filter(
             User.resident_id.isnot(None)
         ).all()
+    } | {
+        resident_id
+        for (resident_id,) in ResidentAccount.query.with_entities(ResidentAccount.resident_id).filter(
+            ResidentAccount.resident_id.isnot(None),
+            ResidentAccount.is_active == True,
+        ).all()
     }
     candidates = []
 
@@ -271,6 +277,19 @@ def _resident_match_result(registration):
         else:
             status = 'none'
             selected = []
+
+    # Ensure an already-linked resident on an approved request is always included with fresh match flags
+    if registration.matched_resident_id:
+        already_in_selected = any(item[2].id == registration.matched_resident_id for item in selected)
+        if not already_in_selected:
+            linked_entry = next(
+                (item for item in candidates if item[2].id == registration.matched_resident_id),
+                None,
+            )
+            if linked_entry:
+                selected = [linked_entry] + selected
+                if status == 'none':
+                    status = 'match' if linked_entry[1] else 'possible'
 
     matches = []
     for score, _, resident, flags in selected:
@@ -457,6 +476,116 @@ def get_resident_registration_matches(request_id):
     if not registration:
         return jsonify({'error': 'Registration request not found.'}), 404
     return jsonify(_resident_match_result(registration))
+
+
+@registrations_bp.route('/api/resident-registrations/<int:request_id>', methods=['PATCH'])
+@role_required('admin', 'lgu_personnel')
+def update_resident_registration(request_id):
+    registration = db.session.get(ResidentRegistrationRequest, request_id)
+    if not registration:
+        return jsonify({'error': 'Registration request not found.'}), 404
+
+    data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        return jsonify({'error': 'A JSON object is required.'}), 400
+
+    first_name = str(data.get('first_name') if 'first_name' in data else (registration.first_name or '')).strip()
+    middle_name = str(data.get('middle_name') if 'middle_name' in data else (registration.middle_name or '')).strip()
+    last_name = str(data.get('last_name') if 'last_name' in data else (registration.last_name or '')).strip()
+    birthdate_value = str(
+        data.get('birthdate')
+        if 'birthdate' in data
+        else (registration.birthdate.isoformat() if registration.birthdate else '')
+    ).strip()
+    barangay = str(data.get('barangay') if 'barangay' in data else (registration.barangay or '')).strip()
+    address = str(data.get('address') if 'address' in data else (registration.address or '')).strip()
+    contact_number = str(
+        data.get('contact_number') if 'contact_number' in data else (registration.contact_number or '')
+    ).strip()
+    email = str(data.get('email') if 'email' in data else (registration.email or '')).strip().lower()
+
+    if not first_name or not last_name:
+        return jsonify({'error': 'First name and last name are required.'}), 400
+    if any(len(part) > 100 for part in (first_name, middle_name, last_name)):
+        return jsonify({'error': 'Each name field must be 100 characters or fewer.'}), 400
+    if len(_full_name(first_name, middle_name, last_name)) > 100:
+        return jsonify({'error': 'Full name must be 100 characters or fewer.'}), 400
+    if not birthdate_value:
+        return jsonify({'error': 'Birthdate is required.'}), 400
+    try:
+        birthdate = date.fromisoformat(birthdate_value)
+    except ValueError:
+        return jsonify({'error': 'Birthdate must be a valid date in YYYY-MM-DD format.'}), 400
+    if birthdate > date.today():
+        return jsonify({'error': 'Birthdate cannot be in the future.'}), 400
+    if not barangay or len(barangay) > 100:
+        return jsonify({'error': 'Barangay is required and must be 100 characters or fewer.'}), 400
+    if len(address) > 255:
+        return jsonify({'error': 'Address or purok must be 255 characters or fewer.'}), 400
+    if not email or not _EMAIL_RE.fullmatch(email) or len(email) > 120:
+        return jsonify({'error': 'Enter a valid email address.'}), 400
+    if contact_number:
+        contact_digits = _normalize_contact(contact_number)
+        if len(contact_number) > 20 or not 7 <= len(contact_digits) <= 15:
+            return jsonify({'error': 'Enter a valid contact number.'}), 400
+
+    linked_account = _resolve_registration_account(registration) if registration.status == 'approved' else None
+    current_email = str(registration.email or '').strip().lower()
+    if email != current_email:
+        existing_user = User.query.filter(func.lower(User.email) == email).first()
+        if existing_user and (not isinstance(linked_account, User) or existing_user.id != linked_account.id):
+            return jsonify({'error': 'An account with this email already exists.'}), 409
+
+        existing_res_acct = ResidentAccount.query.filter(
+            func.lower(ResidentAccount.email) == email,
+            ResidentAccount.is_active == True,
+        ).first()
+        if existing_res_acct and (
+            not isinstance(linked_account, ResidentAccount) or existing_res_acct.id != linked_account.id
+        ):
+            return jsonify({'error': 'An account with this email already exists.'}), 409
+
+        conflict_pending = ResidentRegistrationRequest.query.filter(
+            ResidentRegistrationRequest.status == 'pending',
+            ResidentRegistrationRequest.id != registration.id,
+            func.lower(ResidentRegistrationRequest.email) == email,
+        ).first()
+        if conflict_pending:
+            return jsonify({'error': 'Another pending registration already uses this email.'}), 409
+
+    registration.first_name = first_name
+    registration.middle_name = middle_name or None
+    registration.last_name = last_name
+    registration.birthdate = birthdate
+    registration.barangay = barangay
+    registration.address = address or None
+    registration.contact_number = contact_number or None
+    registration.email = email
+
+    if linked_account is not None and str(linked_account.email or '').strip().lower() != email:
+        linked_account.email = email
+
+    editor_id = int(get_jwt_identity())
+    db.session.add(SystemLog(
+        user_id=editor_id,
+        action=f'Updated resident registration #{registration.id} ({_full_name(first_name, middle_name, last_name)})',
+    ))
+
+    try:
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        return jsonify({'error': 'Database conflict while updating registration details.'}), 409
+
+    payload = registration.to_dict()
+    payload['has_account'] = linked_account is not None
+    payload['account_email'] = linked_account.email if linked_account else None
+
+    return jsonify({
+        'message': 'Account info updated and roster match re-analyzed.',
+        'request': payload,
+        'matches': _resident_match_result(registration),
+    }), 200
 
 
 @registrations_bp.route('/api/resident-registrations/<int:request_id>/approve', methods=['POST'])

@@ -1,72 +1,90 @@
 import { useState, useMemo, useEffect, useRef } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  AlertCircle,
+  AlertTriangle,
+  Archive,
+  Building2,
+  Calendar,
+  CalendarCheck2,
+  Check,
+  CheckCircle2,
+  ChevronDown,
+  Clock,
+  Download,
+  History,
+  ListChecks,
+  Loader2,
+  MoreVertical,
+  RotateCcw,
+  Search,
+  Settings,
+  SlidersHorizontal,
+  UserPlus,
+  Users,
+  X,
+  Zap,
+} from "lucide-react";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
-  faUsers,
-  faBuildingColumns,
   faClock,
   faCheck,
-  faRotateLeft,
-  faMagnifyingGlass,
   faXmark,
   faSpinner,
-  faUserGroup,
-  faChevronDown,
-  faChevronLeft,
-  faChevronRight,
-  faListCheck,
-  faCircleCheck,
-  faCircleExclamation,
-  faFileExcel,
-  faCalendarDays,
-  faCalendarCheck,
   faGear,
   faTriangleExclamation,
   faBolt,
   faBoxArchive,
-  faEllipsisVertical,
-  faClockRotateLeft,
-  faSliders,
 } from "@fortawesome/free-solid-svg-icons";
 import { useAuth } from "../../context/AuthContext";
 import { api } from "../../services/api";
+import { Button, Pagination, StatCard, StatusPill } from "../ui";
 import "./EvacueeCheckIn.css";
 import { AddNonRegisteredButton, NonRegisteredModal, NonRegisteredGroups } from './NonRegisteredEvacuees';
 
+const URL_FILTER_TO_STATUS = {
+  "all-arrivals": "all",
+  pending: "pending",
+  "partially-arrived": "partial",
+  arrived: "checked_in",
+  "non-registered": "non_registered",
+};
+
 export default function EvacueeCheckIn() {
   const queryClient = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [selectedOperationId, setSelectedOperationId] = useState("active");
   const [selectedCenterId, setSelectedCenterId] = useState("all");
-  const [filterStatus, setFilterStatus] = useState("all"); // "all" | "pending" | "partial" | "checked_in"
   const [selectedDate] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [nonRegisteredModal, setNonRegisteredModal] = useState(null);
   const [nonRegisteredStatus, setNonRegisteredStatus] = useState('all');
   const [nonRegisteredPage, setNonRegisteredPage] = useState(1);
+
+  const rawUrlFilter = (searchParams.get("filter") || "all-arrivals").toLowerCase();
+  const activeUrlFilter = Object.hasOwn(URL_FILTER_TO_STATUS, rawUrlFilter)
+    ? rawUrlFilter
+    : "all-arrivals";
+  const filterStatus = URL_FILTER_TO_STATUS[activeUrlFilter];
+
+  const handleFilterChipChange = (nextUrlFilter) => {
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.set("filter", nextUrlFilter);
+        return next;
+      },
+      { replace: true }
+    );
+    setCurrentPage(1);
+    setNonRegisteredPage(1);
+  };
+
   const normalizedSearch = useMemo(
     () => searchQuery.trim().replace(/\s+/g, " "),
     [searchQuery]
   );
-  const [isMobileViewport, setIsMobileViewport] = useState(
-    () =>
-      typeof window !== "undefined" &&
-      typeof window.matchMedia === "function" &&
-      window.matchMedia("(max-width: 768px)").matches
-  );
-
-  useEffect(() => {
-    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
-      return undefined;
-    }
-    const mq = window.matchMedia("(max-width: 768px)");
-    const handleChange = (e) => setIsMobileViewport(e.matches);
-    if (typeof mq.addEventListener === "function") {
-      mq.addEventListener("change", handleChange);
-      return () => mq.removeEventListener("change", handleChange);
-    }
-    mq.addListener(handleChange);
-    return () => mq.removeListener(handleChange);
-  }, []);
   const [actionLoadingId, setActionLoadingId] = useState(null);
   const [toastMessage, setToastMessage] = useState(null);
 
@@ -194,9 +212,19 @@ export default function EvacueeCheckIn() {
     return null;
   };
 
-  // Close dropdown menus & filter sheet on outside click or Escape
+  // Close dropdown menus, modals & filter sheet on outside click or Escape
   useEffect(() => {
-    if (!opMenuOpen && !shelterMenuOpen && !bannerMenuOpen && openMobileRowMenuId == null && !filterSheetOpen) {
+    if (
+      !opMenuOpen &&
+      !shelterMenuOpen &&
+      !bannerMenuOpen &&
+      openMobileRowMenuId == null &&
+      !filterSheetOpen &&
+      !modalFamily &&
+      !showManageOpModal &&
+      !showNewOpModal &&
+      !showExtendModal
+    ) {
       return undefined;
     }
     const handleOutsideClick = (e) => {
@@ -214,6 +242,10 @@ export default function EvacueeCheckIn() {
         setBannerMenuOpen(false);
         setOpenMobileRowMenuId(null);
         setFilterSheetOpen(false);
+        if (modalFamily) setModalFamily(null);
+        if (showManageOpModal && !savingSchedule) setShowManageOpModal(false);
+        if (showNewOpModal && !savingSchedule) setShowNewOpModal(false);
+        if (showExtendModal && !extendingSchedule) setShowExtendModal(false);
       }
     };
     document.addEventListener("mousedown", handleOutsideClick);
@@ -222,7 +254,19 @@ export default function EvacueeCheckIn() {
       document.removeEventListener("mousedown", handleOutsideClick);
       document.removeEventListener("keydown", handleKeyDown);
     };
-  }, [opMenuOpen, shelterMenuOpen, bannerMenuOpen, openMobileRowMenuId, filterSheetOpen]);
+  }, [
+    opMenuOpen,
+    shelterMenuOpen,
+    bannerMenuOpen,
+    openMobileRowMenuId,
+    filterSheetOpen,
+    modalFamily,
+    showManageOpModal,
+    showNewOpModal,
+    showExtendModal,
+    savingSchedule,
+    extendingSchedule,
+  ]);
 
   // Open Manage Operation Modal (prefilled with current operation details)
   const handleOpenManageOpModal = () => {
@@ -394,25 +438,6 @@ export default function EvacueeCheckIn() {
   const paginatedEvacuees = useMemo(() => {
     return evacuees.slice(startIndex, endIndex);
   }, [evacuees, startIndex, endIndex]);
-
-  // Generate pagination buttons with smart ellipsis
-  const getPageNumbers = () => {
-    const pages = [];
-    if (totalPages <= 7) {
-      for (let i = 1; i <= totalPages; i++) pages.push(i);
-    } else {
-      pages.push(1);
-      if (safeCurrentPage > 3) pages.push("...");
-      const start = Math.max(2, safeCurrentPage - 1);
-      const end = Math.min(totalPages - 1, safeCurrentPage + 1);
-      for (let i = start; i <= end; i++) {
-        if (!pages.includes(i)) pages.push(i);
-      }
-      if (safeCurrentPage < totalPages - 2) pages.push("...");
-      if (!pages.includes(totalPages)) pages.push(totalPages);
-    }
-    return pages;
-  };
 
   // Show auto-dismissing toast
   const showToast = (msg) => {
@@ -658,10 +683,10 @@ export default function EvacueeCheckIn() {
   );
 
   const renderMobileOperationMenu = () => (
-    <div className="checkin-banner-mobile-actions checkin-dropdown-anchor">
+    <div className="ea-banner-mobile-actions checkin-dropdown-anchor">
       <button
         type="button"
-        className="checkin-mobile-kebab-btn checkin-banner-kebab-btn"
+        className="ea-banner-kebab-btn"
         onClick={() => {
           setOpMenuOpen(false);
           setShelterMenuOpen(false);
@@ -672,34 +697,38 @@ export default function EvacueeCheckIn() {
         aria-expanded={bannerMenuOpen}
         aria-haspopup="menu"
       >
-        <FontAwesomeIcon icon={faEllipsisVertical} />
+        <MoreVertical size={16} aria-hidden="true" />
       </button>
 
       {bannerMenuOpen && (
-        <div className="checkin-mobile-row-dropdown checkin-banner-dropdown" role="menu">
+        <div className="ea-select-menu ea-banner-mobile-menu" role="menu">
           <button
             type="button"
             role="menuitem"
-            className="checkin-mobile-row-menu-item"
+            className="ea-select-option"
             onClick={() => {
               setBannerMenuOpen(false);
               handleOpenManageOpModal();
             }}
           >
-            <FontAwesomeIcon icon={faGear} />
-            <span>Manage Operation</span>
+            <span className="ea-select-option-main">
+              <Settings size={15} aria-hidden="true" />
+              <span className="ea-select-option-name">Manage Operation</span>
+            </span>
           </button>
           <button
             type="button"
             role="menuitem"
-            className="checkin-mobile-row-menu-item is-primary"
+            className="ea-select-option is-primary"
             onClick={() => {
               setBannerMenuOpen(false);
               handleOpenNewOpModal();
             }}
           >
-            <FontAwesomeIcon icon={faBolt} />
-            <span>New Operation</span>
+            <span className="ea-select-option-main">
+              <Zap size={15} aria-hidden="true" />
+              <span className="ea-select-option-name">New Operation</span>
+            </span>
           </button>
         </div>
       )}
@@ -707,7 +736,7 @@ export default function EvacueeCheckIn() {
   );
 
   return (
-    <div className="checkin-container" role="main" aria-label="Evacuee Arrival Management">
+    <div className="checkin-container ea-page" role="main" aria-label="Evacuee Arrival Management">
       {/* Toast Alert */}
       {toastMessage && (
         <div
@@ -720,27 +749,25 @@ export default function EvacueeCheckIn() {
         </div>
       )}
 
-      {/* Page Header: Single row on desktop (Title left, compact controls right); stacked rows on mobile */}
-      <header className="checkin-header">
-        <div className="checkin-header-titles">
-          <div className="checkin-title-badge-row">
-            <h1>Evacuee Arrival</h1>
-            {!isHistorical && (
-              <span className="checkin-live-badge">
-                <span className="checkin-live-dot" /> Live
-              </span>
-            )}
-          </div>
+      {/* Page Header: Title + Live StatusPill on left; Operation select, Shelter select, Export Report on right */}
+      <header className="ea-header">
+        <div className="ea-header-left">
+          <h1 className="ea-title">Evacuee Arrival</h1>
+          {!isHistorical ? (
+            <StatusPill variant="success" label="Live" />
+          ) : (
+            <StatusPill variant="neutral" label="Archived" />
+          )}
         </div>
 
-        {/* Header Actions (Operation Selector, Shelter Filter, Export Report/Archive) */}
-        <div className="checkin-header-actions">
-          {/* Operation History Selector (Compact closed label; full name + date range in open menu) */}
-          <div className="checkin-op-dropdown-wrap checkin-dropdown-anchor">
+        {/* Header Actions (Operation Selector, Shelter Filter, Export Report) */}
+        <div className="ea-header-actions">
+          {/* Operation History Selector */}
+          <div className="ea-select-dropdown checkin-dropdown-anchor">
             <button
               type="button"
               id="checkin-operation-filter-select"
-              className="checkin-op-trigger"
+              className="ea-select-trigger"
               onClick={() => {
                 setShelterMenuOpen(false);
                 setOpMenuOpen((prev) => !prev);
@@ -754,39 +781,39 @@ export default function EvacueeCheckIn() {
                   : `Active: ${activeOpName}${activeOpDates ? ` (${activeOpDates})` : ""}`
               }
             >
-              <FontAwesomeIcon icon={faClockRotateLeft} className="checkin-pill-icon" />
-              <span className="checkin-op-trigger-label">
+              <History size={15} className="ea-select-icon" aria-hidden="true" />
+              <span className="ea-select-label">
                 {isHistorical ? archivedBannerName : `Active: ${activeOpName}`}
               </span>
-              <FontAwesomeIcon icon={faChevronDown} className="checkin-pill-arrow" />
+              <ChevronDown size={15} className="ea-select-arrow" aria-hidden="true" />
             </button>
 
             {opMenuOpen && (
-              <div className="checkin-op-dropdown-menu" role="listbox" aria-label="Evacuation operations">
+              <div className="ea-select-menu" role="listbox" aria-label="Evacuation operations">
                 <button
                   type="button"
                   role="option"
                   aria-selected={!isHistorical}
-                  className={`checkin-op-option ${!isHistorical ? "is-selected" : ""}`}
+                  className={`ea-select-option ${!isHistorical ? "is-selected" : ""}`}
                   onClick={() => {
                     setSelectedOperationId("active");
                     setCurrentPage(1);
                     setOpMenuOpen(false);
                   }}
                 >
-                  <span className="checkin-op-option-main">
-                    <span className="checkin-op-option-badge is-active">Active</span>
-                    <span className="checkin-op-option-name">{activeOpName}</span>
+                  <span className="ea-select-option-main">
+                    <StatusPill variant="success" label="Active" />
+                    <span className="ea-select-option-name">{activeOpName}</span>
                   </span>
                   {activeOpDates && (
-                    <span className="checkin-op-option-date">{activeOpDates}</span>
+                    <span className="ea-select-option-sub">{activeOpDates}</span>
                   )}
                 </button>
 
-                <div className="checkin-op-menu-divider" />
+                <div className="ea-select-divider" />
 
                 {archivedOperations.length === 0 ? (
-                  <div className="checkin-op-menu-empty" role="option" aria-disabled="true">
+                  <div className="ea-select-empty" role="option" aria-disabled="true">
                     No archived operations yet
                   </div>
                 ) : (
@@ -799,18 +826,20 @@ export default function EvacueeCheckIn() {
                         type="button"
                         role="option"
                         aria-selected={isSelected}
-                        className={`checkin-op-option ${isSelected ? "is-selected" : ""}`}
+                        className={`ea-select-option ${isSelected ? "is-selected" : ""}`}
                         onClick={() => {
                           setSelectedOperationId(String(op.id));
                           setCurrentPage(1);
                           setOpMenuOpen(false);
                         }}
                       >
-                        <span className="checkin-op-option-main">
-                          <span className="checkin-op-option-name">{op.event_name || "Archived Operation"}</span>
+                        <span className="ea-select-option-main">
+                          <span className="ea-select-option-name">
+                            {op.event_name || "Archived Operation"}
+                          </span>
                         </span>
                         {rangeLabel && (
-                          <span className="checkin-op-option-date">{rangeLabel}</span>
+                          <span className="ea-select-option-sub">{rangeLabel}</span>
                         )}
                       </button>
                     );
@@ -820,12 +849,12 @@ export default function EvacueeCheckIn() {
             )}
           </div>
 
-          {/* By-Center Filter Dropdown (Closed shows "All Shelters" or name without count; open list shows counts) */}
-          <div className="checkin-shelter-dropdown-wrap checkin-dropdown-anchor">
+          {/* By-Center Shelter Filter Dropdown */}
+          <div className="ea-select-dropdown checkin-dropdown-anchor">
             <button
               type="button"
               id="checkin-center-filter-select"
-              className="checkin-op-trigger checkin-shelter-trigger"
+              className="ea-select-trigger"
               onClick={() => {
                 setOpMenuOpen(false);
                 setShelterMenuOpen((prev) => !prev);
@@ -839,29 +868,29 @@ export default function EvacueeCheckIn() {
                   : `All Shelters (${centers.length})`
               }
             >
-              <FontAwesomeIcon icon={faBuildingColumns} className="checkin-pill-icon" />
-              <span className="checkin-op-trigger-label">
+              <Building2 size={15} className="ea-select-icon" aria-hidden="true" />
+              <span className="ea-select-label">
                 {selectedCenterObj ? selectedCenterObj.name : "All Shelters"}
               </span>
-              <FontAwesomeIcon icon={faChevronDown} className="checkin-pill-arrow" />
+              <ChevronDown size={15} className="ea-select-arrow" aria-hidden="true" />
             </button>
 
             {shelterMenuOpen && (
-              <div className="checkin-op-dropdown-menu checkin-shelter-dropdown-menu" role="listbox" aria-label="Evacuation centers">
+              <div className="ea-select-menu" role="listbox" aria-label="Evacuation centers">
                 <button
                   type="button"
                   role="option"
                   aria-selected={selectedCenterId === "all"}
-                  className={`checkin-op-option checkin-shelter-option ${selectedCenterId === "all" ? "is-selected" : ""}`}
+                  className={`ea-select-option ${selectedCenterId === "all" ? "is-selected" : ""}`}
                   onClick={() => {
                     setSelectedCenterId("all");
                     setCurrentPage(1);
                     setShelterMenuOpen(false);
                   }}
                 >
-                  <span className="checkin-op-option-main checkin-shelter-option-row">
-                    <span className="checkin-op-option-name">All Shelters</span>
-                    <span className="checkin-op-option-count">({centers.length})</span>
+                  <span className="ea-select-option-row">
+                    <span className="ea-select-option-name">All Shelters</span>
+                    <span className="ea-select-option-count">({centers.length})</span>
                   </span>
                 </button>
 
@@ -873,16 +902,16 @@ export default function EvacueeCheckIn() {
                       type="button"
                       role="option"
                       aria-selected={isSelected}
-                      className={`checkin-op-option checkin-shelter-option ${isSelected ? "is-selected" : ""}`}
+                      className={`ea-select-option ${isSelected ? "is-selected" : ""}`}
                       onClick={() => {
                         setSelectedCenterId(String(c.id));
                         setCurrentPage(1);
                         setShelterMenuOpen(false);
                       }}
                     >
-                      <span className="checkin-op-option-main checkin-shelter-option-row">
-                        <span className="checkin-op-option-name">{c.name}</span>
-                        <span className="checkin-op-option-count">
+                      <span className="ea-select-option-row">
+                        <span className="ea-select-option-name">{c.name}</span>
+                        <span className="ea-select-option-count">
                           ({c.checked_in}/{c.assigned})
                         </span>
                       </span>
@@ -893,86 +922,118 @@ export default function EvacueeCheckIn() {
             )}
           </div>
 
-          {/* Downloadable Report Button */}
-          <button
-            type="button"
-            className="checkin-export-btn"
+          {/* Secondary Export Report Button */}
+          <Button
+            variant="secondary"
+            className="ea-export-btn"
             onClick={handleExportReport}
             disabled={exportingReport}
-            aria-label={exportingReport ? "Exporting report" : isHistorical ? "Export Archive" : "Export Report"}
-            title={isHistorical ? "Download historical arrival report for this archived event" : "Download Excel arrival roster and shelter summary report"}
+            aria-label={
+              exportingReport
+                ? "Exporting report"
+                : isHistorical
+                  ? "Export Archive"
+                  : "Export Report"
+            }
+            title={
+              isHistorical
+                ? "Download historical arrival report for this archived event"
+                : "Download Excel arrival roster and shelter summary report"
+            }
           >
-            <FontAwesomeIcon icon={exportingReport ? faSpinner : faFileExcel} spin={exportingReport} />
-            <span className="checkin-export-label">
-              {exportingReport ? "Exporting..." : isHistorical ? "Export Archive" : "Export Report"}
+            <Download size={16} strokeWidth={2} aria-hidden="true" />
+            <span>
+              {exportingReport
+                ? "Exporting..."
+                : isHistorical
+                  ? "Export Archive"
+                  : "Export Report"}
             </span>
-          </button>
+          </Button>
         </div>
       </header>
 
-      {/* Unified Single Operational Banner */}
-      <div className={`checkin-banner ${isHistorical ? "is-archive" : isWindowExpired ? "is-expired" : !isScheduleConfigured ? "is-unscheduled" : isCenterClosed ? "is-closed" : "is-active"}`}>
+      {/* Operation Banner Card (--radius-lg, 1px border, --shadow-xs) */}
+      <section
+        className={`ea-op-banner ${
+          isHistorical
+            ? "is-archive"
+            : isWindowExpired
+              ? "is-expired"
+              : !isScheduleConfigured
+                ? "is-unscheduled"
+                : isCenterClosed
+                  ? "is-closed"
+                  : "is-active"
+        }`}
+        aria-label="Evacuation operation status"
+      >
         {isHistorical ? (
-          // State 1: Historical Archive Mode (Single clean row on desktop & mobile)
-          <div className="checkin-banner-inner">
-            <div className="checkin-banner-left">
-              <div className="checkin-banner-icon archive">
-                <FontAwesomeIcon icon={faBoxArchive} />
-              </div>
-              <div className="checkin-banner-details">
-                <span className="checkin-banner-title">
-                  Viewing archived: <strong>{archivedBannerName}</strong>
-                  {archivedBannerDates ? (
-                    <span className="checkin-hide-mobile">{` · ${archivedBannerDates}`}</span>
-                  ) : null}
-                </span>
+          // State 1: Historical Archive Mode
+          <div className="ea-op-banner-inner">
+            <div className="ea-op-banner-left">
+              <span className="ea-op-icon-tile is-neutral" aria-hidden="true">
+                <Archive size={18} strokeWidth={2} />
+              </span>
+              <div className="ea-op-banner-copy">
+                <div className="ea-op-title-row">
+                  <span className="ea-op-name">Viewing archived: {archivedBannerName}</span>
+                  <StatusPill variant="neutral" label="Archived record" />
+                </div>
+                <div className="ea-op-meta">
+                  {archivedBannerDates && (
+                    <>
+                      <span>{archivedBannerDates}</span>
+                      <span className="ea-op-dot" aria-hidden="true">•</span>
+                    </>
+                  )}
+                  <span>Read-only historical arrival records</span>
+                </div>
               </div>
             </div>
-            <div className="checkin-banner-actions">
-              <button
-                type="button"
-                className="checkin-banner-btn primary"
+            <div className="ea-op-banner-actions">
+              <Button
+                variant="primary"
+                className="ea-op-btn"
                 onClick={() => {
                   setSelectedOperationId("active");
                   setCurrentPage(1);
                 }}
                 title="Return to the current active evacuation operation"
               >
-                <FontAwesomeIcon icon={faRotateLeft} />
-                <span className="checkin-hide-mobile">Back to active operation</span>
-                <span className="checkin-show-mobile">Back</span>
-              </button>
+                <RotateCcw size={15} strokeWidth={2} aria-hidden="true" />
+                <span>Back to active operation</span>
+              </Button>
             </div>
           </div>
         ) : !isScheduleConfigured ? (
           // State 2: No Schedule Configured
-          <div className="checkin-banner-inner">
-            <div className="checkin-banner-left">
-              <div className="checkin-banner-icon info">
-                <FontAwesomeIcon icon={faCalendarDays} />
-              </div>
-              <span className="checkin-banner-mobile-dot standby" aria-hidden="true" />
-              <div className="checkin-banner-details">
-                <div className="checkin-banner-title-row">
-                  <span className="checkin-banner-title">No Evacuation Schedule Configured</span>
-                  <span className="checkin-banner-pill standby">Standby</span>
+          <div className="ea-op-banner-inner">
+            <div className="ea-op-banner-left">
+              <span className="ea-op-icon-tile is-warn" aria-hidden="true">
+                <Calendar size={18} strokeWidth={2} />
+              </span>
+              <div className="ea-op-banner-copy">
+                <div className="ea-op-title-row">
+                  <span className="ea-op-name">No Evacuation Schedule Configured</span>
+                  <StatusPill variant="pending" label="Standby" />
                 </div>
-                <div className="checkin-banner-meta">
+                <div className="ea-op-meta">
                   <span>Set an opening date and arrival deadline to record resident arrivals.</span>
                 </div>
               </div>
             </div>
             {isAdmin && (
               <>
-                <div className="checkin-banner-actions">
-                  <button
-                    type="button"
-                    className="checkin-banner-btn primary"
+                <div className="ea-op-banner-actions">
+                  <Button
+                    variant="primary"
+                    className="ea-op-btn"
                     onClick={handleOpenManageOpModal}
                   >
-                    <FontAwesomeIcon icon={faCalendarDays} />
+                    <Calendar size={15} strokeWidth={2} aria-hidden="true" />
                     <span>Set Evacuation Date</span>
-                  </button>
+                  </Button>
                 </div>
                 {renderMobileOperationMenu()}
               </>
@@ -980,45 +1041,43 @@ export default function EvacueeCheckIn() {
           </div>
         ) : isCenterClosed ? (
           // State 3: Shelter Closed
-          <div className="checkin-banner-inner">
-            <div className="checkin-banner-left">
-              <div className="checkin-banner-icon neutral">
-                <FontAwesomeIcon icon={faTriangleExclamation} />
-              </div>
-              <span className="checkin-banner-mobile-dot closed" aria-hidden="true" />
-              <div className="checkin-banner-details">
-                <div className="checkin-banner-title-row">
-                  <span className="checkin-banner-title">
-                    <span className="checkin-hide-mobile">Evacuation Closed / Concluded — </span>
-                    <strong>{effectiveSchedule?.evacuation_event_name || "Evacuation"}</strong>
+          <div className="ea-op-banner-inner">
+            <div className="ea-op-banner-left">
+              <span className="ea-op-icon-tile is-neutral" aria-hidden="true">
+                <AlertTriangle size={18} strokeWidth={2} />
+              </span>
+              <div className="ea-op-banner-copy">
+                <div className="ea-op-title-row">
+                  <span className="ea-op-name">
+                    Evacuation Closed / Concluded — {effectiveSchedule?.evacuation_event_name || "Evacuation"}
                   </span>
-                  <span className="checkin-banner-pill closed">Closed / Stand Down</span>
+                  <StatusPill variant="neutral" label="Closed / Stand Down" />
                 </div>
-                <div className="checkin-banner-meta">
+                <div className="ea-op-meta">
                   <span>Shelters have concluded operations and are currently standing down. Check-in is paused.</span>
                 </div>
               </div>
             </div>
             {isAdmin && (
               <>
-                <div className="checkin-banner-actions">
-                  <button
-                    type="button"
-                    className="checkin-banner-btn secondary"
+                <div className="ea-op-banner-actions">
+                  <Button
+                    variant="secondary"
+                    className="ea-op-btn"
                     onClick={handleOpenManageOpModal}
                   >
-                    <FontAwesomeIcon icon={faRotateLeft} />
+                    <RotateCcw size={15} strokeWidth={2} aria-hidden="true" />
                     <span>Reopen Operation</span>
-                  </button>
-                  <button
-                    type="button"
-                    className="checkin-banner-btn primary"
+                  </Button>
+                  <Button
+                    variant="primary"
+                    className="ea-op-btn"
                     onClick={handleOpenNewOpModal}
                     title="Start a new evacuation operation for a new disaster event"
                   >
-                    <FontAwesomeIcon icon={faBolt} />
+                    <Zap size={15} strokeWidth={2} aria-hidden="true" />
                     <span>Start New Evacuation</span>
-                  </button>
+                  </Button>
                 </div>
                 {renderMobileOperationMenu()}
               </>
@@ -1026,216 +1085,206 @@ export default function EvacueeCheckIn() {
           </div>
         ) : (
           // State 4: Active Live Operation (24/7 Arrivals)
-          <div className="checkin-banner-inner">
-            <div className="checkin-banner-left">
-              <div className="checkin-banner-icon live">
-                <FontAwesomeIcon icon={faCalendarCheck} />
-              </div>
-              <span className="checkin-banner-mobile-dot live" aria-hidden="true" />
-              <div className="checkin-banner-details">
-                <div className="checkin-banner-title-row">
-                  <span className="checkin-banner-title">
-                    <strong>{effectiveSchedule?.evacuation_event_name || "General Municipality Evacuation"}</strong>
+          <div className="ea-op-banner-inner">
+            <div className="ea-op-banner-left">
+              <span className="ea-op-icon-tile is-success" aria-hidden="true">
+                <CalendarCheck2 size={18} strokeWidth={2} />
+              </span>
+              <div className="ea-op-banner-copy">
+                <div className="ea-op-title-row">
+                  <span className="ea-op-name">
+                    {effectiveSchedule?.evacuation_event_name || "General Municipality Evacuation"}
                   </span>
-                  <span className="checkin-banner-pill open">
-                    <span className="checkin-live-dot" style={{ width: 6, height: 6 }} />
-                    Open for Evacuation (24/7)
-                  </span>
+                  <StatusPill variant="success" label="Open for evacuation (24/7)" />
                 </div>
-                <div className="checkin-banner-meta">
+                <div className="ea-op-meta">
                   <span>
-                    Started: {effectiveSchedule?.evacuation_open_date ? new Date(effectiveSchedule.evacuation_open_date + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "Today"}
+                    Started:{" "}
+                    {effectiveSchedule?.evacuation_open_date
+                      ? new Date(
+                          effectiveSchedule.evacuation_open_date + "T00:00:00"
+                        ).toLocaleDateString(undefined, {
+                          month: "short",
+                          day: "numeric",
+                          year: "numeric",
+                        })
+                      : "Today"}
                   </span>
-                  <span className="checkin-banner-dot">•</span>
-                  <span>Scope: {selectedCenterId !== "all" ? centers.find((c) => String(c.id) === String(selectedCenterId))?.name || "Selected Center" : "All Shelters"}</span>
-                  <span className="checkin-banner-dot">•</span>
+                  <span className="ea-op-dot" aria-hidden="true">•</span>
+                  <span>
+                    Scope:{" "}
+                    {selectedCenterId !== "all"
+                      ? centers.find((c) => String(c.id) === String(selectedCenterId))?.name ||
+                        "Selected Center"
+                      : "All Shelters"}
+                  </span>
+                  <span className="ea-op-dot" aria-hidden="true">•</span>
                   <span>Arrival recording active 24/7</span>
                 </div>
               </div>
             </div>
             {isAdmin && (
               <>
-                <div className="checkin-banner-actions">
-                  <button
-                    type="button"
-                    className="checkin-banner-btn secondary"
+                <div className="ea-op-banner-actions">
+                  <Button
+                    variant="secondary"
+                    className="ea-op-btn"
                     onClick={handleOpenManageOpModal}
                     title="Edit operation parameters or conclude/archive"
                   >
-                    <FontAwesomeIcon icon={faGear} />
+                    <Settings size={15} strokeWidth={2} aria-hidden="true" />
                     <span>Manage Operation</span>
-                  </button>
-                  <button
-                    type="button"
-                    className="checkin-banner-btn primary"
+                  </Button>
+                  <Button
+                    variant="primary"
+                    className="ea-op-btn"
                     onClick={handleOpenNewOpModal}
                     title="Start a fresh evacuation operation for a new disaster event"
                   >
-                    <FontAwesomeIcon icon={faBolt} />
+                    <Zap size={15} strokeWidth={2} aria-hidden="true" />
                     <span>New Operation</span>
-                  </button>
+                  </Button>
                 </div>
                 {renderMobileOperationMenu()}
               </>
             )}
           </div>
         )}
-      </div>
-
-      {/* Interactive KPI Stat Cards (Click to Filter by Status) */}
-      <section className="stat-card-grid cols-4" role="group" aria-label="Filter list by arrival status">
-        {/* Total Assigned */}
-        <button
-          type="button"
-          className={`stat-card is-clickable is-neutral ${filterStatus === "all" ? "is-selected" : ""}`}
-          onClick={() => {
-            setFilterStatus("all");
-            setCurrentPage(1);
-          }}
-          aria-pressed={filterStatus === "all"}
-        >
-          <div className="stat-card-content">
-            <span className="stat-card-label">Total Assigned</span>
-            <strong className="stat-card-value">{summary.total_assigned}</strong>
-            <span className="stat-card-hint">All assigned evacuees</span>
-          </div>
-          <span className="stat-card-icon stat-card-icon--neutral" aria-hidden="true">
-            <FontAwesomeIcon icon={faUserGroup} />
-          </span>
-        </button>
-
-        {/* Fully Arrived */}
-        <button
-          type="button"
-          className={`stat-card is-clickable is-resolved ${filterStatus === "checked_in" ? "is-selected" : ""}`}
-          onClick={() => {
-            setFilterStatus("checked_in");
-            setCurrentPage(1);
-          }}
-          aria-pressed={filterStatus === "checked_in"}
-        >
-          <div className="stat-card-content">
-            <span className="stat-card-label">Fully Arrived</span>
-            <strong className="stat-card-value">{summary.total_checked_in}</strong>
-            <span className="stat-card-hint">All family members arrived</span>
-          </div>
-          <span className="stat-card-icon stat-card-icon--resolved" aria-hidden="true">
-            <FontAwesomeIcon icon={faCircleCheck} />
-          </span>
-        </button>
-
-        {/* Partially Arrived */}
-        <button
-          type="button"
-          className={`stat-card is-clickable is-warning ${filterStatus === "partial" ? "is-selected" : ""}`}
-          onClick={() => {
-            setFilterStatus("partial");
-            setCurrentPage(1);
-          }}
-          aria-pressed={filterStatus === "partial"}
-        >
-          <div className="stat-card-content">
-            <span className="stat-card-label">Partially Arrived</span>
-            <strong className="stat-card-value">{summary.total_partial || 0}</strong>
-            <span className="stat-card-hint">Some family members arrived</span>
-          </div>
-          <span className="stat-card-icon stat-card-icon--warning" aria-hidden="true">
-            <FontAwesomeIcon icon={faClock} />
-          </span>
-        </button>
-
-        {/* Pending Arrival */}
-        <button
-          type="button"
-          className={`stat-card is-clickable is-pending ${filterStatus === "pending" ? "is-selected" : ""}`}
-          onClick={() => {
-            setFilterStatus("pending");
-            setCurrentPage(1);
-          }}
-          aria-pressed={filterStatus === "pending"}
-        >
-          <div className="stat-card-content">
-            <span className="stat-card-label">Pending Arrival</span>
-            <strong className="stat-card-value">{summary.total_pending}</strong>
-            <span className="stat-card-hint">No family members arrived</span>
-          </div>
-          <span className="stat-card-icon stat-card-icon--pending" aria-hidden="true">
-            <FontAwesomeIcon icon={faCircleExclamation} />
-          </span>
-        </button>
-        <button type="button" className={`stat-card is-clickable is-neutral ${filterStatus === 'non_registered' ? 'is-selected' : ''}`}
-          aria-pressed={filterStatus === 'non_registered'} onClick={() => { setFilterStatus('non_registered'); setNonRegisteredPage(1); }}>
-          <div className="stat-card-content"><span className="stat-card-label">Non-registered</span>
-            <strong className="stat-card-value">{nonRegisteredQuery.data?.summary?.people ?? '—'}</strong>
-            <span className="stat-card-hint">{nonRegisteredQuery.data?.summary?.groups ?? 0} groups · {nonRegisteredQuery.data?.summary?.present ?? 0} on-site</span>
-          </div><span className="stat-card-icon stat-card-icon--neutral" aria-hidden="true"><FontAwesomeIcon icon={faUsers} /></span>
-        </button>
       </section>
 
-      {/* Full-Width Search Toolbar (+ Mobile Shelter Filters Button) */}
-      <section className="checkin-controls-card" aria-label="Search evacuees">
-        <div className="checkin-search-wrap">
-          <FontAwesomeIcon icon={faMagnifyingGlass} className="checkin-search-icon" />
+      {/* 5 Clickable StatCards in One Row (Filter by Arrival Status) */}
+      {isLoading ? (
+        <div className="ea-stats-grid" aria-hidden="true">
+          {Array.from({ length: 5 }).map((_, idx) => (
+            <div key={idx} className="ea-skel-stat-card">
+              <div className="ea-skel-stat-top">
+                <span className="ea-skel ea-skel-tile" />
+                <span className="ea-skel ea-skel-label" />
+              </div>
+              <span className="ea-skel ea-skel-value" />
+              <span className="ea-skel ea-skel-helper" />
+            </div>
+          ))}
+        </div>
+      ) : (
+        <section className="ea-stats-grid" role="group" aria-label="Filter arrivals by status">
+          <StatCard
+            icon={Users}
+            iconTone="primary"
+            label="Total assigned"
+            value={summary.total_assigned}
+            showProgress={false}
+            helper="All assigned evacuees"
+            active={activeUrlFilter === "all-arrivals"}
+            onClick={() => handleFilterChipChange("all-arrivals")}
+          />
+          <StatCard
+            icon={CheckCircle2}
+            tint="success"
+            label="Fully arrived"
+            value={summary.total_checked_in}
+            showProgress={false}
+            helper="All family members arrived"
+            active={activeUrlFilter === "arrived"}
+            onClick={() => handleFilterChipChange("arrived")}
+          />
+          <StatCard
+            icon={Clock}
+            tint="warn"
+            label="Partially arrived"
+            value={summary.total_partial || 0}
+            showProgress={false}
+            helper="Some family members arrived"
+            active={activeUrlFilter === "partially-arrived"}
+            onClick={() => handleFilterChipChange("partially-arrived")}
+          />
+          <StatCard
+            icon={AlertCircle}
+            iconTone="primary"
+            valueTone="primary"
+            label="Pending arrival"
+            value={summary.total_pending}
+            showProgress={false}
+            helper="No family members arrived"
+            active={activeUrlFilter === "pending"}
+            onClick={() => handleFilterChipChange("pending")}
+          />
+          <StatCard
+            icon={UserPlus}
+            iconTone="neutral"
+            label="Non-registered"
+            value={nonRegisteredQuery.data?.summary?.people ?? "—"}
+            showProgress={false}
+            helper={`${nonRegisteredQuery.data?.summary?.groups ?? 0} groups · ${nonRegisteredQuery.data?.summary?.present ?? 0} on-site`}
+            active={activeUrlFilter === "non-registered"}
+            onClick={() => handleFilterChipChange("non-registered")}
+          />
+        </section>
+      )}
+
+      {/* Sticky Single-Row Toolbar: Search + "+ Add non-registered" Button */}
+      <section className="ea-toolbar-row" aria-label="Search evacuee arrivals">
+        <div className="ea-search-field">
+          <Search size={16} className="ea-search-icon" aria-hidden="true" />
           <input
-            type="text"
-            className="checkin-search-input"
-            placeholder={
-              isMobileViewport
-                ? "Search name or code"
-                : "Search by name or family code"
-            }
+            type="search"
+            className="ea-search-input"
+            placeholder="Search by name or family code"
             value={searchQuery}
             onChange={(e) => {
               setSearchQuery(e.target.value);
               setCurrentPage(1);
               setNonRegisteredPage(1);
             }}
-            aria-label="Search evacuees"
+            aria-label="Search by name or family code"
           />
           {searchQuery && (
             <button
               type="button"
-              className="checkin-search-clear"
+              className="ea-search-clear"
               onClick={() => {
                 setSearchQuery("");
                 setCurrentPage(1);
+                setNonRegisteredPage(1);
               }}
+              aria-label="Clear search"
               title="Clear search"
             >
-              <FontAwesomeIcon icon={faXmark} />
+              <X size={14} aria-hidden="true" />
             </button>
           )}
         </div>
 
-        <div className="nre-filter-chips" role="group" aria-label="Arrival records">
-          <button type="button" aria-pressed={filterStatus === 'all'} onClick={() => setFilterStatus('all')}>All arrivals</button>
-          <button type="button" aria-pressed={filterStatus === 'non_registered'} onClick={() => setFilterStatus('non_registered')}>Non-registered</button>
+        <div className="ea-toolbar-actions">
+          <AddNonRegisteredButton
+            disabled={!canAddNonRegistered}
+            onClick={() => setNonRegisteredModal({ kind: "choose" })}
+          />
+          <button
+            type="button"
+            className={`ea-mobile-filter-btn ${selectedCenterId !== "all" ? "has-active" : ""}`}
+            onClick={() => {
+              setOpMenuOpen(false);
+              setBannerMenuOpen(false);
+              setOpenMobileRowMenuId(null);
+              setDraftCenterId(selectedCenterId);
+              setFilterSheetOpen(true);
+            }}
+            aria-haspopup="dialog"
+            aria-expanded={filterSheetOpen}
+            aria-label={
+              selectedCenterId !== "all"
+                ? "Filter by shelter (shelter selected)"
+                : "Filter by shelter"
+            }
+          >
+            <SlidersHorizontal size={15} aria-hidden="true" />
+            <span>Filters</span>
+            {selectedCenterId !== "all" && (
+              <span className="ea-filter-dot" aria-hidden="true" />
+            )}
+          </button>
         </div>
-        <AddNonRegisteredButton disabled={!canAddNonRegistered} onClick={() => setNonRegisteredModal({ kind: 'choose' })} />
-        <button
-          type="button"
-          className={`checkin-mobile-filter-btn ${selectedCenterId !== "all" ? "has-active" : ""}`}
-          onClick={() => {
-            setOpMenuOpen(false);
-            setBannerMenuOpen(false);
-            setOpenMobileRowMenuId(null);
-            setDraftCenterId(selectedCenterId);
-            setFilterSheetOpen(true);
-          }}
-          aria-haspopup="dialog"
-          aria-expanded={filterSheetOpen}
-          aria-label={
-            selectedCenterId !== "all"
-              ? "Filter by shelter (shelter selected)"
-              : "Filter by shelter"
-          }
-        >
-          <FontAwesomeIcon icon={faSliders} />
-          <span>Filters</span>
-          {selectedCenterId !== "all" && (
-            <span className="checkin-filter-dot" aria-hidden="true" />
-          )}
-        </button>
       </section>
 
       {centers.filter((center) => (selectedCenterId === 'all' || String(center.id) === String(selectedCenterId)) && center.capacity_warning).map((center) =>
@@ -1245,26 +1294,85 @@ export default function EvacueeCheckIn() {
       {nonRegisteredModal && <NonRegisteredModal mode={nonRegisteredModal} centers={centers} centerId={selectedCenterId}
         operation={selectedArrivalOperation} onClose={() => setNonRegisteredModal(null)} onSaved={refreshArrivals} />}
 
-      {/* Evacuee List Section */}
-      <section className="checkin-table-card" aria-label="Evacuee arrival list">
-        {filterStatus === 'non_registered' ? null : isLoading ? (
-          <div className="checkin-loading-spinner" role="status">
-            <FontAwesomeIcon icon={faSpinner} spin />
-            <span>Loading assigned evacuees...</span>
+      {/* Evacuee Arrival Table Card (--radius-xl) */}
+      <section className="ea-table-card" aria-label="Evacuee arrival list">
+        {filterStatus === "non_registered" ? null : isLoading ? (
+          <div className="ea-table-wrap" role="status" aria-label="Loading assigned families">
+            <table className="ea-table">
+              <thead>
+                <tr>
+                  <th scope="col">FAMILY</th>
+                  <th scope="col">ORIGIN BARANGAY</th>
+                  <th scope="col">ASSIGNED SHELTER</th>
+                  <th scope="col">FAMILY MEMBERS</th>
+                  <th scope="col">STATUS</th>
+                  <th scope="col" className="ea-th-action">STAFF ACTION</th>
+                </tr>
+              </thead>
+              <tbody>
+                {Array.from({ length: 6 }).map((_, idx) => (
+                  <tr key={idx} className="ea-skel-row" aria-hidden="true">
+                    <td>
+                      <div className="ea-family-cell">
+                        <span className="ea-skel ea-skel-avatar" />
+                        <div className="ea-skel-stack">
+                          <span className="ea-skel ea-skel-name" />
+                          <span className="ea-skel ea-skel-phone" />
+                        </div>
+                      </div>
+                    </td>
+                    <td>
+                      <div className="ea-skel-stack">
+                        <span className="ea-skel ea-skel-brgy" />
+                        <span className="ea-skel ea-skel-purok" />
+                      </div>
+                    </td>
+                    <td>
+                      <div className="ea-skel-stack">
+                        <span className="ea-skel ea-skel-shelter" />
+                        <span className="ea-skel ea-skel-room" />
+                      </div>
+                    </td>
+                    <td>
+                      <span className="ea-skel ea-skel-members" />
+                    </td>
+                    <td>
+                      <span className="ea-skel ea-skel-status" />
+                    </td>
+                    <td className="ea-td-action">
+                      <div className="ea-action-group">
+                        <span className="ea-skel ea-skel-btn" />
+                        <span className="ea-skel ea-skel-icon-btn" />
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         ) : error ? (
-          <div className="checkin-empty-state">
-            <div className="checkin-empty-icon">!</div>
-            <h3 className="checkin-empty-title">Error Loading Evacuees</h3>
-            <p className="checkin-empty-text">{error.message || "Failed to load arrival data."}</p>
+          <div className="ea-state-box" role="alert">
+            <span className="ea-state-icon is-error" aria-hidden="true">
+              <AlertTriangle size={22} />
+            </span>
+            <h3>Unable to load evacuee arrivals</h3>
+            <p>{error.message || "Failed to load arrival data."}</p>
+            <Button
+              variant="secondary"
+              onClick={() =>
+                queryClient.invalidateQueries({ queryKey: ["evacuee-check-in-list"] })
+              }
+            >
+              Try again
+            </Button>
           </div>
         ) : evacuees.length === 0 ? (
-          <div className="checkin-empty-state">
-            <div className="checkin-empty-icon">
-              <FontAwesomeIcon icon={faUsers} />
-            </div>
-            <h3 className="checkin-empty-title">No Evacuees Found</h3>
-            <p className="checkin-empty-text">
+          <div className="ea-state-box">
+            <span className="ea-state-icon" aria-hidden="true">
+              <Users size={22} />
+            </span>
+            <h3>No families found</h3>
+            <p>
               {searchQuery
                 ? `No matching families found for "${searchQuery}".`
                 : filterStatus === "pending"
@@ -1273,21 +1381,24 @@ export default function EvacueeCheckIn() {
                     ? "No families have partial arrivals right now."
                     : "No families match the current filters."}
             </p>
-            <AddNonRegisteredButton disabled={!canAddNonRegistered} onClick={() => setNonRegisteredModal({ kind: 'choose' })} />
+            <AddNonRegisteredButton
+              disabled={!canAddNonRegistered}
+              onClick={() => setNonRegisteredModal({ kind: "choose" })}
+            />
           </div>
         ) : (
           <>
             {/* Desktop & Tablet Table View */}
-            <div className="checkin-table-wrap">
-              <table className="checkin-table">
+            <div className="ea-table-wrap">
+              <table className="ea-table">
                 <thead>
                   <tr>
-                    <th scope="col" className="col-household">Family</th>
-                    <th scope="col" className="col-barangay">Origin Barangay</th>
-                    <th scope="col" className="col-center">Assigned Shelter</th>
-                    <th scope="col" className="col-members">Family Members</th>
-                    <th scope="col" className="col-status checkin-th-status">STATUS</th>
-                    <th scope="col" className="col-action">Staff Action</th>
+                    <th scope="col">FAMILY</th>
+                    <th scope="col">ORIGIN BARANGAY</th>
+                    <th scope="col">ASSIGNED SHELTER</th>
+                    <th scope="col">FAMILY MEMBERS</th>
+                    <th scope="col">STATUS</th>
+                    <th scope="col" className="ea-th-action">STAFF ACTION</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1296,209 +1407,219 @@ export default function EvacueeCheckIn() {
                     const state = evacuee.checkin_state || "none";
                     const isFullyArrived = state === "full";
                     const isPartiallyArrived = state === "partial";
+                    const roomBadge = formatRoomBadge(
+                      evacuee.building_name,
+                      evacuee.room_number,
+                      getEvacueeStructureMode(evacuee)
+                    );
+                    const purokOrAddress = evacuee.purok || evacuee.address || "";
 
                     return (
-                      <tr key={`${evacuee.family_id}-${evacuee.center_id}`}>
-                        {/* Household Head info */}
-                        <td className="col-household">
-                          <div className="checkin-user-cell">
-                            <div className="checkin-avatar" aria-hidden="true">
+                      <tr key={`${evacuee.family_id}-${evacuee.center_id}`} className="ea-table-row">
+                        {/* FAMILY */}
+                        <td>
+                          <div className="ea-family-cell">
+                            <span className="ea-avatar" aria-hidden="true">
                               {getInitials(evacuee.head_name)}
-                            </div>
-                            <div className="checkin-user-text">
-                              <span className="checkin-user-name">{evacuee.head_name}</span>
-                              {evacuee.contact_number && (
-                                <span className="checkin-contact-num">{evacuee.contact_number}</span>
-                              )}
+                            </span>
+                            <div className="ea-family-stack">
+                              <span className="ea-family-name">{evacuee.head_name}</span>
+                              <span
+                                className={`ea-family-phone ${
+                                  !evacuee.contact_number ? "is-missing" : ""
+                                }`}
+                              >
+                                {evacuee.contact_number || "Not provided"}
+                              </span>
                             </div>
                           </div>
                         </td>
 
-                        {/* Origin Barangay */}
-                        <td className="col-barangay">
-                          <div className="checkin-barangay-cell">
-                            <span className="checkin-barangay-name">
-                              {evacuee.barangay_name}
+                        {/* ORIGIN BARANGAY */}
+                        <td>
+                          <div className="ea-brgy-stack">
+                            <span className="ea-brgy-name">
+                              {evacuee.barangay_name || "—"}
                             </span>
-                            {evacuee.address && (
-                              <span className="checkin-address-text">
-                                {evacuee.address}
-                              </span>
+                            {purokOrAddress && (
+                              <span className="ea-brgy-purok">{purokOrAddress}</span>
                             )}
                           </div>
                         </td>
 
-                        {/* Center & Room */}
-                        <td className="col-center">
-                          <div className="checkin-center-cell">
-                            <span className="checkin-center-name">
-                              {evacuee.center_name}
-                            </span>
-                            {(() => {
-                              const mode = getEvacueeStructureMode(evacuee);
-                              const badge = formatRoomBadge(
-                                evacuee.building_name,
-                                evacuee.room_number,
-                                mode
-                              );
-                              return badge ? (
-                                <div>
-                                  <span className="checkin-room-badge is-assigned">
-                                    <span>{badge}</span>
-                                  </span>
-                                </div>
-                              ) : null;
-                            })()}
+                        {/* ASSIGNED SHELTER */}
+                        <td>
+                          <div className="ea-shelter-stack">
+                            <span className="ea-shelter-name">{evacuee.center_name}</span>
+                            {roomBadge && (
+                              <div>
+                                <span className="ea-room-chip">{roomBadge}</span>
+                              </div>
+                            )}
                           </div>
                         </td>
 
-                        {/* Family members & tags */}
-                        <td className="col-members">
-                          <div className="checkin-members-cell">
-                            <div className="checkin-members-row">
+                        {/* FAMILY MEMBERS */}
+                        <td>
+                          <div className="ea-members-stack">
+                            <div>
                               <button
                                 type="button"
-                                className="checkin-members-chip-btn"
+                                className="ea-members-chip"
                                 onClick={() => handleOpenMemberModal(evacuee)}
-                                title={evacuee.special_needs?.length ? `Tags: ${evacuee.special_needs.join(", ")} (click to view family roster)` : "Click to view family roster"}
+                                title={
+                                  evacuee.special_needs?.length
+                                    ? `Tags: ${evacuee.special_needs.join(", ")} (click to view family roster)`
+                                    : "Click to view family roster"
+                                }
                               >
-                                <FontAwesomeIcon icon={faUsers} />
+                                <Users size={13} strokeWidth={2} aria-hidden="true" />
                                 <span>
-                                  {evacuee.member_count} {evacuee.member_count === 1 ? "person" : "people"}
+                                  {evacuee.member_count}{" "}
+                                  {evacuee.member_count === 1 ? "person" : "people"}
                                 </span>
                                 {evacuee.checked_in_members > 0 && (
-                                  <span className={`checkin-members-here-pill ${isFullyArrived ? "full" : "partial"}`}>
+                                  <span className="ea-members-here-badge">
                                     {evacuee.checked_in_members} here
                                   </span>
                                 )}
                               </button>
-                              {evacuee.special_needs?.length > 0 && (
-                                <span
-                                  className="checkin-tags-muted-hint"
-                                  title={`Special Needs: ${evacuee.special_needs.join(", ")}`}
-                                >
-                                  +{evacuee.special_needs.length} {evacuee.special_needs.length === 1 ? "tag" : "tags"}
-                                </span>
-                              )}
                             </div>
-                          </div>
-                        </td>
-
-                        {/* Arrival Status */}
-                        <td className="col-status">
-                          <div className="checkin-status-cell">
-                            {isFullyArrived ? (
+                            {evacuee.special_needs?.length > 0 && (
                               <span
-                                className="checkin-status-badge checkin-status-badge--available"
-                                title={evacuee.checked_in_at ? `Arrival: ${evacuee.checked_in_at_formatted || evacuee.checked_in_at}` : undefined}
+                                className="ea-members-tags"
+                                title={`Special Needs: ${evacuee.special_needs.join(", ")}`}
                               >
-                                <span className="checkin-status-dot" aria-hidden="true" />
-                                <span>Arrived</span>
-                              </span>
-                            ) : isPartiallyArrived ? (
-                              <span className="checkin-status-badge checkin-status-badge--near-full">
-                                <span className="checkin-status-dot" aria-hidden="true" />
-                                <span>{evacuee.checked_in_members} of {evacuee.member_count} Here</span>
-                              </span>
-                            ) : (
-                              <span className="checkin-status-badge checkin-status-badge--unmapped">
-                                <span className="checkin-status-dot" aria-hidden="true" />
-                                <span>Pending</span>
+                                +{evacuee.special_needs.length}{" "}
+                                {evacuee.special_needs.length === 1 ? "tag" : "tags"}
                               </span>
                             )}
                           </div>
                         </td>
 
-                        {/* Action Buttons (Sticky right) */}
-                        <td className="col-action">
-                          <div className="checkin-action-group">
+                        {/* STATUS */}
+                        <td>
+                          {isFullyArrived ? (
+                            <StatusPill
+                              variant="arrived"
+                              title={
+                                evacuee.checked_in_at
+                                  ? `Arrival: ${
+                                      evacuee.checked_in_at_formatted || evacuee.checked_in_at
+                                    }`
+                                  : undefined
+                              }
+                            />
+                          ) : isPartiallyArrived ? (
+                            <StatusPill
+                              variant="partial"
+                              label={`${evacuee.checked_in_members} of ${evacuee.member_count} Here`}
+                            />
+                          ) : (
+                            <StatusPill variant="pending-arrival" />
+                          )}
+                        </td>
+
+                        {/* STAFF ACTION */}
+                        <td className="ea-td-action">
+                          <div className="ea-action-group">
                             {isHistorical ? (
-                              <button
-                                type="button"
-                                className="checkin-action-btn btn-view-roster"
+                              <Button
+                                variant="secondary"
+                                className="ea-action-btn"
                                 onClick={() => handleOpenMemberModal(evacuee)}
                                 title="View archived arrival details and family roster"
                                 aria-label={`View roster for ${evacuee.head_name}`}
                               >
-                                <FontAwesomeIcon icon={faListCheck} />
-                                <span>View Roster</span>
-                              </button>
+                                <ListChecks size={15} strokeWidth={2} aria-hidden="true" />
+                                <span>View roster</span>
+                              </Button>
                             ) : isFullyArrived ? (
                               <>
-                                <button
-                                  type="button"
-                                  className="checkin-action-btn btn-undo"
+                                <Button
+                                  variant="secondary"
+                                  className="ea-action-btn"
                                   onClick={() => handleQuickUndo(evacuee)}
                                   disabled={isRowLoading}
                                   title="Undo arrival for this family"
                                   aria-label={`Undo arrival for ${evacuee.head_name}`}
                                 >
                                   {isRowLoading ? (
-                                    <FontAwesomeIcon icon={faSpinner} spin />
+                                    <Loader2 size={15} className="ea-spin" aria-hidden="true" />
                                   ) : (
-                                    <FontAwesomeIcon icon={faRotateLeft} />
+                                    <RotateCcw size={15} strokeWidth={2} aria-hidden="true" />
                                   )}
                                   <span>Undo</span>
-                                </button>
+                                </Button>
                                 <button
                                   type="button"
-                                  className="checkin-action-btn btn-icon-only"
+                                  className="ea-manage-icon-btn"
                                   onClick={() => handleOpenMemberModal(evacuee)}
-                                  title="Manage individual member presence"
-                                  aria-label="Manage individual members"
+                                  title="Manage individual family members"
+                                  aria-label="Manage family members"
                                 >
-                                  <FontAwesomeIcon icon={faListCheck} />
+                                  <ListChecks size={16} strokeWidth={2} aria-hidden="true" />
                                 </button>
                               </>
                             ) : isPartiallyArrived ? (
                               <>
-                                <button
-                                  type="button"
-                                  className="checkin-action-btn btn-manage"
-                                  onClick={() => handleOpenMemberModal(evacuee)}
-                                  disabled={isRowLoading}
-                                  title="Manage or mark remaining family members as arrived"
-                                  aria-label={`Manage members for ${evacuee.head_name}`}
-                                >
-                                  <FontAwesomeIcon icon={faListCheck} />
-                                  <span>Manage ({evacuee.checked_in_members}/{evacuee.member_count})</span>
-                                </button>
-                                <button
-                                  type="button"
-                                  className="checkin-action-btn btn-icon-only green"
+                                <Button
+                                  variant="primary"
+                                  className="ea-action-btn"
                                   onClick={() => handleQuickCheckInAll(evacuee)}
                                   disabled={isRowLoading || !canCheckIn}
-                                  title={getCheckInDisabledReason(evacuee) || "Mark all remaining members arrived"}
-                                  aria-label="Mark all arrived"
+                                  title={
+                                    getCheckInDisabledReason(evacuee) ||
+                                    "Mark all remaining family members as arrived"
+                                  }
+                                  aria-label={`Mark all arrived for ${evacuee.head_name}`}
                                 >
-                                  <FontAwesomeIcon icon={faCheck} />
+                                  {isRowLoading ? (
+                                    <Loader2 size={15} className="ea-spin" aria-hidden="true" />
+                                  ) : (
+                                    <Check size={15} strokeWidth={2.2} aria-hidden="true" />
+                                  )}
+                                  <span>Mark all arrived</span>
+                                </Button>
+                                <button
+                                  type="button"
+                                  className="ea-manage-icon-btn"
+                                  onClick={() => handleOpenMemberModal(evacuee)}
+                                  disabled={isRowLoading}
+                                  title={`Manage family members (${evacuee.checked_in_members}/${evacuee.member_count} here)`}
+                                  aria-label="Manage family members"
+                                >
+                                  <ListChecks size={16} strokeWidth={2} aria-hidden="true" />
                                 </button>
                               </>
                             ) : (
                               <>
-                                <button
-                                  type="button"
-                                  className={`checkin-action-btn btn-arrive ${!canCheckIn ? "is-disabled" : ""}`}
+                                <Button
+                                  variant="primary"
+                                  className="ea-action-btn"
                                   onClick={() => handleQuickCheckInAll(evacuee)}
                                   disabled={isRowLoading || !canCheckIn}
-                                  title={getCheckInDisabledReason(evacuee) || "Mark all members of this family as arrived"}
-                                  aria-label={`Mark all as arrived for ${evacuee.head_name}`}
+                                  title={
+                                    getCheckInDisabledReason(evacuee) ||
+                                    "Mark all members of this family as arrived"
+                                  }
+                                  aria-label={`Mark all arrived for ${evacuee.head_name}`}
                                 >
                                   {isRowLoading ? (
-                                    <FontAwesomeIcon icon={faSpinner} spin />
+                                    <Loader2 size={15} className="ea-spin" aria-hidden="true" />
                                   ) : (
-                                    <FontAwesomeIcon icon={faCheck} />
+                                    <Check size={15} strokeWidth={2.2} aria-hidden="true" />
                                   )}
-                                  <span>Mark All Arrived</span>
-                                </button>
+                                  <span>Mark all arrived</span>
+                                </Button>
                                 <button
                                   type="button"
-                                  className="checkin-action-btn btn-icon-only"
+                                  className="ea-manage-icon-btn"
                                   onClick={() => handleOpenMemberModal(evacuee)}
                                   title="Mark specific family members as arrived"
-                                  aria-label="Mark specific members as arrived"
+                                  aria-label="Manage family members"
                                 >
-                                  <FontAwesomeIcon icon={faListCheck} />
+                                  <ListChecks size={16} strokeWidth={2} aria-hidden="true" />
                                 </button>
                               </>
                             )}
@@ -1512,7 +1633,7 @@ export default function EvacueeCheckIn() {
             </div>
 
             {/* Mobile Compact Cards View (Visible on viewports <= 768px) */}
-            <div className="checkin-mobile-cards-wrap">
+            <div className="ea-mobile-cards-wrap">
               {paginatedEvacuees.map((evacuee) => {
                 const isRowLoading = actionLoadingId === evacuee.family_id;
                 const state = evacuee.checkin_state || "none";
@@ -1523,88 +1644,69 @@ export default function EvacueeCheckIn() {
                 const mobileShelterLine = formatMobileShelterLine(evacuee);
 
                 return (
-                  <article
-                    key={`mob-${rowMenuKey}`}
-                    className="checkin-mobile-card"
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => {
-                      setOpenMobileRowMenuId(null);
-                      handleOpenMemberModal(evacuee);
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) {
-                        e.preventDefault();
-                        setOpenMobileRowMenuId(null);
-                        handleOpenMemberModal(evacuee);
-                      }
-                    }}
-                  >
-                    {/* Row 1: Head Name + Status Pill + Three-Dot Menu */}
-                    <div className="checkin-mobile-card-line1">
-                      <div className="checkin-mobile-name-wrap">
-                        <span className="checkin-user-name">{evacuee.head_name}</span>
-                      </div>
-
-                      <div
-                        className="checkin-mobile-right-controls checkin-mobile-menu-anchor"
-                        onClick={(e) => e.stopPropagation()}
+                  <article key={`mob-${rowMenuKey}`} className="ea-mobile-card">
+                    <div className="ea-mobile-card-line1">
+                      <button
+                        type="button"
+                        className="ea-mobile-name-btn"
+                        onClick={() => {
+                          setOpenMobileRowMenuId(null);
+                          handleOpenMemberModal(evacuee);
+                        }}
                       >
+                        <span className="ea-family-name">{evacuee.head_name}</span>
+                      </button>
+
+                      <div className="ea-mobile-right-controls checkin-mobile-menu-anchor">
                         {isFullyArrived ? (
-                          <span className="checkin-status-badge checkin-status-badge--available">
-                            <span className="checkin-status-dot" aria-hidden="true" />
-                            <span>Arrived</span>
-                          </span>
+                          <StatusPill variant="arrived" />
                         ) : isPartiallyArrived ? (
-                          <span className="checkin-status-badge checkin-status-badge--near-full">
-                            <span className="checkin-status-dot" aria-hidden="true" />
-                            <span>{evacuee.checked_in_members}/{evacuee.member_count} Here</span>
-                          </span>
+                          <StatusPill
+                            variant="partial"
+                            label={`${evacuee.checked_in_members}/${evacuee.member_count} Here`}
+                          />
                         ) : (
-                          <span className="checkin-status-badge checkin-status-badge--unmapped">
-                            <span className="checkin-status-dot" aria-hidden="true" />
-                            <span>Pending</span>
-                          </span>
+                          <StatusPill variant="pending-arrival" />
                         )}
 
                         <button
                           type="button"
-                          className="checkin-mobile-kebab-btn"
+                          className="ea-manage-icon-btn"
                           onClick={(e) => {
                             e.stopPropagation();
                             setOpMenuOpen(false);
                             setBannerMenuOpen(false);
-                            setOpenMobileRowMenuId((prev) => (prev === rowMenuKey ? null : rowMenuKey));
+                            setOpenMobileRowMenuId((prev) =>
+                              prev === rowMenuKey ? null : rowMenuKey
+                            );
                           }}
                           aria-label={`Actions for ${evacuee.head_name}`}
                           aria-expanded={isMenuOpen}
                           aria-haspopup="menu"
                         >
                           {isRowLoading ? (
-                            <FontAwesomeIcon icon={faSpinner} spin />
+                            <Loader2 size={15} className="ea-spin" aria-hidden="true" />
                           ) : (
-                            <FontAwesomeIcon icon={faEllipsisVertical} />
+                            <MoreVertical size={16} aria-hidden="true" />
                           )}
                         </button>
 
                         {isMenuOpen && (
-                          <div
-                            className="checkin-mobile-row-dropdown"
-                            role="menu"
-                            onClick={(e) => e.stopPropagation()}
-                          >
+                          <div className="ea-select-menu ea-mobile-row-menu" role="menu">
                             {isHistorical ? (
                               <button
                                 type="button"
                                 role="menuitem"
-                                className="checkin-mobile-row-menu-item"
+                                className="ea-select-option"
                                 onClick={() => {
                                   setOpenMobileRowMenuId(null);
                                   handleOpenMemberModal(evacuee);
                                 }}
                               >
-                                <FontAwesomeIcon icon={faListCheck} />
-                                <span>View Roster</span>
+                                <span className="ea-select-option-main">
+                                  <ListChecks size={15} aria-hidden="true" />
+                                  <span>View roster</span>
+                                </span>
                               </button>
                             ) : (
                               <>
@@ -1612,7 +1714,7 @@ export default function EvacueeCheckIn() {
                                   <button
                                     type="button"
                                     role="menuitem"
-                                    className="checkin-mobile-row-menu-item is-primary"
+                                    className="ea-select-option is-primary"
                                     disabled={isRowLoading || !canCheckIn}
                                     title={getCheckInDisabledReason(evacuee) || undefined}
                                     onClick={() => {
@@ -1620,39 +1722,41 @@ export default function EvacueeCheckIn() {
                                       handleQuickCheckInAll(evacuee);
                                     }}
                                   >
-                                    <FontAwesomeIcon icon={faCheck} />
-                                    <span>Mark All Arrived</span>
+                                    <span className="ea-select-option-main">
+                                      <Check size={15} aria-hidden="true" />
+                                      <span>Mark all arrived</span>
+                                    </span>
                                   </button>
                                 )}
                                 <button
                                   type="button"
                                   role="menuitem"
-                                  className="checkin-mobile-row-menu-item"
+                                  className="ea-select-option"
                                   onClick={() => {
                                     setOpenMobileRowMenuId(null);
                                     handleOpenMemberModal(evacuee);
                                   }}
                                 >
-                                  <FontAwesomeIcon icon={faListCheck} />
-                                  <span>
-                                    {isPartiallyArrived
-                                      ? `Manage (${evacuee.checked_in_members}/${evacuee.member_count})`
-                                      : "Manage"}
+                                  <span className="ea-select-option-main">
+                                    <ListChecks size={15} aria-hidden="true" />
+                                    <span>Manage family members</span>
                                   </span>
                                 </button>
                                 {(isFullyArrived || isPartiallyArrived) && (
                                   <button
                                     type="button"
                                     role="menuitem"
-                                    className="checkin-mobile-row-menu-item is-danger"
+                                    className="ea-select-option"
                                     disabled={isRowLoading}
                                     onClick={() => {
                                       setOpenMobileRowMenuId(null);
                                       handleQuickUndo(evacuee);
                                     }}
                                   >
-                                    <FontAwesomeIcon icon={faRotateLeft} />
-                                    <span>Undo</span>
+                                    <span className="ea-select-option-main">
+                                      <RotateCcw size={15} aria-hidden="true" />
+                                      <span>Undo</span>
+                                    </span>
                                   </button>
                                 )}
                               </>
@@ -1662,48 +1766,40 @@ export default function EvacueeCheckIn() {
                       </div>
                     </div>
 
-                    {/* Row 2: Barangay & Member Count */}
-                    <div className="checkin-mobile-card-line2">
+                    <div className="ea-mobile-card-line2">
                       {evacuee.barangay_name && (
                         <>
                           <span>{evacuee.barangay_name}</span>
-                          <span className="checkin-sep">·</span>
+                          <span aria-hidden="true">·</span>
                         </>
                       )}
                       <span>
-                        {evacuee.member_count} {evacuee.member_count === 1 ? "person" : "people"}
+                        {evacuee.member_count}{" "}
+                        {evacuee.member_count === 1 ? "person" : "people"}
                       </span>
                     </div>
 
-                    {/* Row 3: Shelter & Room */}
                     {mobileShelterLine && (
-                      <div className="checkin-mobile-card-line3">
-                        {mobileShelterLine}
-                      </div>
+                      <div className="ea-mobile-card-line3">{mobileShelterLine}</div>
                     )}
                   </article>
                 );
               })}
             </div>
 
-            {/* Pagination Controls Bar */}
+            {/* Pagination Footer */}
             {totalCount > 0 && (
-              <footer className="checkin-pagination-bar" aria-label="Evacuee list pagination">
-                <div className="checkin-pagination-info">
-                  <span className="checkin-hide-mobile">
-                    Showing <strong>{startIndex + 1}</strong> to <strong>{endIndex}</strong> of{" "}
-                    <strong>{totalCount}</strong>
-                  </span>
-                  <span className="checkin-show-mobile">
-                    {startIndex + 1}-{endIndex} of {totalCount}
-                  </span>
+              <footer className="ea-table-footer" aria-label="Evacuee list pagination">
+                <div className="ea-footer-info">
+                  Showing <strong>{startIndex + 1}</strong> to <strong>{endIndex}</strong> of{" "}
+                  <strong>{totalCount}</strong>
                 </div>
 
-                <div className="checkin-pagination-actions">
-                  <div className="checkin-pagesize-wrap">
-                    <span className="checkin-pagesize-label">Rows:</span>
+                <div className="ea-footer-controls">
+                  <label className="ea-rows-per-page">
+                    <span>Rows:</span>
                     <select
-                      className="checkin-pagesize-select"
+                      className="ea-rows-select"
                       value={pageSize}
                       onChange={(e) => {
                         setPageSize(Number(e.target.value));
@@ -1716,58 +1812,13 @@ export default function EvacueeCheckIn() {
                       <option value={50}>50</option>
                       <option value={100}>100</option>
                     </select>
-                  </div>
+                  </label>
 
-                  <nav className="checkin-page-nav" aria-label="Page navigation">
-                    <button
-                      type="button"
-                      className="checkin-page-btn nav-text-btn"
-                      disabled={safeCurrentPage <= 1}
-                      onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-                      aria-label="Go to previous page"
-                    >
-                      <FontAwesomeIcon icon={faChevronLeft} />
-                      <span>Previous</span>
-                    </button>
-
-                    <span className="checkin-mobile-page-indicator checkin-show-mobile">
-                      Page {safeCurrentPage} of {totalPages}
-                    </span>
-
-                    {totalPages > 1 && (
-                      <div className="checkin-page-numbers">
-                        {getPageNumbers().map((item, idx) =>
-                          item === "..." ? (
-                            <span key={`dots-${idx}`} className="checkin-page-dots" aria-hidden="true">
-                              …
-                            </span>
-                          ) : (
-                            <button
-                              key={`page-${item}`}
-                              type="button"
-                              className={`checkin-page-btn ${item === safeCurrentPage ? "active" : ""}`}
-                              onClick={() => setCurrentPage(item)}
-                              aria-current={item === safeCurrentPage ? "page" : undefined}
-                              aria-label={`Page ${item}`}
-                            >
-                              {item}
-                            </button>
-                          )
-                        )}
-                      </div>
-                    )}
-
-                    <button
-                      type="button"
-                      className="checkin-page-btn nav-text-btn"
-                      disabled={safeCurrentPage >= totalPages}
-                      onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-                      aria-label="Go to next page"
-                    >
-                      <span>Next</span>
-                      <FontAwesomeIcon icon={faChevronRight} />
-                    </button>
-                  </nav>
+                  <Pagination
+                    currentPage={safeCurrentPage}
+                    totalPages={totalPages}
+                    onPageChange={(nextPage) => setCurrentPage(nextPage)}
+                  />
                 </div>
               </footer>
             )}
@@ -1899,7 +1950,7 @@ export default function EvacueeCheckIn() {
                   );
                 })
               ) : (
-                <div style={{ padding: "24px", textAlign: "center", color: "#64748b" }}>
+                <div className="ea-modal-empty-members">
                   No individual member records found.
                 </div>
               )}
@@ -2457,12 +2508,21 @@ export default function EvacueeCheckIn() {
 
       {/* Quick Extension Modal */}
       {showExtendModal && (
-        <div className="checkin-modal-backdrop" onClick={() => !extendingSchedule && setShowExtendModal(false)}>
-          <div className="checkin-modal-card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: "480px" }}>
+        <div
+          className="checkin-modal-backdrop"
+          onClick={() => !extendingSchedule && setShowExtendModal(false)}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="extend-modal-title"
+        >
+          <div
+            className="checkin-modal-card ea-extend-modal"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="checkin-modal-header">
               <div className="checkin-modal-title-wrap">
-                <FontAwesomeIcon icon={faClock} style={{ color: "var(--brand, #2563eb)", fontSize: "18px" }} />
-                <h3>Extend Evacuation Arrival Window</h3>
+                <FontAwesomeIcon icon={faClock} className="ea-extend-icon" />
+                <h3 id="extend-modal-title">Extend Evacuation Arrival Window</h3>
               </div>
               <button
                 type="button"
@@ -2475,8 +2535,8 @@ export default function EvacueeCheckIn() {
               </button>
             </div>
 
-            <div className="checkin-modal-body" style={{ padding: "18px 22px" }}>
-              <p style={{ fontSize: "13px", color: "var(--muted, #64748b)", margin: "0 0 16px" }}>
+            <div className="checkin-modal-body ea-extend-body">
+              <p className="ea-extend-desc">
                 Prolong the allowed arrival window for evacuees. Once extended, arrival controls will immediately reactivate so staff can continue recording arrivals.
               </p>
 
@@ -2509,7 +2569,7 @@ export default function EvacueeCheckIn() {
               </div>
 
               {extendHoursOption === "custom" && (
-                <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: "10px", marginTop: "12px" }}>
+                <div className="ea-extend-custom-grid">
                   <div className="checkin-form-group">
                     <label className="checkin-form-label">New Cutoff Date</label>
                     <input
@@ -2531,7 +2591,7 @@ export default function EvacueeCheckIn() {
                 </div>
               )}
 
-              <div className="checkin-modal-footer" style={{ marginTop: "20px" }}>
+              <div className="checkin-modal-footer ea-extend-footer">
                 <button
                   type="button"
                   className="checkin-modal-btn is-secondary"
@@ -2546,7 +2606,7 @@ export default function EvacueeCheckIn() {
                   onClick={() => handleExtendSchedule()}
                   disabled={extendingSchedule}
                 >
-                  {extendingSchedule && <FontAwesomeIcon icon={faSpinner} spin style={{ marginRight: "6px" }} />}
+                  {extendingSchedule && <FontAwesomeIcon icon={faSpinner} spin className="ea-spin-gap" />}
                   {extendingSchedule ? "Extending Deadline..." : "Confirm Extension"}
                 </button>
               </div>

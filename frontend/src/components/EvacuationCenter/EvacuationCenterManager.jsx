@@ -118,7 +118,7 @@ export default function EvacuationCenterManager({
     if (!selectedCenter) return undefined;
     const frameId = window.requestAnimationFrame(() => window.scrollTo(0, 0));
     return () => window.cancelAnimationFrame(frameId);
-  }, [roomDetail?.id, selectedCenter?.id]);
+  }, [routeBuildingId, routeRoomId, roomDetail?.id, selectedCenter?.id]);
   const roomFamiliesQuery = useRoomFamilies(
     routeRoomId || (selectedRoom?.id && selectedRoom?.id !== "all" ? selectedRoom.id : null)
   );
@@ -289,6 +289,8 @@ export default function EvacuationCenterManager({
       queryClient.invalidateQueries({ queryKey: ["evacuation-centers"] }),
       queryClient.invalidateQueries({ queryKey: ["evacuation-center-details"] }),
       queryClient.invalidateQueries({ queryKey: ["barangay-centers"] }),
+      queryClient.invalidateQueries({ queryKey: ["buildings"] }),
+      queryClient.invalidateQueries({ queryKey: ["building-details"] }),
       queryClient.invalidateQueries({ queryKey: ["rooms"] }),
       queryClient.invalidateQueries({ queryKey: ["room-families"] }),
     ]);
@@ -508,10 +510,12 @@ export default function EvacuationCenterManager({
   }
 
   function openEditRoomModal(room) {
+    const spaces = Number(room.people_spaces ?? room.capacity ?? 25);
+    const derivedSlots = Math.max(1, Math.ceil(spaces / 5));
     setRoomForm({
       room_number: room.room_number || "",
-      family_slots: String(room.family_slots ?? 5),
-      people_spaces: String(room.people_spaces ?? room.capacity ?? 25),
+      family_slots: String(derivedSlots),
+      people_spaces: String(spaces),
       building_id: room.building_id != null ? String(room.building_id) : "",
       floor: room.floor != null ? String(room.floor) : "",
     });
@@ -526,14 +530,12 @@ export default function EvacuationCenterManager({
       setError("Room number is required.");
       return;
     }
-    if (!Number.isInteger(Number(roomForm.family_slots)) || Number(roomForm.family_slots) < 1) {
-      setError("Family slots must be a whole number of at least 1.");
-      return;
-    }
-    if (!Number.isInteger(Number(roomForm.people_spaces)) || Number(roomForm.people_spaces) < 1) {
+    const parsedPeopleSpaces = Number(roomForm.people_spaces);
+    if (!Number.isInteger(parsedPeopleSpaces) || parsedPeopleSpaces < 1) {
       setError("People spaces must be a whole number of at least 1.");
       return;
     }
+    const computedFamilySlots = Math.ceil(parsedPeopleSpaces / 5);
 
     setSavingRoom(true);
     setError("");
@@ -542,8 +544,8 @@ export default function EvacuationCenterManager({
       const parsedBuildingId = roomForm.building_id !== "" ? Number(roomForm.building_id) : null;
       const payload = {
         room_number: roomForm.room_number.trim(),
-        family_slots: Number(roomForm.family_slots),
-        people_spaces: Number(roomForm.people_spaces),
+        family_slots: computedFamilySlots,
+        people_spaces: parsedPeopleSpaces,
         building_id: parsedBuildingId,
       };
 
@@ -696,6 +698,7 @@ export default function EvacuationCenterManager({
         const cId = selectedCenter?.id || selectedCenter?.properties?.id;
         const refreshCenterStructure = () => Promise.all([
           queryClient.invalidateQueries({ queryKey: queryKeys.buildings(cId) }),
+          queryClient.invalidateQueries({ queryKey: ["building-details"] }),
           queryClient.invalidateQueries({ queryKey: queryKeys.rooms(cId) }),
           queryClient.invalidateQueries({ queryKey: ["evacuation-centers"] }),
           queryClient.invalidateQueries({ queryKey: ["evacuation-center-details"] }),
@@ -735,7 +738,13 @@ export default function EvacuationCenterManager({
           if (selectedRoom?.id === room.id) {
             setSelectedRoom(null);
           }
-          await loadCenterRooms(selectedCenter.id);
+          await Promise.all([
+            queryClient.invalidateQueries({ queryKey: queryKeys.rooms(selectedCenter.id) }),
+            queryClient.invalidateQueries({ queryKey: queryKeys.buildings(selectedCenter.id) }),
+            queryClient.invalidateQueries({ queryKey: ["building-details"] }),
+            queryClient.invalidateQueries({ queryKey: queryKeys.centerDetails(selectedCenter.id) }),
+            queryClient.invalidateQueries({ queryKey: ["evacuation-centers"] }),
+          ]);
         } catch (err) {
           setError(err.message || "Failed to delete room.");
         }
@@ -1126,8 +1135,8 @@ export default function EvacuationCenterManager({
             building={routedBuilding}
             rooms={centerRooms}
             families={allCenterFamilies}
-            loading={centerBuildingsQuery.isLoading || centerRoomsQuery.isLoading || centerDetailsQuery.isLoading}
-            notFound={!centerBuildingsQuery.isLoading && !centerRoomsQuery.isLoading && !centerDetailsQuery.isLoading && !routedBuilding}
+            loading={centerBuildingsQuery.isPending || centerRoomsQuery.isPending || centerDetailsQuery.isPending}
+            notFound={!centerBuildingsQuery.isPending && !centerBuildingsQuery.isFetching && !routedBuilding}
             listHref={centersListHref}
             centerHref={centerStructureHref}
             onAddRoom={() => routedBuilding && openAddRoomForBuilding(routedBuilding)}
@@ -1155,6 +1164,7 @@ export default function EvacuationCenterManager({
               else navigate(centerStructureHref);
             }}
             onBackToList={() => navigate(centersListHref)}
+            listHref={centersListHref}
             centerHref={centerStructureHref}
             onOpenBuilding={(building) => navigate(buildingDetailHref(building.id))}
             onAddHousehold={() => openAssignModal(routedRoom || roomDetail)}

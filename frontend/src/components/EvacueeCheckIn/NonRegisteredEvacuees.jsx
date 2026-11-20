@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { Plus } from 'lucide-react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faPlus, faXmark, faSpinner } from '@fortawesome/free-solid-svg-icons';
 import { api } from '../../services/api';
@@ -18,11 +19,19 @@ const ageFromBirthdate = (value) => {
   return age >= 0 ? age : '';
 };
 
-export function AddNonRegisteredButton({ disabled, onClick }) {
-  return <button type="button" className="nre-add-button" onClick={onClick} disabled={disabled}
-    title={disabled ? 'Select an operation first' : 'Record people arriving without an assignment'}>
-    <FontAwesomeIcon icon={faPlus} aria-hidden="true" /> Add non-registered
-  </button>;
+export function AddNonRegisteredButton({ disabled, onClick, className = '' }) {
+  return (
+    <button
+      type="button"
+      className={`ui-btn ui-btn--primary ea-add-nre-btn nre-add-button ${className}`.trim()}
+      onClick={onClick}
+      disabled={disabled}
+      title={disabled ? 'Select an operation first' : 'Record people arriving without an assignment'}
+    >
+      <Plus size={16} strokeWidth={2.2} aria-hidden="true" />
+      <span>Add non-registered</span>
+    </button>
+  );
 }
 
 function PersonFields({ person, index, update, remove, operationId, fields, prefix, compact, legendText }) {

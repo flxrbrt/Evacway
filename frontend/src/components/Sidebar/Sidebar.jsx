@@ -542,7 +542,7 @@ function Sidebar({
 
         <div className="sidebar-mobile-right">
           <NotificationCenter onSelect={onSelectNotification} />
-          
+
           <div className="sidebar-mobile-profile-wrap">
             <button
               ref={mobileProfileTriggerRef}
@@ -654,7 +654,7 @@ function Sidebar({
                       <FontAwesomeIcon icon={item.icon} />
                       <span>{item.label}</span>
                       {showBadge && (
-                          <span className="sidebar-tab-badge" aria-label={badgeDescription}>
+                        <span className="sidebar-tab-badge" aria-label={badgeDescription}>
                           {badgeCount}
                         </span>
                       )}
@@ -759,7 +759,7 @@ function Sidebar({
                       <FontAwesomeIcon icon={item.icon} />
                       <span>{item.label}</span>
                       {showBadge && (
-                          <span className="sidebar-tab-badge" aria-label={badgeDescription}>
+                        <span className="sidebar-tab-badge" aria-label={badgeDescription}>
                           {badgeCount}
                         </span>
                       )}

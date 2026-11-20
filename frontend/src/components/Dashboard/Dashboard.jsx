@@ -1,30 +1,23 @@
 import { useMemo, useState, useEffect, useCallback, useRef } from "react";
-import { useNavigate } from "react-router-dom";
-import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { Link, useNavigate } from "react-router-dom";
 import {
-  faArrowsRotate,
-  faArrowRight,
-  faChevronLeft,
-  faChevronRight,
-  faCircleCheck,
-  faUserCheck,
-  faPersonWalking,
-  faDoorOpen,
-  faClock,
-  faHouseFlag,
-  faLifeRing,
-  faLocationDot,
-  faPeopleGroup,
-  faTriangleExclamation,
-  faUsers,
-  faMapLocationDot,
-  faChartPie,
-  faShieldHalved,
-  faMagnifyingGlass,
-  faBell,
-  faXmark,
-  faSpinner,
-} from "@fortawesome/free-solid-svg-icons";
+  AlertTriangle,
+  ArrowRight,
+  Bell,
+  Building2,
+  CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
+  Clock,
+  DoorOpen,
+  LifeBuoy,
+  Loader2,
+  MapPin,
+  RefreshCw,
+  Search,
+  UserCheck,
+  X,
+} from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 import { api } from "../../services/api";
 import { useQuery } from "@tanstack/react-query";
@@ -35,7 +28,7 @@ import {
   useHazardReports,
   useRescueRequests,
 } from "../../hooks/useEvacuationQueries";
-import LoadingState from "../LoadingState/LoadingState";
+import { Button, ProgressBar, SectionHeader, SegmentedControl, StatCard } from "../ui";
 import Sidebar from "../Sidebar/Sidebar";
 import { useIsMobile } from "../../hooks/useIsMobile";
 import "./Dashboard.css";
@@ -74,200 +67,23 @@ function percentage(value, total) {
   return total > 0 ? Math.round((value / total) * 100) : 0;
 }
 
-function formatTimeAgo(dateString) {
-  if (!dateString) return "Recently";
-  const date = new Date(dateString);
-  const now = new Date();
-  const diffInMinutes = Math.floor((now - date) / (1000 * 60));
-  if (diffInMinutes < 1) return "Just now";
-  if (diffInMinutes < 60) return `${diffInMinutes}m ago`;
-  const diffInHours = Math.floor(diffInMinutes / 60);
-  if (diffInHours < 24) return `${diffInHours}h ago`;
-  const diffInDays = Math.floor(diffInHours / 24);
-  return `${diffInDays}d ago`;
-}
-
-function getReadinessStatus({
-  openRescueCount = 0,
-  totalCapacity = 0,
-  totalAssignedPeople = 0,
-  unassignedFamilies = 0,
-  pendingHazardCount = 0,
-  pendingArrivalFamilies = 0,
+/* -------------------------------------------------------------
+   CENTER ARRIVAL & CAPACITY MATRIX (2-COLUMN GRID)
+   ------------------------------------------------------------- */
+function CenterArrivalList({
+  centers = [],
+  basePath = "/admin",
+  isLoading = false,
+  error = null,
+  onRetry,
 }) {
-  const totalRemaining = Math.max(0, totalCapacity - totalAssignedPeople);
-  const isCapacityLow = totalCapacity > 0 && totalRemaining / totalCapacity < 0.1;
-
-  if (openRescueCount > 0 || isCapacityLow) {
-    const reasons = [];
-    if (openRescueCount > 0) {
-      reasons.push(`${openRescueCount} open rescue request${openRescueCount > 1 ? "s" : ""}`);
-    }
-    if (isCapacityLow) {
-      const remainingPercent = Math.round((totalRemaining / totalCapacity) * 100);
-      reasons.push(`Remaining shelter capacity below 10% (${remainingPercent}%)`);
-    }
-    return {
-      status: "action_needed",
-      label: "Critical Action Needed",
-      badgeClass: "ds-badge ds-badge--danger",
-      dotColor: "bg-red-500",
-      barColor: "bg-red-500",
-      reason: reasons.join(", "),
-    };
-  }
-
-  if (unassignedFamilies > 0 || pendingHazardCount > 0 || pendingArrivalFamilies > 0) {
-    const reasons = [];
-    if (pendingArrivalFamilies > 0) {
-      reasons.push(`${formatCount(pendingArrivalFamilies)} family arrival${pendingArrivalFamilies > 1 ? "s" : ""} pending`);
-    }
-    if (unassignedFamilies > 0) {
-      reasons.push(`${formatCount(unassignedFamilies)} unassigned family${unassignedFamilies > 1 ? "s" : ""}`);
-    }
-    if (pendingHazardCount > 0) {
-      reasons.push(`${pendingHazardCount} pending hazard report${pendingHazardCount > 1 ? "s" : ""}`);
-    }
-    return {
-      status: "monitoring",
-      label: "Active Monitoring",
-      badgeClass: "ds-badge ds-badge--warning",
-      dotColor: "bg-amber-500",
-      barColor: "bg-amber-500",
-      reason: reasons.join(", "),
-    };
-  }
-
-  return {
-    status: "ready",
-    label: "All Shelters Ready",
-    badgeClass: "ds-badge ds-badge--success",
-    dotColor: "bg-emerald-500",
-    barColor: "bg-emerald-500",
-    reason: "All assigned evacuees verified on site & within headroom",
-  };
-}
-
-/* -------------------------------------------------------------
-   SVG CIRCULAR RADIAL GAUGE
-   ------------------------------------------------------------- */
-function CircularRadialGauge({ percent = 0, strokeColor = "#10b981", label = "Arrived", size = 104 }) {
-  const radius = 40;
-  const circumference = 2 * Math.PI * radius;
-  const clamped = Math.min(100, Math.max(0, percent));
-  const offset = circumference - (clamped / 100) * circumference;
-
-  return (
-    <div
-      className="relative shrink-0 flex items-center justify-center"
-      style={{ width: size, height: size }}
-    >
-      <svg className="size-full dashboard-donut-ring" viewBox="0 0 100 100">
-        <circle
-          cx="50"
-          cy="50"
-          r={radius}
-          fill="none"
-          stroke="#e2e8f0"
-          strokeWidth="8"
-        />
-        <circle
-          cx="50"
-          cy="50"
-          r={radius}
-          fill="none"
-          stroke={strokeColor}
-          strokeWidth="8"
-          strokeLinecap="round"
-          strokeDasharray={circumference}
-          strokeDashoffset={offset}
-          className="dashboard-gauge-arc"
-        />
-      </svg>
-      <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
-        <span className="dashboard-mono text-lg font-black text-slate-900 leading-none">
-          {clamped}%
-        </span>
-        <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider mt-1">
-          {label}
-        </span>
-      </div>
-    </div>
-  );
-}
-
-/* -------------------------------------------------------------
-   SLICK EXECUTIVE KPI CARD
-   ------------------------------------------------------------- */
-function ExecutiveKpiCard({
-  title,
-  value,
-  subtext,
-  icon,
-  isEmergency = false,
-  trendText,
-  trendType = "neutral",
-  onClick,
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 text-left flex flex-col justify-between group cursor-pointer w-full focus:outline-none focus:ring-2 focus:ring-blue-500/40 hover:border-slate-300 hover:shadow-[var(--shadow-md)] transition"
-    >
-      <div>
-        <div className="flex items-center justify-between gap-2">
-          <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">
-            {title}
-          </span>
-          <span
-            className={`grid size-9 shrink-0 place-items-center rounded-xl transition-transform duration-200 group-hover:scale-105 ${isEmergency ? "bg-red-50 text-red-600" : "bg-slate-100 text-slate-600"
-              }`}
-          >
-            <FontAwesomeIcon icon={icon} className="text-sm" />
-          </span>
-        </div>
-
-        <p className="dashboard-mono mt-2 text-2xl sm:text-3xl font-black text-slate-900 tracking-tight">
-          {formatCount(value)}
-        </p>
-      </div>
-
-      <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between gap-2 text-xs">
-        <span className="text-slate-500 font-medium whitespace-normal leading-tight">
-          {subtext}
-        </span>
-        {trendText && (
-          <span
-            className={`dashboard-mono text-[11px] font-semibold shrink-0 px-2 py-0.5 rounded-full ${trendType === "danger"
-              ? "bg-red-50 text-red-700 border border-red-200"
-              : trendType === "warning"
-                ? "bg-amber-50 text-amber-700 border border-amber-200"
-                : trendType === "success"
-                  ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                  : "bg-slate-100 text-slate-600 border border-slate-200"
-              }`}
-          >
-            {trendText}
-          </span>
-        )}
-      </div>
-    </button>
-  );
-}
-
-/* -------------------------------------------------------------
-   CENTER ARRIVAL & CAPACITY MATRIX (SIMPLE BARS LIST)
-   ------------------------------------------------------------- */
-function CenterArrivalList({ centers = [], onSelectCenter, onManageFacilities }) {
-  const [searchQuery, setSearchQuery] = useState("");
   const [tooltip, setTooltip] = useState(null);
 
-  const handleShowTooltip = (center, element) => {
+  const handleShowTooltip = useCallback((center, element) => {
     if (!element) return;
     const rect = element.getBoundingClientRect();
-    const width = 230;
-    const height = 48;
+    const width = 260;
+    const height = 56;
 
     let left = rect.left + rect.width / 2 - width / 2;
     left = Math.max(12, Math.min(window.innerWidth - width - 12, left));
@@ -282,227 +98,161 @@ function CenterArrivalList({ centers = [], onSelectCenter, onManageFacilities })
       top,
       left,
     });
-  };
+  }, []);
 
-  const handleHideTooltip = () => {
+  const handleHideTooltip = useCallback(() => {
     setTooltip(null);
-  };
+  }, []);
 
   useEffect(() => {
-    if (!tooltip) return;
+    if (!tooltip) return undefined;
     const handleDismiss = () => setTooltip(null);
+    const handleKeyDown = (e) => {
+      if (e.key === "Escape") setTooltip(null);
+    };
     window.addEventListener("scroll", handleDismiss, true);
     window.addEventListener("resize", handleDismiss);
+    window.addEventListener("keydown", handleKeyDown);
     return () => {
       window.removeEventListener("scroll", handleDismiss, true);
       window.removeEventListener("resize", handleDismiss);
+      window.removeEventListener("keydown", handleKeyDown);
     };
   }, [tooltip]);
 
-  const filteredCenters = useMemo(() => {
-    let list = Array.isArray(centers) ? centers : [];
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase().trim();
-      list = list.filter((c) => (c?.name || "").toLowerCase().includes(q));
-    }
-    // Sort by occupancy, highest first
+  const sortedCenters = useMemo(() => {
+    const list = Array.isArray(centers) ? centers : [];
     return [...list].sort((a, b) => {
       const diff = (b?.assignedPercent ?? 0) - (a?.assignedPercent ?? 0);
       if (diff !== 0) return diff;
       return (a?.name || "").localeCompare(b?.name || "");
     });
-  }, [centers, searchQuery]);
+  }, [centers]);
 
-  if (!centers || centers.length === 0) {
-    return (
-      <section
-        className="dashboard-center-arrival-card bg-white border border-slate-200 rounded-2xl p-5 shadow-[var(--shadow-xs)] w-full"
-        aria-label="Center Arrival & Capacity Matrix"
-      >
-        <div className="dashboard-center-arrival-header flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 mb-4 border-b border-slate-100">
-          <div className="dashboard-center-arrival-title-group flex items-center gap-2.5 flex-wrap">
-            <div className="flex items-center gap-2">
-              <FontAwesomeIcon icon={faHouseFlag} className="text-blue-600 text-sm" />
-              <h2 className="dashboard-heading dashboard-center-arrival-title text-lg font-black text-slate-900 tracking-tight">
-                Center Arrival & Capacity Matrix
-              </h2>
-            </div>
-            <span className="text-xs text-slate-500 font-medium">0 centers</span>
-          </div>
-          {onManageFacilities && (
-            <button
-              type="button"
-              onClick={onManageFacilities}
-              className="text-blue-600 hover:text-blue-800 font-bold text-xs inline-flex items-center gap-1.5 transition cursor-pointer self-start sm:self-auto"
-            >
-              <span>Manage Shelter Facilities</span>
-              <FontAwesomeIcon icon={faArrowRight} className="text-[10px]" />
-            </button>
-          )}
-        </div>
-        <div className="py-14 text-center">
-          <div className="size-12 rounded-2xl bg-slate-100 text-slate-400 flex items-center justify-center mx-auto mb-3">
-            <FontAwesomeIcon icon={faHouseFlag} className="text-xl" />
-          </div>
-          <p className="text-sm font-bold text-slate-700">No evacuation centers yet.</p>
-        </div>
-      </section>
-    );
-  }
-
-  const getBarFillColor = (percent = 0) => {
-    if (percent >= 100) return "bg-blue-600/70";
-    return "bg-blue-600/40";
-  };
-
-  const getPercentBadge = (percent = 0) => {
-    if (percent >= 100) {
-      return {
-        textColor: "text-red-700",
-        hasDot: true,
-      };
-    }
-    if (percent >= 95) {
-      return {
-        textColor: "text-amber-700",
-        hasDot: true,
-      };
-    }
-    return {
-      textColor: "text-slate-500",
-      hasDot: false,
-    };
-  };
+  const countLabel = `${sortedCenters.length} ${sortedCenters.length === 1 ? "center" : "centers"}`;
 
   return (
     <section
-    className="dashboard-center-arrival-card bg-white border border-slate-200 rounded-2xl p-5 shadow-[var(--shadow-xs)] w-full"
-      aria-label="Center Arrival & Capacity Matrix"
+      className="dashboard-surface-card dashboard-capacity-card"
+      aria-label="Center arrival and capacity"
     >
-      {/* Card Header */}
-    <div className="dashboard-center-arrival-header flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 mb-4 border-b border-slate-100">
-      <div className="dashboard-center-arrival-title-group flex items-center gap-2.5 flex-wrap">
-          <div className="flex items-center gap-2">
-            <FontAwesomeIcon icon={faHouseFlag} className="text-blue-600 text-sm" />
-          <h2 className="dashboard-heading dashboard-center-arrival-title text-lg font-black text-slate-900 tracking-tight">
-              Center Arrival & Capacity Matrix
-            </h2>
-          </div>
-          <span className="text-xs text-slate-500 font-medium">
-            {centers.length} {centers.length === 1 ? "center" : "centers"}
-          </span>
-        </div>
+      <SectionHeader
+        icon={Building2}
+        title="Center arrival & capacity"
+        meta={
+          !isLoading && !error ? (
+            <span className="dashboard-count-chip">{countLabel}</span>
+          ) : null
+        }
+        actions={
+          <Link to={`${basePath}?tab=centers`} className="dashboard-section-link">
+            <span>Manage shelter facilities</span>
+            <ArrowRight size={14} aria-hidden="true" />
+          </Link>
+        }
+      />
 
-        <div className="flex flex-wrap items-center gap-3">
-         
-          {/* Manage Shelter Facilities Action */}
-          {onManageFacilities && (
-            <button
-              type="button"
-              onClick={onManageFacilities}
-              className="text-blue-600 hover:text-blue-800 font-bold text-xs inline-flex items-center gap-1.5 transition cursor-pointer shrink-0"
-            >
-              <span>Manage Shelter Facilities</span>
-              <FontAwesomeIcon icon={faArrowRight} className="text-[10px]" />
-            </button>
+      {isLoading ? (
+        <div
+          className="dashboard-capacity-grid"
+          aria-busy="true"
+          aria-label="Loading evacuation center capacity"
+        >
+          {[0, 1, 2, 3].map((slot) => (
+            <div key={slot} className="dashboard-capacity-skeleton" aria-hidden="true">
+              <div className="dashboard-capacity-skeleton__top">
+                <span className="dashboard-skel-line dashboard-skel-line--mid" />
+                <span className="dashboard-skel-line dashboard-skel-line--xs" />
+              </div>
+              <span className="dashboard-skel-bar dashboard-skel-bar--sm" />
+            </div>
+          ))}
+        </div>
+      ) : error ? (
+        <div className="dashboard-card-state" role="alert">
+          <AlertTriangle
+            size={18}
+            className="dashboard-card-state__icon--danger"
+            aria-hidden="true"
+          />
+          <p className="dashboard-card-state__text">
+            {error?.message || "Could not load evacuation center capacity."}
+          </p>
+          {onRetry && (
+            <Button variant="secondary" onClick={onRetry}>
+              Retry sync
+            </Button>
           )}
         </div>
-      </div>
+      ) : sortedCenters.length === 0 ? (
+        <div className="dashboard-empty-card">
+          <span className="dashboard-empty-card__icon" aria-hidden="true">
+            <Building2 size={20} />
+          </span>
+          <p className="dashboard-empty-card__title">No evacuation centers yet</p>
+          <p className="dashboard-empty-card__text">
+            Add an evacuation center to monitor capacity and arrivals here.
+          </p>
+        </div>
+      ) : (
+        <div className="dashboard-capacity-grid">
+          {sortedCenters.map((center) => {
+            const pct = Number(center.assignedPercent ?? 0);
+            const isHigh = pct >= 80;
+            const tooltipId = `dashboard-center-tip-${center.id}`;
+            const isTooltipVisible = tooltip?.center?.id === center.id;
 
-      {/* List Scroll Area */}
-      <div
-        tabIndex={0}
-        aria-label="Evacuation centers list"
-        onScroll={handleHideTooltip}
-        className="dashboard-center-arrival-list overflow-y-auto max-h-[400px] sm:max-h-[440px] dashboard-scrollbar rounded-xl border border-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
-      >
-        {filteredCenters.length === 0 ? (
-          <div className="py-12 text-center text-slate-500 text-sm font-medium">
-            No centers found.
-          </div>
-        ) : (
-          <div className="divide-y divide-slate-100 bg-white">
-            {filteredCenters.map((center) => {
-              const percentBadge = getPercentBadge(center.assignedPercent);
-              return (
-                <div
-                  key={center.id}
-                  tabIndex={0}
-                  role="img"
-                  aria-label={`${center.name}: ${center.assignedPercent ?? 0}% assigned (${formatCount(center.checkedInCount)} arrived, ${formatCount(center.assignedCount)} assigned, ${formatCount(center.capacity)} capacity)`}
-                  onClick={() => onSelectCenter && onSelectCenter(center.id)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      if (onSelectCenter) onSelectCenter(center.id);
-                    }
-                  }}
-                  onMouseEnter={(e) => handleShowTooltip(center, e.currentTarget)}
-                  onMouseLeave={handleHideTooltip}
-                  onFocus={(e) => handleShowTooltip(center, e.currentTarget)}
-                  onBlur={handleHideTooltip}
-                  className="dashboard-center-arrival-row py-3.5 px-3.5 cursor-pointer hover:bg-blue-50/50 focus:bg-blue-50/50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-inset rounded-xl transition-colors block w-full text-left"
-                >
-                  {/* Line 1: Center name on left (medium weight, wrapping to 2 lines if needed, never cut off), percentage assigned at right end in small muted text with dot if near-full/full */}
-                  <div className="flex items-start justify-between gap-3">
-                    <span className="font-medium text-sm text-slate-900 break-words whitespace-normal leading-snug">
-                      {center.name}
-                    </span>
-                    <span
-                      className={`text-xs font-medium dashboard-mono shrink-0 text-right inline-flex items-center gap-1.5 ${percentBadge.textColor}`}
-                    >
-                      {percentBadge.hasDot && (
-                        <span
-                          className="size-1.5 rounded-full bg-current shrink-0"
-                          aria-hidden="true"
-                        />
-                      )}
-                      <span>{center.assignedPercent ?? 0}%</span>
-                    </span>
-                  </div>
-
-                  {/* Line 2: One slim 8px bar below the name, full row width, fully rounded, with a light gray track and primary blue fill */}
-                  <div className="mt-2 w-full h-2 bg-slate-100 rounded-full overflow-hidden">
-                    <div
-                      className={`h-full ${getBarFillColor(center.assignedPercent)} rounded-full transition-all duration-300`}
-                      style={{ width: `${Math.min(100, Math.max(0, center.assignedPercent || 0))}%` }}
-                    />
-                  </div>
+            return (
+              <Link
+                key={center.id}
+                to={`${basePath}?tab=checkin&center_id=${encodeURIComponent(center.id)}`}
+                className="dashboard-capacity-item"
+                aria-describedby={isTooltipVisible ? tooltipId : undefined}
+                onMouseEnter={(e) => handleShowTooltip(center, e.currentTarget)}
+                onMouseLeave={handleHideTooltip}
+                onFocus={(e) => handleShowTooltip(center, e.currentTarget)}
+                onBlur={handleHideTooltip}
+              >
+                <div className="dashboard-capacity-item__top">
+                  <span className="dashboard-capacity-item__name">{center.name}</span>
+                  <span
+                    className={`dashboard-capacity-item__pct ${isHigh ? "is-high" : ""}`}
+                  >
+                    {pct}%
+                  </span>
                 </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
 
-      {/* Floating Hover / Focus Tooltip */}
+                <ProgressBar
+                  value={pct}
+                  max={100}
+                  variant="capacity"
+                  size={6}
+                  ariaLabel={`${center.name}: ${pct}% assigned (${formatCount(center.checkedInCount)} arrived, ${formatCount(center.assignedCount)} assigned, ${formatCount(center.capacity)} capacity)`}
+                />
+              </Link>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Floating Hover / Keyboard Focus Tooltip */}
       {tooltip && (
         <div
+          id={`dashboard-center-tip-${tooltip.center.id}`}
           role="tooltip"
-          className="fixed z-50 pointer-events-none rounded-xl border border-slate-200 bg-white/95 px-3 py-2 shadow-[var(--shadow-lg)] backdrop-blur-xs text-xs whitespace-nowrap transition-opacity"
+          className="dashboard-capacity-tooltip"
           style={{
             top: `${tooltip.top}px`,
             left: `${tooltip.left}px`,
-            width: "max-content",
-            maxWidth: "280px",
           }}
         >
-          <div className="font-bold text-slate-900 truncate">
+          <div className="dashboard-capacity-tooltip__title">
             {tooltip.center.name}
           </div>
-          <div className="text-[11px] text-slate-500 mt-0.5">
-            <span className="dashboard-mono font-bold text-slate-800">
-              {formatCount(tooltip.center.checkedInCount)}
-            </span>{" "}
-            arrived /{" "}
-            <span className="dashboard-mono font-bold text-slate-800">
-              {formatCount(tooltip.center.assignedCount)}
-            </span>{" "}
-            assigned /{" "}
-            <span className="dashboard-mono font-bold text-slate-800">
-              {formatCount(tooltip.center.capacity)}
-            </span>{" "}
-            capacity
+          <div className="dashboard-capacity-tooltip__stats">
+            <strong>{formatCount(tooltip.center.checkedInCount)}</strong> arrived /{" "}
+            <strong>{formatCount(tooltip.center.assignedCount)}</strong> assigned /{" "}
+            <strong>{formatCount(tooltip.center.capacity)}</strong> capacity
           </div>
         </div>
       )}
@@ -599,9 +349,11 @@ function getMonotoneBezierPath(points) {
    ------------------------------------------------------------- */
 function IncidentTrendsCard({
   title,
-  icon,
-  iconColor,
+  icon: IconComponent,
   items = [],
+  isLoading = false,
+  error = null,
+  onRetry,
   dateExtractor,
   statusExtractor,
   seriesConfig = [],
@@ -766,96 +518,146 @@ function IncidentTrendsCard({
 
   return (
     <section
-      className="dashboard-chart-card bg-white border border-slate-200 rounded-2xl p-5 shadow-[var(--shadow-xs)] w-full flex flex-col justify-between"
+      className="dashboard-surface-card dashboard-chart-card"
       aria-label={title}
     >
-      {/* 2-Row Header */}
-      <div className="dashboard-chart-header mb-4 pb-3 border-b border-slate-100 space-y-2.5">
-        {/* Row 1: Wrapping title with the month switcher aligned on the right */}
-        <div className="dashboard-chart-heading-row flex items-center justify-between gap-3">
-          <div className="dashboard-chart-title-group flex items-center gap-2 min-w-0">
-            <FontAwesomeIcon icon={icon} className={`${iconColor} text-sm shrink-0`} />
-            <h2 className="dashboard-chart-title dashboard-heading text-lg font-black text-slate-900 tracking-tight">
-              {title}
-            </h2>
-          </div>
+      <div className="dashboard-chart-top">
+        <SectionHeader
+          icon={IconComponent}
+          title={title}
+          actions={
+            <div className="dashboard-month-switcher" role="group" aria-label={`${title} month navigation`}>
+              <button
+                type="button"
+                onClick={onPrevMonth}
+                aria-label={`Previous month for ${title}`}
+                className="dashboard-month-btn"
+              >
+                <ChevronLeft size={14} aria-hidden="true" />
+              </button>
 
-          {/* Month Switcher */}
-          <div className="dashboard-chart-month-switcher flex items-center gap-1 bg-slate-50 border border-slate-200/80 rounded-xl p-0.5 text-xs shrink-0">
-            <button
-              type="button"
-              onClick={onPrevMonth}
-              aria-label="Previous month"
-              className="dashboard-chart-month-button size-7 flex items-center justify-center rounded-lg text-slate-500 hover:text-slate-800 hover:bg-white transition cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              <FontAwesomeIcon icon={faChevronLeft} className="text-[10px]" />
-            </button>
+              <span className="dashboard-month-label">{monthLabel}</span>
 
-            <span className="dashboard-chart-month-label font-bold text-slate-700 dashboard-mono px-2 select-none whitespace-nowrap text-xs">
-              {monthLabel}
-            </span>
+              <button
+                type="button"
+                onClick={onNextMonth}
+                disabled={isCurrentMonth}
+                aria-label={`Next month for ${title}`}
+                className="dashboard-month-btn"
+              >
+                <ChevronRight size={14} aria-hidden="true" />
+              </button>
+            </div>
+          }
+        />
 
-            <button
-              type="button"
-              onClick={onNextMonth}
-              disabled={isCurrentMonth}
-              aria-label="Next month"
-              className={`dashboard-chart-month-button size-7 flex items-center justify-center rounded-lg transition ${isCurrentMonth
-                ? "text-slate-300 cursor-not-allowed"
-                : "text-slate-500 hover:text-slate-800 hover:bg-white cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500"
-                }`}
-            >
-              <FontAwesomeIcon icon={faChevronRight} className="text-[10px]" />
-            </button>
-          </div>
-        </div>
-
-        {/* Row 2: Legend, left-aligned and wrapping as needed */}
-        <div className="dashboard-chart-legend flex items-center gap-2 flex-wrap">
-          {seriesConfig.map((s) => (
-            <button
-              key={s.key}
-              type="button"
-              aria-pressed={!hiddenSeries.has(s.key)}
-              onClick={() => toggleSeries(s.key)}
-              className={`inline-flex items-center gap-1.5 text-xs font-semibold cursor-pointer px-2 py-1 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition ${hiddenSeries.has(s.key) ? "opacity-35 line-through" : "opacity-100 hover:bg-slate-50"
-                }`}
-            >
-              <span
-                className="size-2 rounded-full shrink-0"
-                style={{ backgroundColor: s.color }}
-              />
-              <span className="text-slate-600">{s.label}</span>
-              <span className="dashboard-mono font-bold text-slate-900">
-                {totalCounts[s.key] || 0}
-              </span>
-            </button>
-          ))}
+        {/* Legend with colored dots and bold counts */}
+        <div className="dashboard-chart-legend">
+          {seriesConfig.map((s) => {
+            const isHidden = hiddenSeries.has(s.key);
+            return (
+              <button
+                key={s.key}
+                type="button"
+                aria-pressed={!isHidden}
+                onClick={() => toggleSeries(s.key)}
+                className={`dashboard-legend-btn ${isHidden ? "is-hidden" : ""}`}
+              >
+                <span
+                  className="dashboard-legend-dot"
+                  style={{ backgroundColor: s.color }}
+                  aria-hidden="true"
+                />
+                <span className="dashboard-legend-label">{s.label}</span>
+                <strong className="dashboard-legend-count">
+                  {totalCounts[s.key] || 0}
+                </strong>
+              </button>
+            );
+          })}
         </div>
       </div>
 
-      {/* Chart Body or Empty State */}
-      {monthItems.length === 0 ? (
-        <div className="dashboard-chart-empty-state flex flex-col items-center justify-center text-center select-none my-auto">
-          <div className="size-11 rounded-2xl bg-slate-100 text-slate-400 flex items-center justify-center mb-2.5">
-            <FontAwesomeIcon icon={icon} className="text-lg" />
-          </div>
-          <p className="text-sm font-bold text-slate-700">{emptyTitle}</p>
+      {/* Loading / Error / Empty / Chart Body */}
+      {isLoading ? (
+        <div
+          className="dashboard-chart-skeleton"
+          aria-busy="true"
+          aria-label={`Loading ${title.toLowerCase()} chart`}
+        >
+          <span className="dashboard-skel-line dashboard-chart-skeleton__line" />
+          <span className="dashboard-skel-line dashboard-chart-skeleton__line" />
+          <span className="dashboard-skel-line dashboard-chart-skeleton__line" />
+          <span className="dashboard-skel-line dashboard-chart-skeleton__line" />
+        </div>
+      ) : error ? (
+        <div className="dashboard-card-state" role="alert">
+          <AlertTriangle
+            size={18}
+            className="dashboard-card-state__icon--danger"
+            aria-hidden="true"
+          />
+          <p className="dashboard-card-state__text">
+            {error?.message || `Could not load ${title.toLowerCase()}.`}
+          </p>
+          {onRetry && (
+            <Button variant="secondary" onClick={onRetry}>
+              Retry
+            </Button>
+          )}
+        </div>
+      ) : monthItems.length === 0 ? (
+        <div className="dashboard-chart-empty-state">
+          <span className="dashboard-empty-card__icon" aria-hidden="true">
+            {IconComponent && <IconComponent size={20} />}
+          </span>
+          <p className="dashboard-empty-card__title">{emptyTitle}</p>
         </div>
       ) : (
         <div
           ref={containerRef}
-          className="dashboard-chart-container relative w-full select-none"
+          tabIndex={0}
+          className="dashboard-chart-container"
+          aria-label={`${ariaLabel}. Use left and right arrow keys to inspect daily counts.`}
+          aria-describedby={hoveredDay ? `dashboard-chart-tip-${title.toLowerCase().replace(/\s+/g, "-")}` : undefined}
           onMouseLeave={() => setHoveredIndex(null)}
+          onFocus={() => {
+            if (passedDays.length > 0) {
+              setHoveredIndex((prev) => (prev != null ? prev : passedDays.length - 1));
+            }
+          }}
+          onBlur={() => setHoveredIndex(null)}
+          onKeyDown={(e) => {
+            if (passedDays.length === 0) return;
+            if (e.key === "ArrowLeft") {
+              e.preventDefault();
+              setHoveredIndex((prev) =>
+                prev == null ? passedDays.length - 1 : Math.max(0, prev - 1)
+              );
+            } else if (e.key === "ArrowRight") {
+              e.preventDefault();
+              setHoveredIndex((prev) =>
+                prev == null ? 0 : Math.min(passedDays.length - 1, prev + 1)
+              );
+            } else if (e.key === "Home") {
+              e.preventDefault();
+              setHoveredIndex(0);
+            } else if (e.key === "End") {
+              e.preventDefault();
+              setHoveredIndex(passedDays.length - 1);
+            } else if (e.key === "Escape") {
+              setHoveredIndex(null);
+            }
+          }}
         >
           <svg
             role="img"
             aria-label={ariaLabel}
             viewBox={`0 0 ${vbWidth} ${vbHeight}`}
-            className="w-full h-full overflow-visible"
+            className="dashboard-chart-svg"
             preserveAspectRatio="none"
           >
-            {/* Horizontal gridlines & Y-axis labels starting at 0 with whole numbers */}
+            {/* Horizontal gridlines (--divider) & 10px Y-axis labels (--muted) */}
             {yTicks.map((tick) => {
               const y = baseY - (tick / maxY) * plotH;
               return (
@@ -865,7 +667,7 @@ function IncidentTrendsCard({
                     x2={padLeft + plotW}
                     y1={y}
                     y2={y}
-                    stroke="#f1f5f9"
+                    stroke="var(--divider)"
                     strokeWidth="1"
                     strokeDasharray="4 4"
                   />
@@ -874,8 +676,8 @@ function IncidentTrendsCard({
                     y={y + 3.5}
                     textAnchor="end"
                     fontSize="10"
-                    fill="#94a3b8"
-                    className="font-medium dashboard-mono"
+                    fill="var(--muted)"
+                    className="dashboard-chart-axis-label"
                   >
                     {tick}
                   </text>
@@ -912,14 +714,14 @@ function IncidentTrendsCard({
                   cy={y}
                   r={hoveredIndex === i ? 4.5 : 2.5}
                   fill={s.color}
-                  stroke="#ffffff"
+                  stroke="var(--surface)"
                   strokeWidth={hoveredIndex === i ? 2 : 1}
-                  className="transition-all duration-150"
+                  className="dashboard-chart-dot"
                 />
               ));
             })}
 
-            {/* X-axis day labels every 5 days: 1, 5, 10, 15, 20, 25, 30 */}
+            {/* 10px X-axis day labels (--muted) every 5 days: 1, 5, 10, 15, 20, 25, 30 */}
             {daysList.map((d) => {
               const isTick =
                 d.dayNum === 1 ||
@@ -937,9 +739,9 @@ function IncidentTrendsCard({
                   x={x}
                   y={baseY + 18}
                   textAnchor="middle"
-                  fontSize="9.5"
-                  fill="#94a3b8"
-                  className="font-medium dashboard-mono"
+                  fontSize="10"
+                  fill="var(--muted)"
+                  className="dashboard-chart-axis-label"
                 >
                   {d.shortDay}
                 </text>
@@ -953,10 +755,10 @@ function IncidentTrendsCard({
                 x2={hoveredX}
                 y1={padTop}
                 y2={baseY}
-                stroke="#cbd5e1"
+                stroke="var(--ew-border-strong)"
                 strokeWidth="1.5"
                 strokeDasharray="3 3"
-                className="pointer-events-none"
+                className="dashboard-chart-guide"
               />
             )}
 
@@ -972,7 +774,7 @@ function IncidentTrendsCard({
                   width={colW}
                   height={plotH}
                   fill="transparent"
-                  className="cursor-crosshair"
+                  className="dashboard-chart-hitbox"
                   onMouseEnter={() => setHoveredIndex(i)}
                   onTouchStart={() => setHoveredIndex(i)}
                 />
@@ -980,9 +782,10 @@ function IncidentTrendsCard({
             })}
           </svg>
 
-          {/* Hover Tooltip Card */}
+          {/* Hover / Keyboard Focus Tooltip Card */}
           {hoveredDay != null && hoveredX != null && (
             <div
+              id={`dashboard-chart-tip-${title.toLowerCase().replace(/\s+/g, "-")}`}
               role="tooltip"
               className="dashboard-chart-tooltip"
               style={{
@@ -996,25 +799,23 @@ function IncidentTrendsCard({
                       : "translateX(-50%)",
               }}
             >
-              <div className="font-bold text-slate-800 border-b border-slate-100 pb-1 mb-1.5 text-xs">
+              <div className="dashboard-chart-tooltip__date">
                 {hoveredDay.fullDate}
               </div>
-              <div className="space-y-1">
+              <div className="dashboard-chart-tooltip__rows">
                 {seriesConfig.map((s) => (
-                  <div
-                    key={s.key}
-                    className="flex items-center justify-between gap-3 text-slate-600 text-xs"
-                  >
-                    <span className="flex items-center gap-1.5">
+                  <div key={s.key} className="dashboard-chart-tooltip__row">
+                    <span className="dashboard-chart-tooltip__series">
                       <span
-                        className="size-2 rounded-full shrink-0"
+                        className="dashboard-legend-dot"
                         style={{ backgroundColor: s.color }}
+                        aria-hidden="true"
                       />
                       <span>{s.label}</span>
                     </span>
-                    <span className="dashboard-mono font-bold text-slate-900">
+                    <strong className="dashboard-chart-tooltip__val">
                       {hoveredDay.counts[s.key] || 0}
-                    </span>
+                    </strong>
                   </div>
                 ))}
               </div>
@@ -1033,6 +834,7 @@ function Dashboard() {
   const navigate = useNavigate();
   const isMobile = useIsMobile();
   const isAdmin = user?.role === "admin";
+  const dashboardBasePath = isAdmin ? "/admin" : "/lgu";
 
   const refreshOptions = {
     refetchInterval: 30000,
@@ -1040,9 +842,24 @@ function Dashboard() {
   };
 
   const { stats, isLoading, isFetching, error, refetch: refetchSummary } = useDashboardSummary(isAdmin);
-  const { data: barangaysData, refetch: refetchBarangays } = useBarangays(refreshOptions);
-  const { data: hazardReportsData, refetch: refetchHazardReports } = useHazardReports("all", refreshOptions);
-  const { data: rescueRequestsData, refetch: refetchRescueRequests } = useRescueRequests(refreshOptions);
+  const {
+    data: barangaysData,
+    isLoading: barangaysLoading,
+    error: barangaysError,
+    refetch: refetchBarangays,
+  } = useBarangays(refreshOptions);
+  const {
+    data: hazardReportsData,
+    isLoading: hazardLoading,
+    error: hazardError,
+    refetch: refetchHazardReports,
+  } = useHazardReports("all", refreshOptions);
+  const {
+    data: rescueRequestsData,
+    isLoading: rescueLoading,
+    error: rescueError,
+    refetch: refetchRescueRequests,
+  } = useRescueRequests(refreshOptions);
 
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [barangayMetric, setBarangayMetric] = useState("households");
@@ -1329,18 +1146,14 @@ function Dashboard() {
   const totalArrivedFamilies = Number(stats?.totalArrivedFamilies || arrivedFamilies + partialFamilies);
   const assignedFamilies = Number(stats?.assignedFamilies || 0);
   const pendingArrivalFamilies = Number(stats?.pendingArrivalFamilies || Math.max(0, assignedFamilies - totalArrivedFamilies));
-  const unassignedFamilies = Number(stats?.unassignedFamilies || 0);
-  const totalFamilies = Number(stats?.families || 0);
 
   // Resident Headcount Arrival Metrics
   const arrivedResidents = Number(stats?.arrivedResidents || 0);
   const assignedResidents = Number(stats?.assignedResidents || 0);
   const pendingResidents = Number(stats?.pendingResidents || Math.max(0, assignedResidents - arrivedResidents));
 
-  // Key Arrival Rates
+  // Key Arrival Rate
   const familyArrivalRate = percentage(totalArrivedFamilies, assignedFamilies);
-  const residentArrivalRate = percentage(arrivedResidents, assignedResidents);
-  const assignedFamiliesRate = percentage(assignedFamilies, totalFamilies);
 
   // Incidents
   const rescueList = useMemo(() => {
@@ -1363,19 +1176,6 @@ function Dashboard() {
   const totalCapacity = Number(stats?.totalCapacity || 0);
   const totalRemainingCapacity = Math.max(0, totalCapacity - (stats?.totalOccupiedPeople || 0));
   const remainingPercent = totalCapacity > 0 ? Math.round((totalRemainingCapacity / totalCapacity) * 100) : 0;
-  const capacityUsedPercent = totalCapacity > 0 ? Math.min(100, Math.round(((stats?.totalOccupiedPeople || 0) / totalCapacity) * 100)) : 0;
-
-  // Overall readiness status
-  const readiness = useMemo(() => {
-    return getReadinessStatus({
-      openRescueCount,
-      totalCapacity,
-      totalAssignedPeople: stats?.totalAssignedPeople || 0,
-      unassignedFamilies,
-      pendingHazardCount,
-      pendingArrivalFamilies,
-    });
-  }, [openRescueCount, totalCapacity, stats, unassignedFamilies, pendingHazardCount, pendingArrivalFamilies]);
 
   // Center Check-In Map
   const checkInCenterMap = useMemo(() => {
@@ -1455,539 +1255,545 @@ function Dashboard() {
       />
 
       <main className="dashboard-content dashboard-page">
-        <div className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 sm:py-8 lg:px-8 space-y-5">
+        <div className="dashboard-shell">
           {/* Push Notification Activation Prompt (Hides once activated) */}
           {(pushStatus === "inactive" || pushSuccess) && !pushStripDismissed && (
-            <div className={`flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 py-3 rounded-2xl border text-xs font-semibold transition ${pushSuccess
-              ? "bg-emerald-50 border-emerald-200 text-emerald-800"
-              : "bg-blue-50/90 border-blue-200 text-blue-900"
-              }`}>
-              <div className="flex items-center gap-2.5">
-                <FontAwesomeIcon
-                  icon={pushSuccess ? faCircleCheck : faBell}
-                  className={`text-sm ${pushSuccess ? "text-emerald-600" : "text-blue-600 animate-pulse"}`}
-                />
+            <div className={`dashboard-push-banner ${pushSuccess ? "is-success" : ""}`}>
+              <div className="dashboard-push-banner__copy">
+                {pushSuccess ? (
+                  <CheckCircle2 size={16} className="dashboard-push-banner__icon" aria-hidden="true" />
+                ) : (
+                  <Bell size={16} className="dashboard-push-banner__icon" aria-hidden="true" />
+                )}
                 <span>
                   {pushSuccess
-                    ? "✓ Push notifications activated! Real-time alerts are now enabled."
+                    ? "Push notifications activated! Real-time alerts are now enabled."
                     : "Push notifications are currently inactive on this device. Allow notifications to receive instant alerts for resident accounts and emergency rescues."}
                 </span>
               </div>
               {!pushSuccess && (
-                <div className="flex items-center gap-2 shrink-0">
-                  <button
-                    type="button"
+                <div className="dashboard-push-banner__actions">
+                  <Button
+                    variant="primary"
                     onClick={handleActivatePushFromDashboard}
                     disabled={pushActivating}
-                    className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs transition shadow-[var(--shadow-primary)] flex items-center gap-1.5 cursor-pointer"
+                    className="dashboard-push-btn"
                   >
                     {pushActivating ? (
                       <>
-                        <FontAwesomeIcon icon={faSpinner} spin className="text-[11px]" />
+                        <Loader2 size={14} className="dashboard-spin" aria-hidden="true" />
                         <span>Activating...</span>
                       </>
                     ) : (
-                      <span>Allow & Activate</span>
+                      <span>Allow &amp; Activate</span>
                     )}
-                  </button>
+                  </Button>
                   <button
                     type="button"
                     onClick={() => {
                       setPushStripDismissed(true);
-                      try { sessionStorage.setItem("evacway_push_strip_dismissed", "true"); } catch { }
+                      try {
+                        sessionStorage.setItem("evacway_push_strip_dismissed", "true");
+                      } catch {
+                        // ignore storage quota / privacy mode errors
+                      }
                     }}
-                    className="p-1.5 text-blue-400 hover:text-blue-700 rounded-lg transition cursor-pointer"
+                    className="dashboard-push-dismiss"
+                    aria-label="Dismiss notification prompt"
                     title="Dismiss"
                   >
-                    <FontAwesomeIcon icon={faXmark} />
+                    <X size={16} aria-hidden="true" />
                   </button>
                 </div>
               )}
             </div>
           )}
 
-          {/* 1. EXECUTIVE COMMAND HEADER */}
-          <header className="dashboard-card dashboard-welcome-header p-4 sm:p-6">
-            <div className="dashboard-welcome-meta flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-slate-500">
-              <FontAwesomeIcon icon={faClock} className="text-slate-400 text-[11px] shrink-0" />
-              <span>{todayFormatted}</span>
-              <span className="text-slate-300">•</span>
-              <span className="text-blue-600 font-bold">Sogod Command Center</span>
+          {/* 1. PAGE HEADER (NO CARD WRAPPER) */}
+          <header className="dashboard-header">
+            <div className="dashboard-header-copy">
+              <div className="dashboard-label-chip">
+                <Clock size={12} aria-hidden="true" />
+                <span>{todayFormatted}</span>
+                <span className="dashboard-label-sep" aria-hidden="true">·</span>
+                <span>Sogod Command Center</span>
+              </div>
+              <h1 className="dashboard-header-title">
+                Welcome back, {user?.name || "Officer"}
+              </h1>
             </div>
-            <h1 className="dashboard-welcome-title dashboard-heading text-2xl font-black text-slate-900 sm:text-3xl tracking-tight">
-              Welcome back, {user?.name || "Officer"}
-            </h1>
 
-            <div className="dashboard-welcome-actions">
-              <button
-                type="button"
-                onClick={() => handleSectionChange("checkin")}
-                className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-3.5 py-2 text-xs font-bold text-white hover:bg-emerald-700 shadow-[var(--shadow-primary)] transition shrink-0"
-                aria-label="Evacuee Arrival Desk"
-                title="Evacuee Arrival Desk"
-              >
-                <FontAwesomeIcon icon={faUserCheck} aria-hidden="true" />
-                <span className="dashboard-action-label">Evacuee Arrival Desk</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => handleSectionChange("map")}
-                className="inline-flex items-center gap-2 rounded-xl bg-blue-600 px-3.5 py-2 text-xs font-bold text-white hover:bg-blue-700 shadow-[var(--shadow-primary)] transition shrink-0"
-                aria-label="Map Operations"
-                title="Map Operations"
-              >
-                <FontAwesomeIcon icon={faMapLocationDot} aria-hidden="true" />
-                <span className="dashboard-action-label">Map Operations</span>
-              </button>
-
-              <button
-                type="button"
+            <div className="dashboard-header-actions">
+              <Button
+                variant="secondary"
                 onClick={handleRefreshAll}
                 disabled={isRefreshing}
-                aria-label="Sync"
-                title="Sync"
-                className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100 transition min-w-[96px] shrink-0"
+                aria-label="Sync data"
+                title="Sync data"
+                className="dashboard-sync-btn"
               >
-                <FontAwesomeIcon
-                  icon={faArrowsRotate}
-                  className={`text-slate-500 ${isRefreshing || isFetching ? "fa-spin text-blue-600" : ""}`}
+                <RefreshCw
+                  size={16}
+                  className={isRefreshing || isFetching ? "dashboard-spin" : ""}
                   aria-hidden="true"
                 />
-                <span className="dashboard-action-label">Sync</span>
-              </button>
+              </Button>
+
+              <Button
+                variant="secondary"
+                onClick={() => handleSectionChange("checkin")}
+                className="dashboard-action-btn"
+              >
+                <UserCheck size={16} aria-hidden="true" />
+                <span>Evacuee Arrival Desk</span>
+              </Button>
+
+              <Button
+                variant="primary"
+                onClick={() => handleSectionChange("map")}
+                className="dashboard-action-btn"
+              >
+                <MapPin size={16} aria-hidden="true" />
+                <span>Map Operations</span>
+              </Button>
             </div>
           </header>
 
-          {/* ERROR ALERT */}
-          {error && !isLoading && (
-            <div
-              className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 rounded-2xl border border-red-200 bg-red-50 p-5 text-red-800 shadow-[var(--shadow-xs)]"
-              role="alert"
-            >
-              <div>
-                <p className="font-bold flex items-center gap-2 text-sm">
-                  <FontAwesomeIcon icon={faTriangleExclamation} />
-                  Failed to synchronize operational metrics
+          {/* ERROR ALERT (when stale data exists alongside a sync error) */}
+          {error && !isLoading && stats && (
+            <div className="dashboard-error-banner" role="alert">
+              <div className="dashboard-error-banner__copy">
+                <p className="dashboard-error-banner__title">
+                  <AlertTriangle size={16} aria-hidden="true" />
+                  <span>Failed to synchronize operational metrics</span>
                 </p>
-                <p className="mt-1 text-xs text-red-700">{error?.message || String(error)}</p>
+                <p className="dashboard-error-banner__msg">
+                  {error?.message || String(error)}
+                </p>
               </div>
-              <button
-                type="button"
-                className="shrink-0 px-4 py-2 rounded-xl bg-red-600 text-white text-xs font-bold hover:bg-red-700 transition"
-                onClick={handleRefreshAll}
-              >
+              <Button variant="secondary" onClick={handleRefreshAll}>
                 Retry Sync
-              </button>
+              </Button>
             </div>
           )}
 
-          {/* MAIN CONTENT AREA */}
-          {stats ? (
-            <>
-              {/* 2. EVACUEE ARRIVAL & SHELTERING COMMAND HERO */}
-              <section className="dashboard-arrival-card bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-[var(--shadow-xs)] space-y-4" aria-label="Evacuation arrival and sheltering status">
-                <div>
-                  <h2 className="dashboard-heading text-lg sm:text-xl font-black text-slate-900 tracking-tight">
-                    Evacuee &amp; Shelter Arrival Status
-                  </h2>
-                  <p className="mt-1 text-xs sm:text-sm text-slate-500 font-normal leading-relaxed m-0">
-                    <span className="dashboard-mono font-medium text-slate-700">
-                      {formatCount(totalArrivedFamilies)}
-                    </span>{" "}
-                    of{" "}
-                    <span className="dashboard-mono font-medium text-slate-700">
-                      {formatCount(assignedFamilies)}
-                    </span>{" "}
-                    assigned families have verified safe arrival across evacuation centers
-                  </p>
-                </div>
+          {/* 2. EVACUEE & SHELTER ARRIVAL STATUS CARD */}
+          <section
+            className="dashboard-surface-card dashboard-arrival-card"
+            aria-label="Evacuee and shelter arrival status"
+          >
+            <SectionHeader
+              icon={UserCheck}
+              title="Evacuee & shelter arrival status"
+            />
 
-                {/* Progress Spectrum Bar */}
-                <div className="space-y-1.5">
-                  <div className="h-2 w-full rounded-full bg-slate-100 overflow-hidden flex">
-                    <div
-                      className="h-full bg-blue-600 transition-all duration-500"
-                      style={{ width: `${familyArrivalRate}%` }}
-                      title={`Arrived: ${formatCount(totalArrivedFamilies)} families`}
-                    />
-                    <div
-                      className="h-full bg-slate-200 transition-all duration-500"
-                      style={{ width: `${Math.max(0, 100 - familyArrivalRate)}%` }}
-                      title={`Pending: ${formatCount(pendingArrivalFamilies)} families`}
-                    />
-                  </div>
-                  <div className="dashboard-arrival-progress-labels flex items-center justify-between text-xs text-slate-500 font-medium">
+            {isLoading && !stats ? (
+              <div className="dashboard-arrival-skeleton" aria-busy="true" aria-label="Loading arrival status">
+                <div className="dashboard-skel-line dashboard-skel-line--wide" />
+                <div className="dashboard-skel-bar" />
+                <div className="dashboard-arrival-ends">
+                  <div className="dashboard-skel-line dashboard-skel-line--sm" />
+                  <div className="dashboard-skel-line dashboard-skel-line--sm" />
+                </div>
+              </div>
+            ) : error && !stats ? (
+              <div className="dashboard-card-state" role="alert">
+                <AlertTriangle size={18} className="dashboard-card-state__icon--danger" aria-hidden="true" />
+                <p className="dashboard-card-state__text">
+                  {error?.message || "Could not load arrival status."}
+                </p>
+                <Button variant="secondary" onClick={handleRefreshAll}>
+                  Retry sync
+                </Button>
+              </div>
+            ) : assignedFamilies === 0 ? (
+              <div className="dashboard-card-state">
+                <p className="dashboard-card-state__text">
+                  No families are assigned to evacuation centers yet.
+                </p>
+              </div>
+            ) : (
+              <div className="dashboard-arrival-body">
+                <p className="dashboard-arrival-summary">
+                  <strong>{formatCount(totalArrivedFamilies)}</strong> of{" "}
+                  <strong>{formatCount(assignedFamilies)}</strong> assigned families have verified safe arrival across evacuation centers
+                </p>
+
+                <div className="dashboard-arrival-progress">
+                  <ProgressBar
+                    value={totalArrivedFamilies}
+                    max={assignedFamilies}
+                    variant="completion"
+                    size={8}
+                    ariaLabel={`${familyArrivalRate}% of assigned families arrived`}
+                  />
+                  <div className="dashboard-arrival-ends">
                     <span>{formatCount(totalArrivedFamilies)} arrived</span>
                     <span>{formatCount(pendingArrivalFamilies)} pending</span>
                   </div>
                 </div>
-              </section>
-
-              {/* 3. EXECUTIVE KPI METRICS (4 Actionable Command Tiles) */}
-              <section className="stat-card-grid cols-4 dashboard-kpi-grid" aria-label="Executive KPI tiles">
-                {/* 1. Emergency Alerts & Incidents */}
-                <button
-                  type="button"
-                  className="stat-card is-clickable"
-                  onClick={() => handleSectionChange(openRescueCount > 0 ? "rescue" : "reports")}
-                >
-                  <div className="stat-card-content">
-                    <span className="stat-card-label">Emergency Alerts</span>
-                    <strong className={`stat-card-value ${openRescueCount > 0 || pendingHazardCount > 0 ? "text-red-600" : "text-emerald-700"}`}>
-                      {formatCount(openRescueCount + pendingHazardCount)}
-                    </strong>
-                    <span className="stat-card-hint">
-                      {openRescueCount} rescues · {pendingHazardCount} hazards
-                      {openRescueCount > 0 ? " · Needs Rescue" : pendingHazardCount > 0 ? " · Needs Review" : " · All Clear"}
-                    </span>
-                  </div>
-                  <span className={`stat-card-icon ${openRescueCount > 0 || pendingHazardCount > 0 ? "stat-card-icon--alert" : "stat-card-icon--resolved"}`} aria-hidden="true">
-                    <FontAwesomeIcon icon={faLifeRing} />
-                  </span>
-                </button>
-
-                {/* 2. Pending Arrival (En Route) */}
-                <button
-                  type="button"
-                  className="stat-card is-clickable"
-                  onClick={() => handleSectionChange("checkin")}
-                >
-                  <div className="stat-card-content">
-                    <span className="stat-card-label">Pending Arrival</span>
-                    <strong className={`stat-card-value ${pendingArrivalFamilies > 0 ? "text-amber-600" : "text-emerald-700"}`}>
-                      {formatCount(pendingArrivalFamilies)}
-                    </strong>
-                    <span className="stat-card-hint">
-                      {formatCount(pendingResidents)} residents
-                      {pendingArrivalFamilies > 0 ? " · Awaiting Intake" : " · None Pending"}
-                    </span>
-                  </div>
-                  <span className={`stat-card-icon ${pendingArrivalFamilies > 0 ? "stat-card-icon--warning" : "stat-card-icon--resolved"}`} aria-hidden="true">
-                    <FontAwesomeIcon icon={faPersonWalking} />
-                  </span>
-                </button>
-
-                {/* 3. Verified Arrived Families */}
-                <button
-                  type="button"
-                  className="stat-card is-clickable"
-                  onClick={() => handleSectionChange("checkin")}
-                >
-                  <div className="stat-card-content">
-                    <span className="stat-card-label">Families Arrived</span>
-                    <strong className="stat-card-value">{formatCount(totalArrivedFamilies)}</strong>
-                    <span className="stat-card-hint">
-                      {formatCount(arrivedResidents)} residents on-site · {familyArrivalRate}% arrived
-                    </span>
-                  </div>
-                  <span className={`stat-card-icon ${familyArrivalRate >= 70 ? "stat-card-icon--resolved" : "stat-card-icon--warning"}`} aria-hidden="true">
-                    <FontAwesomeIcon icon={faUserCheck} />
-                  </span>
-                </button>
-
-                {/* 4. Available Headroom */}
-                <button
-                  type="button"
-                  className="stat-card is-clickable"
-                  onClick={() => handleSectionChange("centers")}
-                >
-                  <div className="stat-card-content">
-                    <span className="stat-card-label">Available Headroom</span>
-                    <strong className={`stat-card-value ${remainingPercent < 15 ? "text-red-600" : "text-emerald-700"}`}>
-                      {formatCount(totalRemainingCapacity)}
-                    </strong>
-                    <span className="stat-card-hint">
-                      of {formatCount(totalCapacity)} capacity · {remainingPercent}% free
-                    </span>
-                  </div>
-                  <span className={`stat-card-icon ${remainingPercent < 15 ? "stat-card-icon--alert" : "stat-card-icon--resolved"}`} aria-hidden="true">
-                    <FontAwesomeIcon icon={faDoorOpen} />
-                  </span>
-                </button>
-              </section>
-
-              {/* 4. CENTER ARRIVAL & CAPACITY MATRIX (Full-Width Simple Bars List) */}
-              <CenterArrivalList
-                centers={centersProcessed}
-                onSelectCenter={(centerId) => handleSectionChange("checkin", { center_id: centerId })}
-                onManageFacilities={() => handleSectionChange("centers")}
-              />
-
-              {/* 5. HAZARD REPORTS & RESCUE REQUESTS TRENDS (Side by Side) */}
-              <div className="dashboard-trends-grid">
-                <IncidentTrendsCard
-                  title="Hazard Reports"
-                  icon={faTriangleExclamation}
-                  iconColor="text-amber-500"
-                  items={hazardList}
-                  dateExtractor={(item) => item?.submitted_at || item?.created_at}
-                  statusExtractor={getHazardStatusGroup}
-                  seriesConfig={[
-                    { key: "active", label: "Active", color: "#ef4444" },
-                    { key: "pending", label: "Pending", color: "#f59e0b" },
-                    { key: "cleared", label: "Cleared", color: "#10b981" },
-                  ]}
-                  selectedYear={trendYearMonth.year}
-                  selectedMonth={trendYearMonth.month}
-                  monthLabel={trendMonthLabel}
-                  isCurrentMonth={isCurrentTrendMonth}
-                  onPrevMonth={handlePrevTrendMonth}
-                  onNextMonth={handleNextTrendMonth}
-                  emptyTitle="No reports yet"
-                  ariaLabel="Hazard reports monthly trend line graph showing active, pending, and cleared reports"
-                />
-
-                <IncidentTrendsCard
-                  title="Rescue Requests"
-                  icon={faLifeRing}
-                  iconColor="text-blue-600"
-                  items={rescueList}
-                  dateExtractor={(item) => item?.created_at || item?.submitted_at}
-                  statusExtractor={getRescueStatusGroup}
-                  seriesConfig={[
-                    { key: "open", label: "Open", color: "#ef4444" },
-                    { key: "in_progress", label: "In Progress", color: "#2563eb" },
-                    { key: "resolved", label: "Resolved", color: "#10b981" },
-                  ]}
-                  selectedYear={trendYearMonth.year}
-                  selectedMonth={trendYearMonth.month}
-                  monthLabel={trendMonthLabel}
-                  isCurrentMonth={isCurrentTrendMonth}
-                  onPrevMonth={handlePrevTrendMonth}
-                  onNextMonth={handleNextTrendMonth}
-                  emptyTitle="No requests yet"
-                  ariaLabel="Rescue requests monthly trend line graph showing open, in progress, and resolved requests"
-                />
               </div>
+            )}
+          </section>
 
-              {/* 6. DEMOGRAPHICS BY BARANGAY COMPARATIVE ANALYTICS (ALL BARANGAYS) */}
-              <section className="dashboard-card dashboard-demographics-card p-5 sm:p-6" aria-label="Demographic distribution">
-                <div className="dashboard-demographics-header mb-5 flex flex-col items-start gap-3 border-b border-slate-100 pb-4 min-[769px]:flex-row min-[769px]:items-center min-[769px]:justify-between">
-                  <div className="dashboard-demographics-title min-w-0">
-                    <div className="flex items-center gap-2">
-                      <FontAwesomeIcon icon={faLocationDot} className="text-blue-600 text-sm" />
-                      <h2 className="dashboard-heading dashboard-demographics-heading text-lg font-black text-slate-900 tracking-tight">
-                        Demographics & Evacuee Density by Barangay
-                      </h2>
-                    </div>
+          {/* 3. EXECUTIVE KPI METRICS (4 Link StatCards) */}
+          <section className="dashboard-kpi-grid" aria-label="Operational summary metrics">
+            {isLoading && !stats ? (
+              [0, 1, 2, 3].map((slot) => (
+                <div
+                  key={slot}
+                  className="dashboard-stat-skeleton"
+                  aria-busy="true"
+                  aria-hidden="true"
+                >
+                  <div className="dashboard-stat-skeleton__top">
+                    <span className="dashboard-stat-skeleton__icon" />
+                    <span className="dashboard-stat-skeleton__label" />
                   </div>
+                  <span className="dashboard-stat-skeleton__value" />
+                  <span className="dashboard-stat-skeleton__footer" />
+                </div>
+              ))
+            ) : error && !stats ? (
+              <div className="dashboard-surface-card dashboard-kpi-error" role="alert">
+                <div className="dashboard-card-state">
+                  <AlertTriangle size={18} className="dashboard-card-state__icon--danger" aria-hidden="true" />
+                  <p className="dashboard-card-state__text">
+                    {error?.message || "Could not load summary metrics."}
+                  </p>
+                  <Button variant="secondary" onClick={handleRefreshAll}>
+                    Retry sync
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <StatCard
+                  to={`${dashboardBasePath}?tab=rescue`}
+                  tint="danger"
+                  icon={LifeBuoy}
+                  label="Emergency alerts"
+                  value={formatCount(openRescueCount + pendingHazardCount)}
+                  footer={`${openRescueCount} rescues · ${pendingHazardCount} hazards${
+                    openRescueCount > 0
+                      ? " · Needs Rescue"
+                      : pendingHazardCount > 0
+                        ? " · Needs Review"
+                        : " · All Clear"
+                  }`}
+                />
 
-                  <div className="dashboard-demographics-controls flex items-center min-[769px]:ml-auto min-[769px]:shrink-0">
-                    <label className="dashboard-demographics-search">
-                      <FontAwesomeIcon icon={faMagnifyingGlass} aria-hidden="true" />
-                      <input
-                        type="search"
-                        value={barangaySearch}
-                        onChange={(event) => setBarangaySearch(event.target.value)}
-                        placeholder="Search barangays"
-                        aria-label="Search barangays"
-                      />
+                <StatCard
+                  to={`${dashboardBasePath}?tab=checkin`}
+                  tint="warn"
+                  icon={Clock}
+                  label="Pending arrival"
+                  value={formatCount(pendingArrivalFamilies)}
+                  footer={`${formatCount(pendingResidents)} residents${
+                    pendingArrivalFamilies > 0 ? " · Awaiting Intake" : " · None Pending"
+                  }`}
+                />
+
+                <StatCard
+                  to={`${dashboardBasePath}?tab=checkin`}
+                  tint="success"
+                  icon={UserCheck}
+                  label="Families arrived"
+                  value={formatCount(totalArrivedFamilies)}
+                  footer={`${formatCount(arrivedResidents)} residents on-site · ${familyArrivalRate}% arrived`}
+                />
+
+                <StatCard
+                  to={`${dashboardBasePath}?tab=centers`}
+                  tint="success"
+                  icon={DoorOpen}
+                  label="Available headroom"
+                  value={formatCount(totalRemainingCapacity)}
+                  footer={`of ${formatCount(totalCapacity)} capacity · ${remainingPercent}% free`}
+                />
+              </>
+            )}
+          </section>
+
+          {/* 4. CENTER ARRIVAL & CAPACITY MATRIX */}
+          <CenterArrivalList
+            centers={centersProcessed}
+            basePath={dashboardBasePath}
+            isLoading={isLoading && !stats}
+            error={error && !stats ? error : null}
+            onRetry={handleRefreshAll}
+          />
+
+          {/* 5. HAZARD REPORTS & RESCUE REQUESTS TRENDS (Side by Side) */}
+          <div className="dashboard-trends-grid">
+            <IncidentTrendsCard
+              title="Hazard reports"
+              icon={AlertTriangle}
+              items={hazardList}
+              isLoading={hazardLoading && hazardList.length === 0}
+              error={hazardError && hazardList.length === 0 ? hazardError : null}
+              onRetry={refetchHazardReports}
+              dateExtractor={(item) => item?.submitted_at || item?.created_at}
+              statusExtractor={getHazardStatusGroup}
+              seriesConfig={[
+                { key: "active", label: "Active", color: "var(--danger)" },
+                { key: "pending", label: "Pending", color: "var(--warn)" },
+                { key: "cleared", label: "Cleared", color: "var(--success)" },
+              ]}
+              selectedYear={trendYearMonth.year}
+              selectedMonth={trendYearMonth.month}
+              monthLabel={trendMonthLabel}
+              isCurrentMonth={isCurrentTrendMonth}
+              onPrevMonth={handlePrevTrendMonth}
+              onNextMonth={handleNextTrendMonth}
+              emptyTitle="No reports yet"
+              ariaLabel="Hazard reports monthly trend line graph showing active, pending, and cleared reports"
+            />
+
+            <IncidentTrendsCard
+              title="Rescue requests"
+              icon={LifeBuoy}
+              items={rescueList}
+              isLoading={rescueLoading && rescueList.length === 0}
+              error={rescueError && rescueList.length === 0 ? rescueError : null}
+              onRetry={refetchRescueRequests}
+              dateExtractor={(item) => item?.created_at || item?.submitted_at}
+              statusExtractor={getRescueStatusGroup}
+              seriesConfig={[
+                { key: "open", label: "Open", color: "var(--danger)" },
+                { key: "in_progress", label: "In Progress", color: "var(--primary)" },
+                { key: "resolved", label: "Resolved", color: "var(--success)" },
+              ]}
+              selectedYear={trendYearMonth.year}
+              selectedMonth={trendYearMonth.month}
+              monthLabel={trendMonthLabel}
+              isCurrentMonth={isCurrentTrendMonth}
+              onPrevMonth={handlePrevTrendMonth}
+              onNextMonth={handleNextTrendMonth}
+              emptyTitle="No requests yet"
+              ariaLabel="Rescue requests monthly trend line graph showing open, in progress, and resolved requests"
+            />
+          </div>
+
+          {/* 6. DEMOGRAPHICS & EVACUEE DENSITY BY BARANGAY */}
+          <section
+            className="dashboard-surface-card dashboard-demographics-card"
+            aria-label="Demographics and evacuee density by barangay"
+          >
+            <SectionHeader
+              icon={MapPin}
+              title="Demographics & evacuee density by barangay"
+              actions={
+                <div className="dashboard-demographics-controls">
+                  <div className="dashboard-demographics-search">
+                    <label htmlFor="dashboard-barangay-search" className="sr-only">
+                      Search barangays
                     </label>
-                    {/* Metric Switch */}
-                    <div className="dashboard-demographics-toggle flex items-center p-1 rounded-xl bg-slate-100 border border-slate-200/60 text-xs font-bold">
-                      <button
-                        type="button"
-                        onClick={() => setBarangayMetric("households")}
-                        className={`px-3 py-1.5 rounded-lg transition cursor-pointer ${barangayMetric === "households"
-                          ? "bg-white text-blue-700 font-extrabold"
-                          : "text-slate-600 hover:text-slate-900"
-                          }`}
-                      >
-                        Families
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setBarangayMetric("residents")}
-                        className={`px-3 py-1.5 rounded-lg transition cursor-pointer ${barangayMetric === "residents"
-                          ? "bg-white text-blue-700 font-extrabold"
-                          : "text-slate-600 hover:text-slate-900"
-                          }`}
-                      >
-                        Residents
-                      </button>
-                    </div>
+                    <Search size={15} className="dashboard-demographics-search__icon" aria-hidden="true" />
+                    <input
+                      id="dashboard-barangay-search"
+                      type="search"
+                      value={barangaySearch}
+                      onChange={(event) => setBarangaySearch(event.target.value)}
+                      placeholder="Search barangays..."
+                      className="dashboard-demographics-search__input"
+                    />
                   </div>
+
+                  <SegmentedControl
+                    size="sm"
+                    ariaLabel="Demographics metric"
+                    value={barangayMetric}
+                    onChange={setBarangayMetric}
+                    options={[
+                      { value: "households", label: "Families" },
+                      { value: "residents", label: "Residents" },
+                    ]}
+                  />
+                </div>
+              }
+            />
+
+            {(barangaysLoading || isLoading) && allBarangays.length === 0 ? (
+              <div
+                className="dashboard-demographics-grid"
+                aria-busy="true"
+                aria-label="Loading barangay demographics"
+              >
+                {[0, 1, 2, 3, 4, 5].map((slot) => (
+                  <div key={slot} className="dashboard-demographic-skeleton" aria-hidden="true">
+                    <div className="dashboard-demographic-skeleton__top">
+                      <span className="dashboard-skel-line dashboard-skel-line--mid" />
+                      <span className="dashboard-skel-line dashboard-skel-line--xs" />
+                    </div>
+                    <span className="dashboard-skel-bar dashboard-skel-bar--sm" />
+                  </div>
+                ))}
+              </div>
+            ) : (barangaysError || error) && allBarangays.length === 0 ? (
+              <div className="dashboard-card-state" role="alert">
+                <AlertTriangle
+                  size={18}
+                  className="dashboard-card-state__icon--danger"
+                  aria-hidden="true"
+                />
+                <p className="dashboard-card-state__text">
+                  {(barangaysError || error)?.message || "Could not load barangay demographics."}
+                </p>
+                <Button variant="secondary" onClick={handleRefreshAll}>
+                  Retry sync
+                </Button>
+              </div>
+            ) : visibleBarangays.length === 0 ? (
+              <div className="dashboard-empty-card">
+                <span className="dashboard-empty-card__icon" aria-hidden="true">
+                  {barangaySearch.trim() ? <Search size={20} /> : <MapPin size={20} />}
+                </span>
+                <p className="dashboard-empty-card__title">
+                  {barangaySearch.trim()
+                    ? "No barangays match your search"
+                    : "No barangay census records yet"}
+                </p>
+                {barangaySearch.trim() && (
+                  <Button
+                    variant="secondary"
+                    onClick={() => setBarangaySearch("")}
+                    className="dashboard-empty-card__btn"
+                  >
+                    Clear search
+                  </Button>
+                )}
+              </div>
+            ) : (
+              <div className="dashboard-demographics-scroll">
+                <div className="dashboard-demographics-grid">
+                  {visibleBarangays.map((barangay) => {
+                    const barWidth = Math.min(
+                      100,
+                      Math.max(0, Math.round((barangay.val / maxBarangayVal) * 100))
+                    );
+                    const unitLabel = barangayMetric === "residents" ? "residents" : "families";
+                    const popoverId = `dashboard-brgy-tip-${barangay.id || barangay.rank}`;
+                    const isPopoverOpen =
+                      activeBarangayPopover?.barangay?.id === barangay.id &&
+                      activeBarangayPopover?.barangay?.rank === barangay.rank;
+
+                    return (
+                      <button
+                        key={barangay.id || barangay.rank}
+                        type="button"
+                        aria-label={`${barangay.name}, rank ${barangay.rank}: ${formatCount(barangay.val)} ${unitLabel}. Focus or click for demographic breakdown`}
+                        aria-describedby={isPopoverOpen ? popoverId : undefined}
+                        onMouseEnter={(e) => handleOpenPopover(barangay, e.currentTarget)}
+                        onMouseLeave={() => setActiveBarangayPopover(null)}
+                        onFocus={(e) => handleOpenPopover(barangay, e.currentTarget)}
+                        onBlur={() => setActiveBarangayPopover(null)}
+                        onClick={(e) => {
+                          if (isPopoverOpen) {
+                            setActiveBarangayPopover(null);
+                          } else {
+                            handleOpenPopover(barangay, e.currentTarget);
+                          }
+                        }}
+                        className="dashboard-demographic-item"
+                      >
+                        <div className="dashboard-demographic-item__top">
+                          <span className="dashboard-demographic-item__identity">
+                            <span className="dashboard-rank-chip">#{barangay.rank}</span>
+                            <span className="dashboard-demographic-name" title={barangay.name}>
+                              {barangay.name}
+                            </span>
+                          </span>
+
+                          <span className="dashboard-demographic-metric">
+                            <strong>{formatCount(barangay.val)}</strong>{" "}
+                            <span className="dashboard-demographic-unit">{unitLabel}</span>
+                          </span>
+                        </div>
+
+                        <div className="dashboard-density-track" aria-hidden="true">
+                          <div
+                            className="dashboard-density-fill"
+                            style={{ width: `${barWidth}%` }}
+                          />
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Floating Demographics Breakdown Popover */}
+            {activeBarangayPopover && (
+              <div
+                id={`dashboard-brgy-tip-${activeBarangayPopover.barangay.id || activeBarangayPopover.barangay.rank}`}
+                role="tooltip"
+                className="dashboard-demographics-popover"
+                style={{
+                  top: `${activeBarangayPopover.top}px`,
+                  left: `${activeBarangayPopover.left}px`,
+                }}
+              >
+                <div className="dashboard-popover-header">
+                  <span className="dashboard-popover-title">
+                    {activeBarangayPopover.barangay.name}
+                  </span>
+                  <span className="dashboard-popover-rank">
+                    #{activeBarangayPopover.barangay.rank}
+                  </span>
                 </div>
 
-                {visibleBarangays.length > 0 ? (
-                  <div className="dashboard-scrollbar max-h-[520px] overflow-y-auto pr-1">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                      {visibleBarangays.map((barangay) => {
-                        const barWidth = Math.round((barangay.val / maxBarangayVal) * 100);
-
-                        return (
-                          <div
-                            key={barangay.id || barangay.rank}
-                            tabIndex={0}
-                            role="button"
-                            aria-label={`View demographic breakdown for ${barangay.name}`}
-                            onMouseEnter={(e) => handleOpenPopover(barangay, e.currentTarget)}
-                            onMouseLeave={() => setActiveBarangayPopover(null)}
-                            onFocus={(e) => handleOpenPopover(barangay, e.currentTarget)}
-                            onBlur={() => setActiveBarangayPopover(null)}
-                            onClick={(e) => {
-                              if (activeBarangayPopover?.barangay?.id === barangay.id) {
-                                setActiveBarangayPopover(null);
-                              } else {
-                                handleOpenPopover(barangay, e.currentTarget);
-                              }
-                            }}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter" || e.key === " ") {
-                                e.preventDefault();
-                                handleOpenPopover(barangay, e.currentTarget);
-                              }
-                            }}
-                            className="dashboard-demographic-item p-3 rounded-xl border border-slate-100 bg-slate-50/50 hover:bg-slate-50/90 hover:border-blue-200 focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-300 transition cursor-pointer"
-                          >
-                            <div className="dashboard-demographic-item-header flex items-center justify-between text-xs font-bold text-slate-800">
-                              <span className="dashboard-demographic-item-name flex items-center gap-2">
-                                <span className="dashboard-mono size-5 rounded-md bg-white border border-slate-200 grid place-items-center text-[10px] text-slate-600 font-black shrink-0">
-                                  #{barangay.rank}
-                                </span>
-                                <span className="dashboard-demographic-name" title={barangay.name}>{barangay.name}</span>
-                              </span>
-                              <span className="dashboard-demographic-metric dashboard-mono text-slate-900 font-extrabold ml-1">
-                                {formatCount(barangay.val)}{" "}
-                                <span className="font-normal text-[10px] text-slate-400">
-                {barangayMetric === "residents" ? "residents" : "families"}
-                                </span>
-                              </span>
-                            </div>
-
-                            <div className="mt-2 h-2 w-full rounded-full bg-slate-200/70 overflow-hidden">
-                              <div
-                                className="h-full rounded-full bg-linear-to-r from-blue-600 to-indigo-600 transition-all duration-500"
-                                style={{ width: `${barWidth}%` }}
-                              />
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
+                <div className="dashboard-popover-rows">
+                  <div className="dashboard-popover-row">
+                    <span>Total families</span>
+                    <strong>{formatCount(activeBarangayPopover.demographics.households)}</strong>
                   </div>
-                ) : (
-                  <p className="rounded-xl bg-slate-50 px-4 py-8 text-center text-xs text-slate-500 font-medium">
-                    {barangaySearch.trim()
-                      ? "No barangays match your search."
-                      : "No barangay census records registered yet."}
-                  </p>
-                )}
-
-                {/* Floating Demographics Breakdown Popover */}
-                {activeBarangayPopover && (
-                  <div
-                    role="tooltip"
-                    className="dashboard-demographics-popover"
-                    style={{
-                      top: `${activeBarangayPopover.top}px`,
-                      left: `${activeBarangayPopover.left}px`,
-                    }}
-                  >
-                    <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-100">
-                      <span className="font-extrabold text-slate-900 text-xs truncate">
-                        {activeBarangayPopover.barangay.name}
-                      </span>
-                      <span className="text-[10px] font-bold text-slate-400 dashboard-mono">
-                        #{activeBarangayPopover.barangay.rank}
-                      </span>
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <div className="flex items-center justify-between text-slate-600">
-                        <span>Total Families</span>
-                        <span className="dashboard-mono font-bold text-slate-900">
-                          {formatCount(activeBarangayPopover.demographics.households)}
-                        </span>
-                      </div>
-                      <div className="flex items-center justify-between text-slate-600">
-                        <span>Total Residents</span>
-                        <span className="dashboard-mono font-bold text-slate-900">
-                          {formatCount(activeBarangayPopover.demographics.residents)}
-                        </span>
-                      </div>
-                      <div className="flex items-center justify-between text-slate-600">
-                        <span>PWD</span>
-                        <span className="dashboard-mono font-bold text-slate-900">
-                          {formatCount(activeBarangayPopover.demographics.pwd)}
-                        </span>
-                      </div>
-                      <div className="flex items-center justify-between text-slate-600">
-                        <span>Pregnant</span>
-                        <span className="dashboard-mono font-bold text-slate-900">
-                          {formatCount(activeBarangayPopover.demographics.pregnant)}
-                        </span>
-                      </div>
-                      <div className="flex items-center justify-between text-slate-600">
-                        <span>Senior</span>
-                        <span className="dashboard-mono font-bold text-slate-900">
-                          {formatCount(activeBarangayPopover.demographics.senior)}
-                        </span>
-                      </div>
-                      <div className="flex items-center justify-between text-slate-600">
-                        <span>Solo Parent</span>
-                        <span className="dashboard-mono font-bold text-slate-900">
-                          {formatCount(activeBarangayPopover.demographics.soloParent)}
-                        </span>
-                      </div>
-                      <div className="flex items-center justify-between text-slate-600">
-                        <span>Needs Assistance</span>
-                        <span className="dashboard-mono font-bold text-slate-900">
-                          {formatCount(activeBarangayPopover.demographics.needsAssistance)}
-                        </span>
-                      </div>
-                    </div>
+                  <div className="dashboard-popover-row">
+                    <span>Total residents</span>
+                    <strong>{formatCount(activeBarangayPopover.demographics.residents)}</strong>
                   </div>
-                )}
-
-                {isAdmin && (
-                  <div className="mt-6 pt-4 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-500 font-medium">
-                    <div className="flex items-center gap-2">
-                      <span className="size-2 rounded-full bg-emerald-500" />
-                      <span>
-                        LGU Personnel System:{" "}
-                        <strong className="text-slate-800 font-bold">
-                          {formatCount(stats.activeStaff)} active
-                        </strong>{" "}
-                        of {formatCount(stats.totalStaff)} total staff accounts
-                      </span>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={() => handleSectionChange("users")}
-                      className="text-blue-600 hover:text-blue-800 font-bold inline-flex items-center gap-1.5 transition"
-                    >
-                      <span>Manage Personnel Accounts</span>
-                      <FontAwesomeIcon icon={faArrowRight} className="text-[10px]" />
-                    </button>
+                  <div className="dashboard-popover-row">
+                    <span>PWD</span>
+                    <strong>{formatCount(activeBarangayPopover.demographics.pwd)}</strong>
                   </div>
-                )}
-              </section>
-            </>
-          ) : error ? (
-            <div className="flex flex-col items-center justify-center p-12 text-center bg-white rounded-2xl border border-slate-200 shadow-[var(--shadow-xs)] my-6">
-              <div className="size-12 rounded-2xl bg-red-50 text-red-600 flex items-center justify-center mb-4">
-                <FontAwesomeIcon icon={faTriangleExclamation} className="text-xl" />
+                  <div className="dashboard-popover-row">
+                    <span>Pregnant</span>
+                    <strong>{formatCount(activeBarangayPopover.demographics.pregnant)}</strong>
+                  </div>
+                  <div className="dashboard-popover-row">
+                    <span>Senior</span>
+                    <strong>{formatCount(activeBarangayPopover.demographics.senior)}</strong>
+                  </div>
+                  <div className="dashboard-popover-row">
+                    <span>Solo parent</span>
+                    <strong>{formatCount(activeBarangayPopover.demographics.soloParent)}</strong>
+                  </div>
+                  <div className="dashboard-popover-row">
+                    <span>Needs assistance</span>
+                    <strong>{formatCount(activeBarangayPopover.demographics.needsAssistance)}</strong>
+                  </div>
+                </div>
               </div>
-              <h3 className="text-base font-bold text-slate-800">Operational Metrics Unavailable</h3>
-              <p className="mt-1 text-xs text-slate-500 max-w-md">
-                {error?.message || "Could not retrieve live dashboard analytics. Please verify connectivity and retry."}
-              </p>
-              <button
-                type="button"
-                onClick={handleRefreshAll}
-                className="mt-4 px-4 py-2 rounded-xl bg-blue-600 text-white text-xs font-bold hover:bg-blue-700 transition shadow-[var(--shadow-primary)]"
-              >
-                Retry Loading
-              </button>
-            </div>
-          ) : (
-            <div className="dashboard-loading-wrap">
-              <LoadingState message="Loading command analytics…" size="lg" />
-            </div>
-          )}
+            )}
+
+            {isAdmin && stats && (
+              <div className="dashboard-staff-footer">
+                <div className="dashboard-staff-status">
+                  <span className="dashboard-staff-dot" aria-hidden="true" />
+                  <span>
+                    <strong>{formatCount(stats.activeStaff)} active</strong> of{" "}
+                    {formatCount(stats.totalStaff)} total staff accounts
+                  </span>
+                </div>
+
+                <Link to="/admin?tab=users" className="dashboard-section-link">
+                  <span>Manage personnel accounts</span>
+                  <ArrowRight size={14} aria-hidden="true" />
+                </Link>
+              </div>
+            )}
+          </section>
         </div>
       </main>
     </div>

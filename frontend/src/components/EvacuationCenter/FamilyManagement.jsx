@@ -1,5 +1,14 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import {
+  AlertTriangle,
+  ArrowLeftRight,
+  Pencil,
+  Plus,
+  Search,
+  Users,
+  X,
+} from "lucide-react";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
   faArrowLeft,
@@ -43,6 +52,7 @@ import { displayEntityName } from "../../utils/displayEntityName";
 import { formatRoomLabel } from "../../utils/formatRoomLabel";
 import { familyTerm, resolveCenterStructureMode } from "./utils";
 import LoadingState from "../LoadingState/LoadingState";
+import { Button, StatusPill } from "../ui";
 import "./FamilyManagement.css";
 
 function saveBlob(blob, filename) {
@@ -3559,7 +3569,7 @@ export default function FamilyManagement({
       aria-label="Family and Resident Management"
     >
       {/* Feedback Banners */}
-      {error && !modal && !isAddWizardOpen && (
+      {error && !modal && !isAddWizardOpen && !(activeScreen === "list" && familiesQuery.error && !localError) && (
         <div className="fm-banner fm-banner-error" role="alert">
           <div className="fm-banner-content">
             <FontAwesomeIcon icon={faTriangleExclamation} />
@@ -5807,646 +5817,412 @@ export default function FamilyManagement({
       })()}
 
       {/* =====================================================
-          SCREEN 4: HOUSEHOLD LIST (Page C)
+          SCREEN 4: FAMILIES LIST (REDESIGNED TABLE CARD)
       ===================================================== */}
       {!hideScreenContent && activeScreen === "list" && (
-        <div className="fm-surface-card">
-          {/* Toolbar */}
+        <section
+          className={`fm-list-card ${lockedBarangayId ? "is-locked-barangay" : ""}`.trim()}
+          aria-label={lockedBarangayName ? `Families in ${lockedBarangayName}` : "All families"}
+        >
+          {/* Optional standalone header (when not hosted under BarangayManager header) */}
           {!hideListHeader && (
-            <div className="fm-list-header">
+            <div className="fm-list-card-header">
               <div>
-                <h3>
-                  {lockedBarangayName
-                    ? `Families in ${lockedBarangayName}`
-                    : "Registered Families"}
+                <h3 className="fm-list-card-title">
+                  {lockedBarangayName ? `Families in ${lockedBarangayName}` : "Registered Families"}
                 </h3>
-                <p>
-                  Search families, filter by evacuation assignment status, and
-                  manage family members and room assignments.
+                <p className="fm-list-card-sub">
+                  Search families, filter by shelter assignment status, and manage members and rooms.
                 </p>
               </div>
-              <div className="fm-list-actions">
-                <button
-                  type="button"
-                  className="fm-btn fm-btn-primary"
-                  onClick={openAddFamilyWizard}
-                >
-                  <FontAwesomeIcon icon={faPlus} /> Add Family
-                </button>
-                <button
-                  type="button"
-                  className="fm-btn fm-btn-secondary"
-                  onClick={exportFamilies}
-                >
-                  <FontAwesomeIcon icon={faDownload} /> Export CSV
-                </button>
+              <div className="fm-list-card-actions">
+                <Button variant="secondary" onClick={exportFamilies}>
+                  <span>Export CSV</span>
+                </Button>
+                <Button variant="primary" onClick={openAddFamilyWizard}>
+                  <Plus size={16} strokeWidth={2} aria-hidden="true" />
+                  <span>Add Family</span>
+                </Button>
               </div>
             </div>
           )}
 
-          {/* Search & Filters */}
-          <div className="fm-filters-bar">
-            <label className="fm-search-box">
-              <FontAwesomeIcon icon={faMagnifyingGlass} />
+          {/* Toolbar: Search, Census Year, Barangay, Status, Sort */}
+          <div className="fm-list-toolbar">
+            <div className="fm-list-search-wrap">
+              <Search
+                size={16}
+                strokeWidth={2}
+                className="fm-list-search-icon"
+                aria-hidden="true"
+              />
               <input
                 type="search"
+                className="fm-list-search-input"
                 value={searchInput}
                 onChange={(e) => setSearchInput(e.target.value)}
-                placeholder={
-                  compactMobileAllHouseholds && isMobileViewport
-                    ? "Search families"
-                    : "Search by family ID, family head, or member name..."
-                }
+                placeholder="Search by family ID, family head, or member name..."
+                aria-label="Search families by family ID, family head, or member name"
               />
-            </label>
+              {searchInput && (
+                <button
+                  type="button"
+                  className="fm-list-search-clear"
+                  aria-label="Clear search"
+                  onClick={() => {
+                    setSearchInput("");
+                    setSearch("");
+                    setPage(1);
+                  }}
+                >
+                  <X size={15} strokeWidth={2} aria-hidden="true" />
+                </button>
+              )}
+            </div>
 
-            {compactMobileAllHouseholds && (
-              <button
-                type="button"
-                className="fm-mobile-filters-btn"
-                onClick={openMobileFiltersSheet}
-              >
-                <FontAwesomeIcon icon={faSliders} />
-                <span>Filters</span>
-                {activeMobileFilterCount > 0 && (
-                  <span
-                    className="fm-mobile-filter-badge"
-                    aria-label={`${activeMobileFilterCount} active filters`}
-                  >
-                    {activeMobileFilterCount}
-                  </span>
-                )}
-              </button>
-            )}
-
-            <select
-              value={yearFilter}
-              onChange={(e) => {
-                setPage(1);
-                setYearFilter(e.target.value);
-              }}
-              aria-label="Filter by census year"
-            >
-              <option value="">All Years</option>
-              {rosterYears.map((ry) => (
-                <option key={ry.id || ry.year} value={ry.year}>
-                  Census Year {ry.year} {ry.is_active ? "(Active)" : ""}
-                </option>
-              ))}
-            </select>
-
-            {!lockedBarangayId && (
+            <div className="fm-list-controls">
               <select
-                value={barangayFilter}
+                className="fm-list-select"
+                value={yearFilter}
                 onChange={(e) => {
                   setPage(1);
-                  setBarangayFilter(e.target.value);
+                  setYearFilter(e.target.value);
                 }}
-                aria-label="Filter by barangay"
+                aria-label="Filter by census year"
               >
-                <option value="">All Barangays</option>
-                {barangays.map((b) => (
-                  <option key={b.id} value={b.id}>
-                    {b.name}
+                <option value="">All Years</option>
+                {rosterYears.map((ry) => (
+                  <option key={ry.id || ry.year} value={ry.year}>
+                    Census Year {ry.year} {ry.is_active ? "(Active)" : ""}
                   </option>
                 ))}
               </select>
-            )}
 
-            <select
-              value={assignmentStatus}
-              onChange={(e) => {
-                setPage(1);
-                setAssignmentStatus(e.target.value);
-              }}
-              aria-label="Filter by assignment status"
-            >
-              <option value="">All Statuses</option>
-              <option value="assigned">Assigned</option>
-              <option value="unassigned">Unassigned</option>
-            </select>
+              {!lockedBarangayId && (
+                <select
+                  className="fm-list-select"
+                  value={barangayFilter}
+                  onChange={(e) => {
+                    setPage(1);
+                    setBarangayFilter(e.target.value);
+                  }}
+                  aria-label="Filter by barangay"
+                >
+                  <option value="">All Barangays</option>
+                  {barangays.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.name}
+                    </option>
+                  ))}
+                </select>
+              )}
 
-            <select
-              value={`${sortBy}:${direction}`}
-              onChange={(e) => {
-                const [nextSort, nextDir] = e.target.value.split(":");
-                setPage(1);
-                setSortBy(nextSort);
-                setDirection(nextDir);
-              }}
-              aria-label="Sort families"
-            >
-              <option value="family_code:asc">Family ID (A–Z)</option>
-              <option value="head_name:asc">Family Head (A–Z)</option>
-              <option value="member_count:desc">Most Members</option>
-              <option value="created_at:desc">Recently Added</option>
-            </select>
+              <select
+                className="fm-list-select"
+                value={assignmentStatus}
+                onChange={(e) => {
+                  setPage(1);
+                  setAssignmentStatus(e.target.value);
+                }}
+                aria-label="Filter by status"
+              >
+                <option value="">All Statuses</option>
+                <option value="assigned">Assigned</option>
+                <option value="unassigned">Unassigned</option>
+              </select>
+
+              <select
+                className="fm-list-select"
+                value={`${sortBy}:${direction}`}
+                onChange={(e) => {
+                  const [nextSort, nextDir] = e.target.value.split(":");
+                  setPage(1);
+                  setSortBy(nextSort);
+                  setDirection(nextDir);
+                }}
+                aria-label="Sort families"
+              >
+                <option value="family_code:asc">Family ID (A–Z)</option>
+                <option value="head_name:asc">Family Head (A–Z)</option>
+                <option value="member_count:desc">Most Members</option>
+                <option value="created_at:desc">Recently Added</option>
+              </select>
+            </div>
           </div>
 
-          {/* Household List Content */}
+          {/* Body: Skeleton Loading / Error / Empty / Rows */}
           {loading ? (
-            <LoadingState message="Loading families..." />
-          ) : families.length === 0 ? (
-            <div className="fm-empty-state">
-              <FontAwesomeIcon icon={faUsers} />
-              <h4>No families found</h4>
+            <div className="fm-list-table-scroll" aria-busy="true" aria-label="Loading families">
+              <div className="fm-list-head" aria-hidden="true">
+                <div className={`fm-list-cols ${lockedBarangayId ? "is-locked" : ""}`}>
+                  <span>FAMILY</span>
+                  {!lockedBarangayId && <span>BARANGAY</span>}
+                  <span>MEMBERS</span>
+                  <span>BUILDING &middot; ROOM</span>
+                </div>
+                <span className="fm-list-actions-head">ACTIONS</span>
+              </div>
+              {Array.from({ length: 6 }).map((_, idx) => (
+                <div key={idx} className="fm-list-skeleton-row" aria-hidden="true">
+                  <div className={`fm-list-cols ${lockedBarangayId ? "is-locked" : ""}`}>
+                    <div className="fm-list-family-cell">
+                      <span className="fm-skel fm-skel-avatar" />
+                      <div className="fm-skel-stack">
+                        <span className="fm-skel fm-skel-name" />
+                        <span className="fm-skel fm-skel-code" />
+                      </div>
+                    </div>
+                    {!lockedBarangayId && <span className="fm-skel fm-skel-chip" />}
+                    <span className="fm-skel fm-skel-chip-sm" />
+                    <div className="fm-skel-stack">
+                      <span className="fm-skel fm-skel-room" />
+                      <span className="fm-skel fm-skel-center" />
+                    </div>
+                  </div>
+                  <div className="fm-list-actions-cell">
+                    <span className="fm-skel fm-skel-btn" />
+                    <span className="fm-skel fm-skel-btn" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : familiesQuery.error ? (
+            <div className="fm-list-state" role="alert">
+              <span className="fm-list-state-icon is-error" aria-hidden="true">
+                <AlertTriangle size={20} strokeWidth={2} />
+              </span>
+              <h3>Could not load families</h3>
               <p>
-                {search || assignmentStatus
-                  ? "No families match your current search or filter criteria."
-                  : "Register a family using 'Add Family' to get started."}
+                {familiesQuery.error?.message ||
+                  "Something went wrong while loading family records."}
               </p>
-              {!hideListHeader && (
-                <button
-                  type="button"
-                  className="fm-btn fm-btn-primary"
-                  onClick={openAddFamilyWizard}
+              <Button variant="secondary" onClick={() => familiesQuery.refetch()}>
+                Try again
+              </Button>
+            </div>
+          ) : families.length === 0 ? (
+            <div className="fm-list-state" role="status">
+              <span className="fm-list-state-icon" aria-hidden="true">
+                <Users size={20} strokeWidth={2} />
+              </span>
+              <h3>
+                {searchInput.trim() ||
+                (!lockedBarangayId && barangayFilter) ||
+                assignmentStatus ||
+                (yearFilter && yearFilter !== defaultYearFilter) ||
+                sortBy !== "family_code" ||
+                direction !== "asc"
+                  ? "No matching families"
+                  : "No families found"}
+              </h3>
+              <p>
+                {searchInput.trim() ||
+                (!lockedBarangayId && barangayFilter) ||
+                assignmentStatus ||
+                (yearFilter && yearFilter !== defaultYearFilter) ||
+                sortBy !== "family_code" ||
+                direction !== "asc"
+                  ? "Try adjusting your search or filter criteria to see more families."
+                  : lockedBarangayName
+                    ? `No families are registered in ${lockedBarangayName} yet. Register a family using Add Family to get started.`
+                    : "Register a family using Add Family to get started."}
+              </p>
+              {searchInput.trim() ||
+              (!lockedBarangayId && barangayFilter) ||
+              assignmentStatus ||
+              (yearFilter && yearFilter !== defaultYearFilter) ||
+              sortBy !== "family_code" ||
+              direction !== "asc" ? (
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    setSearchInput("");
+                    setSearch("");
+                    if (!lockedBarangayId) setBarangayFilter("");
+                    setAssignmentStatus("");
+                    setYearFilter(defaultYearFilter);
+                    setSortBy("family_code");
+                    setDirection("asc");
+                    setPage(1);
+                  }}
                 >
-                  <FontAwesomeIcon icon={faPlus} /> Add Family
-                </button>
+                  Clear filters
+                </Button>
+              ) : (
+                <Button variant="primary" onClick={openAddFamilyWizard}>
+                  <Plus size={16} strokeWidth={2} aria-hidden="true" />
+                  <span>Add Family</span>
+                </Button>
               )}
             </div>
           ) : (
             <>
-              {/* Desktop Table */}
-              <div ref={listTableWrapRef} className="fm-table-wrap fm-desktop-only">
-                <table
-                  className={`fm-table fm-families-table ${
-                    lockedBarangayId ? "is-barangay-tab" : "is-all-tab"
-                  }`}
-                >
-                  <thead>
-                    <tr>
-                      <th className="fm-col-household">Family</th>
-                      {!lockedBarangayId && <th className="fm-col-barangay">Barangay</th>}
-                      <th>Members</th>
-                      <th>Building &middot; Room</th>
-                      <th className="fm-col-actions">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {families.map((fam) => {
-                      const assigned = isFamilyAssigned(fam);
-                      const structureMode = getFamilyStructureMode(fam);
-                      const centerName = displayEntityName(
-                        fam.current_center_name || fam.current_center || fam.evacuation_center
-                      );
-                      const roomNum = fam.current_room_name || fam.current_room || fam.rooms;
-                      const bldgName = fam.current_building_name || fam.current_building;
-                      const roomLabel = roomNum ? formatRoomLabel(roomNum) : null;
-                      const bldgRoomText =
-                        assigned && structureMode !== "open_area" && roomLabel
-                          ? (structureMode === "buildings_and_rooms" && bldgName
-                              ? `${bldgName} · ${roomLabel}`
-                              : roomLabel)
-                          : null;
-                      return (
-                        <tr
-                          key={fam.id}
-                          className="fm-table-row fm-clickable-row"
-                          tabIndex={0}
-                          aria-label={`View family details for ${fam.head_name}`}
-                          onClick={() => openHouseholdDetails(fam)}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter" || e.key === " ") {
-                              e.preventDefault();
-                              openHouseholdDetails(fam);
-                            }
-                          }}
-                        >
-                          <td className="fm-col-household">
-                            <div className="fm-household-cell">
-                              <div className="fm-avatar-circle" title={fam.head_name}>
-                                {getHouseholdInitials(fam.head_name)}
-                              </div>
-                              <div className="fm-household-info">
-                                <span className="fm-head-name-text fm-row-link-text">
-                                  {fam.head_name}
-                                </span>
-                                <span
-                                  className="fm-household-id-sub"
-                                  title={`Full Code: ${fam.family_code}`}
-                                >
-                                  {formatHouseholdDisplayCode(fam.family_code)}
-                                </span>
-                              </div>
-                            </div>
-                          </td>
-                          {!lockedBarangayId && (
-                            <td className="fm-col-barangay">
-                              <span className="fm-brgy-tag">{fam.barangay || "—"}</span>
-                            </td>
-                          )}
-                          <td>
-                            <span className="fm-members-badge">
-                              <FontAwesomeIcon icon={faUsers} />
-                              <strong>{fam.resident_count ?? fam.member_count ?? 0}</strong>
-                            </span>
-                          </td>
-                          <td>
-                            {assigned ? (
-                              <div className="fm-assignment-cell">
-                                {bldgRoomText ? (
-                                  <>
-                                    <span className="fm-room-badge">
-                                      <FontAwesomeIcon icon={faDoorOpen} />
-                                      <span>{bldgRoomText}</span>
-                                    </span>
-                                    {centerName && (
-                                      <span className="fm-center-name" title={centerName}>
-                                        <FontAwesomeIcon icon={faBuilding} /> {centerName}
-                                      </span>
-                                    )}
-                                  </>
-                                ) : (
-                                  <span className="fm-center-name" title={centerName || "Assigned"}>
-                                    <FontAwesomeIcon icon={faBuilding} /> {centerName || "Evacuation Center"}
-                                  </span>
-                                )}
-                              </div>
-                            ) : (
-                              <span className="fm-badge fm-badge-amber">
-                                <FontAwesomeIcon icon={faTriangleExclamation} /> Unassigned
-                              </span>
-                            )}
-                          </td>
-                          <td className="fm-col-actions">
-                            <div
-                              className="fm-row-actions"
-                              onClick={(e) => e.stopPropagation()}
-                              onKeyDown={(e) => e.stopPropagation()}
-                            >
-                              <button
-                                type="button"
-                                className="fm-btn-icon edit"
-                                aria-label="Edit family"
-                                title="Edit family"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  openEditHouseholdModal(fam);
-                                }}
-                              >
-                                <FontAwesomeIcon icon={faPenToSquare} />
-                              </button>
-                              <button
-                                type="button"
-                                className="fm-btn-icon reassign"
-                                aria-label="Assign room"
-                                title={assigned ? "Reassign room" : "Assign room"}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  if (assigned) {
-                                    openMoveModal(fam);
-                                  } else {
-                                    openAssignModal(fam);
-                                  }
-                                }}
-                              >
-                                <FontAwesomeIcon icon={faRightLeft} />
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-
-              {/* Mobile Stacked Cards (768px and below) */}
-              <div ref={listMobileCardsRef} className="fm-mobile-cards fm-mobile-only">
-                {families.map((fam, idx) => {
-                  const assigned = isFamilyAssigned(fam);
-                  const structureMode = getFamilyStructureMode(fam);
-                  const centerName = displayEntityName(
-                    fam.current_center_name || fam.current_center || fam.evacuation_center
-                  );
-                  const roomNum = fam.current_room_name || fam.current_room || fam.rooms;
-                  const bldgName = fam.current_building_name || fam.current_building;
-                  const roomLabel = roomNum ? formatRoomLabel(roomNum) : null;
-                  const bldgRoomText =
-                    assigned && structureMode !== "open_area" && roomLabel
-                      ? (structureMode === "buildings_and_rooms" && bldgName
-                          ? `${bldgName} · ${roomLabel}`
-                          : roomLabel)
-                      : null;
-                  const memberCount = Number(
-                    fam.resident_count ?? fam.member_count ?? 0
-                  );
-
-                  if (compactMobileAllHouseholds) {
-                    const isMenuOpen = openMobileCardMenuId === fam.id;
-                    const openUpward =
-                      families.length >= 3 && idx >= families.length - 2;
-                    const row2Parts = [
-                      formatHouseholdDisplayCode(fam.family_code),
-                      !lockedBarangayId && fam.barangay ? fam.barangay : null,
-                      `${memberCount} ${memberCount === 1 ? "member" : "members"}`,
-                    ].filter(Boolean);
-                    const checkinText =
-                      fam.checkin_status ||
-                      (fam.is_checked_in ? "Checked in" : "Not yet arrived");
-
-                    return (
-                      <article
-                        key={fam.id}
-                        className={`fm-mobile-card fm-mobile-card-compact ${
-                          isMenuOpen ? "has-open-menu" : ""
-                        }`}
-                        role="button"
-                        tabIndex={0}
-                        aria-label={`View family details for ${fam.head_name}`}
-                        onClick={() => openHouseholdDetails(fam)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" || e.key === " ") {
-                            e.preventDefault();
-                            openHouseholdDetails(fam);
-                          }
-                        }}
-                      >
-                        <div className="fm-mc-row1">
-                          <div className="fm-avatar-circle" title={fam.head_name}>
-                            {getHouseholdInitials(fam.head_name)}
-                          </div>
-                          <span className="fm-mc-head-name">{fam.head_name}</span>
-                          <div className="fm-mc-row1-right">
-                            {assigned ? (
-                              <span className="fm-badge fm-badge-green fm-mc-status-pill">
-                                Assigned
-                              </span>
-                            ) : (
-                              <span className="fm-badge fm-badge-amber fm-mc-status-pill">
-                                Unassigned
-                              </span>
-                            )}
-                            <div
-                              className="fm-mobile-card-menu-wrap"
-                              onClick={(e) => e.stopPropagation()}
-                              onKeyDown={(e) => e.stopPropagation()}
-                            >
-                              <button
-                                type="button"
-                                className="fm-mc-menu-trigger"
-                                aria-label={`Actions for ${fam.head_name}`}
-                                aria-expanded={isMenuOpen}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setOpenMobileCardMenuId((prev) =>
-                                    prev === fam.id ? null : fam.id
-                                  );
-                                }}
-                              >
-                                <FontAwesomeIcon icon={faEllipsisVertical} />
-                              </button>
-                              {isMenuOpen && (
-                                <div
-                                  className={`fm-mc-menu-popover ${
-                                    openUpward ? "open-upward" : ""
-                                  }`}
-                                  role="menu"
-                                >
-                                  <button
-                                    type="button"
-                                    role="menuitem"
-                                    className="fm-mc-menu-item"
-                                    onClick={() => {
-                                      setOpenMobileCardMenuId(null);
-                                      openEditHouseholdModal(fam);
-                                    }}
-                                  >
-                                    <FontAwesomeIcon icon={faPenToSquare} />
-                                    <span>Edit</span>
-                                  </button>
-                                  <button
-                                    type="button"
-                                    role="menuitem"
-                                    className="fm-mc-menu-item"
-                                    onClick={() => {
-                                      setOpenMobileCardMenuId(null);
-                                      if (assigned) {
-                                        openMoveModal(fam);
-                                      } else {
-                                        openAssignModal(fam);
-                                      }
-                                    }}
-                                  >
-                                    <FontAwesomeIcon icon={faRightLeft} />
-                                    <span>{assigned ? "Reassign" : "Assign"}</span>
-                                  </button>
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="fm-mc-row2">{row2Parts.join(" · ")}</div>
-
-                        <div className="fm-mc-row3">
-                          {bldgRoomText ? (
-                            <>
-                              <span className="fm-mc-room-text">
-                                {bldgRoomText}
-                              </span>
-                              <span
-                                className={`fm-mc-checkin-text ${
-                                  fam.is_checked_in ? "checked-in" : "pending"
-                                }`}
-                              >
-                                {" "}
-                                · {checkinText}
-                              </span>
-                            </>
-                          ) : assigned ? (
-                            <>
-                              <span className="fm-mc-room-text">
-                                {centerName || "Assigned"}
-                              </span>
-                              <span
-                                className={`fm-mc-checkin-text ${
-                                  fam.is_checked_in ? "checked-in" : "pending"
-                                }`}
-                              >
-                                {" "}
-                                · {checkinText}
-                              </span>
-                            </>
-                          ) : (
-                            <span className="fm-mc-unassigned-text">
-                              Unassigned
-                            </span>
-                          )}
-                        </div>
-                      </article>
-                    );
-                  }
-
-                  return (
-                    <article key={fam.id} className="fm-mobile-card">
-                      <div className="fm-mobile-card-header">
-                        <div className="fm-avatar-circle" title={fam.head_name}>
-                          {getHouseholdInitials(fam.head_name)}
-                        </div>
-                        <div className="fm-mobile-top-content">
-                          <button
-                            type="button"
-                            className="fm-head-name-btn fm-mobile-head-name"
-                            onClick={() => openHouseholdDetails(fam)}
-                          >
-                            {fam.head_name}
-                          </button>
-                          <div className="fm-mobile-sub-info">
-                            <span
-                              className="fm-household-id-sub"
-                              title={`Full Code: ${fam.family_code}`}
-                            >
-                              {formatHouseholdDisplayCode(fam.family_code)}
-                            </span>
-                            {!lockedBarangayId && fam.barangay && (
-                              <span className="fm-brgy-tag">{fam.barangay}</span>
-                            )}
-                            <span className="fm-members-badge">
-                              <FontAwesomeIcon icon={faUsers} />
-                              <strong>{memberCount}</strong>
-                            </span>
-                          </div>
-                        </div>
-
-                        <div className="fm-mobile-status-wrap">
-                          {assigned ? (
-                            <span
-                              className={`fm-checkin-pill ${fam.is_checked_in ? "checked-in" : "pending"}`}
-                            >
-                              <span className={`fm-status-dot ${fam.is_checked_in ? "green" : "slate"}`} />
-                              {fam.checkin_status || (fam.is_checked_in ? "Checked in" : "Not yet arrived")}
-                            </span>
-                          ) : (
-                            <span className="fm-badge fm-badge-amber">
-                              <FontAwesomeIcon icon={faTriangleExclamation} /> Unassigned
-                            </span>
-                          )}
-                        </div>
-                      </div>
-
-                      <div className="fm-mobile-card-body">
-                        <div className="fm-mobile-info-row">
-                          <span className="fm-mobile-loc-label">Shelter Assignment:</span>
-                          <div className="fm-mobile-loc-val">
-                            {assigned ? (
-                              <div className="fm-assignment-cell">
-                                {bldgRoomText ? (
-                                  <>
-                                    <span className="fm-room-badge">
-                                      <FontAwesomeIcon icon={faDoorOpen} />
-                                      <span>{bldgRoomText}</span>
-                                    </span>
-                                    {centerName && (
-                                      <span className="fm-center-name" title={centerName}>
-                                        <FontAwesomeIcon icon={faBuilding} /> {centerName}
-                                      </span>
-                                    )}
-                                  </>
-                                ) : (
-                                  <span className="fm-center-name" title={centerName || "Assigned"}>
-                                    <FontAwesomeIcon icon={faBuilding} /> {centerName || "Evacuation Center"}
-                                  </span>
-                                )}
-                              </div>
-                            ) : (
-                              <span className="text-amber-600 font-medium text-xs">
-                                Awaiting evacuation center room assignment
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="fm-mobile-card-actions">
-                        <button
-                          type="button"
-                          className="fm-btn-icon view"
-                          onClick={() => openHouseholdDetails(fam)}
-                        >
-                          <FontAwesomeIcon icon={faEye} />
-                          <span>View</span>
-                        </button>
-                        <button
-                          type="button"
-                          className="fm-btn-icon edit"
-                          onClick={() => openEditHouseholdModal(fam)}
-                        >
-                          <FontAwesomeIcon icon={faPenToSquare} />
-                          <span>Edit</span>
-                        </button>
-                        <button
-                          type="button"
-                          className="fm-btn-icon reassign"
-                          onClick={() =>
-                            assigned
-                              ? openMoveModal(fam)
-                              : openAssignModal(fam)
-                          }
-                        >
-                          <FontAwesomeIcon icon={faRightLeft} />
-                          <span>{assigned ? "Reassign" : "Assign"}</span>
-                        </button>
-                      </div>
-                    </article>
-                  );
-                })}
-              </div>
-
-              {/* Pagination Footer */}
-              <div className="fm-pagination">
-                <div className="fm-pagination-page-size">
-                  <label htmlFor="fm-page-size-select">Per page:</label>
-                  <select
-                    id="fm-page-size-select"
-                    value={pageSize}
-                    onChange={(e) => {
-                      setPage(1);
-                      setPageSize(Number(e.target.value));
-                    }}
-                    aria-label="Select families per page"
-                  >
-                    <option value={25}>25</option>
-                    <option value={50}>50</option>
-                    <option value={100}>100</option>
-                  </select>
+              <div ref={listTableWrapRef} className="fm-list-table-scroll">
+                <div className="fm-list-head" role="row">
+                  <div className={`fm-list-cols ${lockedBarangayId ? "is-locked" : ""}`}>
+                    <span role="columnheader">FAMILY</span>
+                    {!lockedBarangayId && <span role="columnheader">BARANGAY</span>}
+                    <span role="columnheader">MEMBERS</span>
+                    <span role="columnheader">BUILDING &middot; ROOM</span>
+                  </div>
+                  <span role="columnheader" className="fm-list-actions-head">
+                    ACTIONS
+                  </span>
                 </div>
 
-                <span className="fm-pagination-range">
-                  {total === 0
-                    ? "0 of 0"
-                    : `${((page - 1) * pageSize + 1).toLocaleString()}-${Math.min(
+                <div ref={listMobileCardsRef} className="fm-list-rows" role="list">
+                  {families.map((fam) => {
+                    const assigned = isFamilyAssigned(fam);
+                    const structureMode = getFamilyStructureMode(fam);
+                    const centerName = displayEntityName(
+                      fam.current_center_name || fam.current_center || fam.evacuation_center
+                    );
+                    const roomNum = fam.current_room_name || fam.current_room || fam.rooms;
+                    const bldgName = fam.current_building_name || fam.current_building;
+                    const roomLabel = roomNum ? formatRoomLabel(roomNum) : null;
+                    const bldgRoomText =
+                      assigned && structureMode !== "open_area" && roomLabel
+                        ? structureMode === "buildings_and_rooms" && bldgName
+                          ? `${bldgName} · ${roomLabel}`
+                          : roomLabel
+                        : null;
+                    const memberCount = Number(
+                      fam.resident_count ?? fam.member_count ?? 0
+                    );
+                    const displayCode =
+                      fam.family_code || formatHouseholdDisplayCode(fam.id);
+
+                    return (
+                      <div key={fam.id} className="fm-list-row" role="listitem">
+                        <button
+                          type="button"
+                          className={`fm-list-row-main fm-list-cols ${
+                            lockedBarangayId ? "is-locked" : ""
+                          }`}
+                          aria-label={`View family details for ${fam.head_name}`}
+                          onClick={() => openHouseholdDetails(fam)}
+                        >
+                          {/* FAMILY */}
+                          <span className="fm-list-family-cell">
+                            <span className="fm-list-avatar" aria-hidden="true">
+                              {getHouseholdInitials(fam.head_name)}
+                            </span>
+                            <span className="fm-list-family-copy">
+                              <span className="fm-list-family-name">{fam.head_name}</span>
+                              <span
+                                className="fm-list-code-chip"
+                                title={`Family ID: ${displayCode}`}
+                              >
+                                {displayCode}
+                              </span>
+                            </span>
+                          </span>
+
+                          {/* BARANGAY */}
+                          {!lockedBarangayId && (
+                            <span className="fm-list-chip-cell">
+                              <span className="fm-list-chip">{fam.barangay || "—"}</span>
+                            </span>
+                          )}
+
+                          {/* MEMBERS */}
+                          <span className="fm-list-chip-cell">
+                            <span className="fm-list-chip">
+                              {memberCount} {memberCount === 1 ? "member" : "members"}
+                            </span>
+                          </span>
+
+                          {/* BUILDING · ROOM */}
+                          <span className="fm-list-shelter-cell">
+                            {assigned ? (
+                              <span className="fm-list-shelter-copy">
+                                <strong className="fm-list-shelter-room">
+                                  {bldgRoomText || centerName || "Assigned"}
+                                </strong>
+                                {bldgRoomText && centerName && (
+                                  <span className="fm-list-shelter-center" title={centerName}>
+                                    {centerName}
+                                  </span>
+                                )}
+                              </span>
+                            ) : (
+                              <StatusPill variant="unassigned" />
+                            )}
+                          </span>
+                        </button>
+
+                        {/* ACTIONS */}
+                        <div className="fm-list-actions-cell">
+                          <button
+                            type="button"
+                            className="fm-list-icon-btn"
+                            aria-label={`Edit ${fam.head_name}`}
+                            title="Edit family"
+                            onClick={() => openEditHouseholdModal(fam)}
+                          >
+                            <Pencil size={16} strokeWidth={2} aria-hidden="true" />
+                          </button>
+                          <button
+                            type="button"
+                            className="fm-list-icon-btn"
+                            aria-label={
+                              assigned
+                                ? `Transfer ${fam.head_name} to another room`
+                                : `Assign ${fam.head_name} to a room`
+                            }
+                            title={assigned ? "Transfer room" : "Assign room"}
+                            onClick={() => {
+                              if (assigned) {
+                                openMoveModal(fam);
+                              } else {
+                                openAssignModal(fam);
+                              }
+                            }}
+                          >
+                            <ArrowLeftRight size={16} strokeWidth={2} aria-hidden="true" />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Footer: Showing X of Y + Previous / Next */}
+              <footer className="fm-list-footer">
+                <span className="fm-list-footer-info">
+                  {pages > 1
+                    ? `Showing ${((page - 1) * pageSize + 1).toLocaleString()}–${Math.min(
                         page * pageSize,
                         total
-                      ).toLocaleString()} of ${total.toLocaleString()}`}
+                      ).toLocaleString()} of ${total.toLocaleString()} families`
+                    : `Showing ${total.toLocaleString()} of ${total.toLocaleString()} ${
+                        total === 1 ? "family" : "families"
+                      }`}
                 </span>
 
-                <div className="fm-pagination-controls">
-                  <button
-                    type="button"
-                    className="fm-btn fm-btn-secondary fm-btn-sm"
+                <div className="fm-list-footer-nav">
+                  <Button
+                    variant="secondary"
+                    className="fm-list-page-btn"
                     disabled={page <= 1}
                     onClick={() => setPage((p) => Math.max(1, p - 1))}
                   >
                     Previous
-                  </button>
-                  <span className="fm-pagination-page-indicator">
-                    Page {page} of {pages}
-                  </span>
-                  <button
-                    type="button"
-                    className="fm-btn fm-btn-secondary fm-btn-sm"
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    className="fm-list-page-btn"
                     disabled={page >= pages}
                     onClick={() => setPage((p) => Math.min(pages, p + 1))}
                   >
                     Next
-                  </button>
+                  </Button>
                 </div>
-              </div>
+              </footer>
             </>
           )}
-        </div>
+        </section>
       )}
 
       {/* =====================================================

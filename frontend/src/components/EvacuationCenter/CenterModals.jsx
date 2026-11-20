@@ -1042,6 +1042,14 @@ export function CenterFormModal({
   );
 }
 
+const PEOPLE_PER_FAMILY_SLOT = 5;
+
+function computeFamilySlots(peopleSpaces) {
+  const spaces = Number(peopleSpaces);
+  if (!Number.isInteger(spaces) || spaces < 1) return null;
+  return Math.ceil(spaces / PEOPLE_PER_FAMILY_SLOT);
+}
+
 export function CenterRoomModal({
   mode = 'add',
   selectedCenter,
@@ -1068,6 +1076,7 @@ export function CenterRoomModal({
       ? `${selectedBuildingName} · ${selectedCenter?.name || 'Evacuation center'}`
       : `Add a room to ${selectedCenter?.name || 'this evacuation center'}`;
   const [fieldErrors, setFieldErrors] = useState({});
+  const calculatedFamilySlots = computeFamilySlots(roomForm.people_spaces);
 
   function clearFieldError(field) {
     setFieldErrors((prev) => {
@@ -1088,12 +1097,6 @@ export function CenterRoomModal({
       valid = false;
     } else {
       clearFieldError('room_number');
-    }
-    if (!Number.isInteger(Number(roomForm.family_slots)) || Number(roomForm.family_slots) < 1) {
-      setFieldError('family_slots', 'Enter a whole number of family slots (minimum 1).');
-      valid = false;
-    } else {
-      clearFieldError('family_slots');
     }
     if (!Number.isInteger(Number(roomForm.people_spaces)) || Number(roomForm.people_spaces) < 1) {
       setFieldError('people_spaces', 'Enter a whole number of people spaces (minimum 1).');
@@ -1219,49 +1222,40 @@ export function CenterRoomModal({
           />
           {fieldErrors.room_number && <p className="field-error">{fieldErrors.room_number}</p>}
         </div>
-        <div className="crm-room-capacity-grid">
-          <div className="form-group">
-            <label htmlFor="room-family-slots" className="crm-room-label">
-              Family slots <span className="crm-room-required">*</span>
-            </label>
-            <input
-              id="room-family-slots"
-              type="number"
-              min="1"
-              step="1"
-              required
-              inputMode="numeric"
-              onKeyDown={(e) => ["e", "E", "+", "-", ".", ","].includes(e.key) && e.preventDefault()}
-              className={fieldErrors.family_slots ? 'form-input is-invalid' : 'form-input'}
-              value={roomForm.family_slots ?? 5}
-              onChange={(e) => {
-                clearFieldError('family_slots');
-                onChange({ ...roomForm, family_slots: e.target.value });
-              }}
-            />
-            {fieldErrors.family_slots && <p className="field-error">{fieldErrors.family_slots}</p>}
-          </div>
-          <div className="form-group">
-            <label htmlFor="room-people-spaces" className="crm-room-label">
-              People spaces <span className="crm-room-required">*</span>
-            </label>
-            <input
-              id="room-people-spaces"
-              type="number"
-              min="1"
-              step="1"
-              required
-              inputMode="numeric"
-              onKeyDown={(e) => ["e", "E", "+", "-", ".", ","].includes(e.key) && e.preventDefault()}
-              className={fieldErrors.people_spaces ? 'form-input is-invalid' : 'form-input'}
-              value={roomForm.people_spaces ?? 25}
-              onChange={(e) => {
-                clearFieldError('people_spaces');
-                onChange({ ...roomForm, people_spaces: e.target.value });
-              }}
-            />
-            {fieldErrors.people_spaces && <p className="field-error">{fieldErrors.people_spaces}</p>}
-          </div>
+        <div className="form-group">
+          <label htmlFor="room-people-spaces" className="crm-room-label">
+            People spaces <span className="crm-room-required">*</span>
+          </label>
+          <input
+            id="room-people-spaces"
+            type="number"
+            min="1"
+            step="1"
+            required
+            inputMode="numeric"
+            onKeyDown={(e) => ["e", "E", "+", "-", ".", ","].includes(e.key) && e.preventDefault()}
+            className={fieldErrors.people_spaces ? 'form-input is-invalid' : 'form-input'}
+            value={roomForm.people_spaces ?? 25}
+            onChange={(e) => {
+              clearFieldError('people_spaces');
+              const nextSpaces = e.target.value;
+              const nextSlots = computeFamilySlots(nextSpaces);
+              onChange({
+                ...roomForm,
+                people_spaces: nextSpaces,
+                family_slots: nextSlots != null ? String(nextSlots) : '',
+              });
+            }}
+          />
+          {fieldErrors.people_spaces ? (
+            <p className="field-error">{fieldErrors.people_spaces}</p>
+          ) : calculatedFamilySlots != null ? (
+            <p className="cfm-helper-text">
+              Automatically sets <strong>{calculatedFamilySlots}</strong>{' '}
+              {calculatedFamilySlots === 1 ? 'family slot' : 'family slots'} (1 slot per{' '}
+              {PEOPLE_PER_FAMILY_SLOT} people, rounded up).
+            </p>
+          ) : null}
         </div>
         {hasBuildings && (
           <div className="form-group">
