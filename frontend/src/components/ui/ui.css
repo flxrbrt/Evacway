@@ -55,6 +55,8 @@
 }
 
 .ui-status-pill--almost-full,
+.ui-status-pill--fully-assigned,
+.ui-status-pill--fully_assigned,
 .ui-status-pill--partial,
 .ui-status-pill--unassigned,
 .ui-status-pill--pending,
@@ -65,6 +67,8 @@
 }
 
 .ui-status-pill--almost-full .ui-status-pill__dot,
+.ui-status-pill--fully-assigned .ui-status-pill__dot,
+.ui-status-pill--fully_assigned .ui-status-pill__dot,
 .ui-status-pill--partial .ui-status-pill__dot,
 .ui-status-pill--unassigned .ui-status-pill__dot,
 .ui-status-pill--pending .ui-status-pill__dot,
@@ -107,6 +111,8 @@
 
 .ui-status-pill--inactive,
 .ui-status-pill--unmapped,
+.ui-status-pill--not-mapped,
+.ui-status-pill--not_mapped,
 .ui-status-pill--no-records,
 .ui-status-pill--neutral,
 .ui-status-pill--pending-arrival,
@@ -117,6 +123,8 @@
 
 .ui-status-pill--inactive .ui-status-pill__dot,
 .ui-status-pill--unmapped .ui-status-pill__dot,
+.ui-status-pill--not-mapped .ui-status-pill__dot,
+.ui-status-pill--not_mapped .ui-status-pill__dot,
 .ui-status-pill--no-records .ui-status-pill__dot,
 .ui-status-pill--neutral .ui-status-pill__dot,
 .ui-status-pill--pending-arrival .ui-status-pill__dot,
@@ -350,6 +358,16 @@
   height: 30px;
   padding: 0 12px;
   font-size: 12.5px;
+}
+
+.ui-segmented--full {
+  display: flex;
+  width: 100%;
+}
+
+.ui-segmented--full .ui-segmented__item {
+  flex: 1 1 0;
+  min-width: 0;
 }
 
 .ui-segmented__item:hover:not(:disabled):not(.is-active) {
@@ -968,6 +986,85 @@
   color: var(--ew-text-inverse);
 }
 
+/* --------------------------------------------------
+   MapControlButton (40px, white, --radius-md, --shadow-md, no border, 18px icon)
+   -------------------------------------------------- */
+.ui-map-control-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-md);
+  background-color: var(--surface);
+  color: var(--text-2);
+  box-shadow: var(--shadow-md);
+  font-family: inherit;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  user-select: none;
+  box-sizing: border-box;
+  flex-shrink: 0;
+  transition: background-color 150ms ease, color 150ms ease, box-shadow 150ms ease;
+}
+
+.ui-map-control-btn__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  font-size: 18px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.ui-map-control-btn > svg,
+.ui-map-control-btn__icon > svg {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+
+.ui-map-control-btn:hover:not(:disabled) {
+  background-color: var(--bg);
+  color: var(--text);
+}
+
+.ui-map-control-btn:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.ui-map-control-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.ui-map-control-btn.is-active,
+.ui-map-control-btn[aria-pressed='true'] {
+  background-color: var(--primary-50);
+  color: var(--primary-hover);
+}
+
+/* --------------------------------------------------
+   MapOverlayPanel (white, 1px --border, --radius-2xl, --shadow-md)
+   -------------------------------------------------- */
+.ui-map-panel {
+  display: flex;
+  flex-direction: column;
+  background-color: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-2xl);
+  box-shadow: var(--shadow-md);
+  color: var(--text);
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .ui-progress__fill,
   .ui-filter-chip,
@@ -976,7 +1073,8 @@
   .ui-stat-card--clickable,
   .ui-breadcrumb__link,
   .ui-btn,
-  .ui-page-btn {
+  .ui-page-btn,
+  .ui-map-control-btn {
     transition: none;
   }
 

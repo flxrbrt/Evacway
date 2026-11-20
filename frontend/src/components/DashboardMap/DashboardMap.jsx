@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
 
+import { Crosshair, Layers, HelpCircle } from "lucide-react";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { icon } from "@fortawesome/fontawesome-svg-core";
 
@@ -22,8 +23,6 @@ import {
   faHand,
   faLocationCrosshairs,
   faSatellite,
-  faSatelliteDish,
-  faCircleQuestion,
   faMap,
   faPlus,
   faMinus,
@@ -31,6 +30,13 @@ import {
   faBan,
 } from "@fortawesome/free-solid-svg-icons";
 import IconLegendModal from "./IconLegendModal";
+import {
+  EVAC_SHELTER_ICON_HTML,
+  EvacShelterIcon,
+  EVAC_RESCUE_ICON_HTML,
+  EVAC_PENDING_HAZARD_ICON_HTML,
+} from "./evacShelterIcon";
+import { MapControlButton } from "../ui";
 
 import { BASE_URL } from "../../services/api";
 import {
@@ -42,7 +48,13 @@ import {
 } from "../../hooks/useEvacuationQueries";
 import { displayEntityName } from "../../utils/displayEntityName";
 import "./DashboardMap.css";
-import { isValidatedReport, isBlockedRoadReport, createReportMarker, createReportPopup } from "../mapReports/mapReports";
+import {
+  isValidatedReport,
+  isBlockedRoadReport,
+  createReportMarker,
+  createReportPopup,
+  createRescuePopup,
+} from "../mapReports/mapReports";
 import {
   SOGOD_CENTER as RESIDENT_SOGOD_CENTER,
   SOGOD_BOUNDS as RESIDENT_SOGOD_BOUNDS,
@@ -52,7 +64,6 @@ import {
   ensureHazardImage,
   createHazardMarkerImage,
   getLineMidpoint,
-  getReportBlockedRoadMidpoint,
   findReportForRoad,
 } from "../../pages/resident/ResidentHome";
 import "./MapOverlays.css";
@@ -607,6 +618,10 @@ function DashboardMap({
   // Center boundary polygon (restricts building drawing/editing and room placement)
   centerBoundaryPolygon = null,
   onStaffAction = null,
+  // Staff-only operational overlays (active rescue requests + hazard reports pending review)
+  rescueRequests = EMPTY_ARRAY,
+  pendingHazardReports = EMPTY_ARRAY,
+  onRescueAction = null,
 }) {
   const mapContainerRef = useRef(null);
   const mapRef = useRef(null);
@@ -620,6 +635,8 @@ function DashboardMap({
     onDelete: onStaffAction?.onDelete,
   }), [onStaffAction]);
   const hazardMarkersRef = useRef([]);
+  const rescueMarkersRef = useRef([]);
+  const pendingHazardMarkersRef = useRef([]);
   const currentHazardPopupRef = useRef(null);
   const centerMarkersRef = useRef([]);
   const focusPointMarkerRef = useRef(null);
@@ -1869,6 +1886,8 @@ function DashboardMap({
 
     const sourceId = "roads";
     const layerId = "roads-layer";
+    const closedRoadsSourceId = "roads-closed-display";
+    const closedRoadsLayerId = "roads-closed-display-layer";
 
     // Enrich road segments with is_closed and hazard_report_id from active filteredReports
     const enrichedRoads = {
@@ -1892,9 +1911,75 @@ function DashboardMap({
       }),
     };
 
+    // Build 3-meter endpoint-trimmed blocked road overlay (matches ResidentHome)
+    const closureDisplayData = {
+      type: "FeatureCollection",
+      features: (enrichedRoads.features || []).flatMap((feature) => {
+        if (!feature.properties?.is_closed) return [];
+
+        const trimLine = (coordinates) => {
+          if (!Array.isArray(coordinates) || coordinates.length < 2) return null;
+          const points = coordinates.map((point) => [...point]);
+          const segmentLengthMeters = (a, b) => {
+            const latitude = (((a[1] + b[1]) / 2) * Math.PI) / 180;
+            const dx = (b[0] - a[0]) * 111320 * Math.cos(latitude);
+            const dy = (b[1] - a[1]) * 111320;
+            return Math.hypot(dx, dy);
+          };
+          const trimEnd = (fromStart) => {
+            let remaining = 3;
+            while (points.length > 1 && remaining > 0) {
+              const firstIndex = fromStart ? 0 : points.length - 1;
+              const secondIndex = fromStart ? 1 : points.length - 2;
+              const first = points[firstIndex];
+              const second = points[secondIndex];
+              const length = segmentLengthMeters(first, second);
+              if (length <= remaining) {
+                remaining -= length;
+                points.splice(firstIndex, 1);
+              } else {
+                const fraction = remaining / length;
+                const trimmed = [
+                  first[0] + (second[0] - first[0]) * fraction,
+                  first[1] + (second[1] - first[1]) * fraction,
+                  ...first.slice(2),
+                ];
+                points[firstIndex] = trimmed;
+                remaining = 0;
+              }
+            }
+          };
+
+          trimEnd(true);
+          trimEnd(false);
+          return points.length > 1 ? points : null;
+        };
+
+        const geometry = feature.geometry;
+        if (geometry?.type === "LineString") {
+          const coordinates = trimLine(geometry.coordinates);
+          return coordinates ? [{ ...feature, geometry: { ...geometry, coordinates } }] : [];
+        }
+        if (geometry?.type === "MultiLineString") {
+          const coordinates = geometry.coordinates.map(trimLine).filter(Boolean);
+          return coordinates.length
+            ? [{ ...feature, geometry: { ...geometry, coordinates } }]
+            : [];
+        }
+        return [];
+      }),
+    };
+
+    const beforeId = map.getLayer("admin-hazard-reports-layer-compact")
+      ? "admin-hazard-reports-layer-compact"
+      : map.getLayer("admin-hazard-reports-layer")
+        ? "admin-hazard-reports-layer"
+        : undefined;
+
     try {
       if (map.getLayer("roads-open")) map.removeLayer("roads-open");
       if (map.getLayer("roads-closed")) map.removeLayer("roads-closed");
+      if (map.getLayer("roads-closed-stripes")) map.removeLayer("roads-closed-stripes");
 
       const existingSource = map.getSource(sourceId);
       if (existingSource) {
@@ -1907,12 +1992,6 @@ function DashboardMap({
       }
 
       if (!map.getLayer(layerId)) {
-        const beforeId = map.getLayer("admin-hazard-reports-layer-compact")
-          ? "admin-hazard-reports-layer-compact"
-          : map.getLayer("admin-hazard-reports-layer")
-            ? "admin-hazard-reports-layer"
-            : undefined;
-
         map.addLayer(
           {
             id: layerId,
@@ -1923,21 +2002,64 @@ function DashboardMap({
               "line-join": "round",
             },
             paint: {
-              "line-color": [
-                "case",
-                ["==", ["get", "is_closed"], true],
-                "#dc2626",
-                "#94a3b8",
-              ],
+              "line-color": "#94a3b8",
               "line-width": [
                 "interpolate",
                 ["linear"],
                 ["zoom"],
-                10, ["case", ["==", ["get", "is_closed"], true], 3.5, 1],
-                14, ["case", ["==", ["get", "is_closed"], true], 4.5, 2],
-                18, ["case", ["==", ["get", "is_closed"], true], 6, 3],
+                10, 1,
+                14, 2,
+                18, 3,
               ],
-              "line-opacity": ["case", ["==", ["get", "is_closed"], true], 1.0, 0.5],
+              "line-opacity": 0.5,
+            },
+          },
+          beforeId
+        );
+      } else {
+        map.setPaintProperty(layerId, "line-color", "#94a3b8");
+        map.setPaintProperty(layerId, "line-width", [
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          10, 1,
+          14, 2,
+          18, 3,
+        ]);
+        map.setPaintProperty(layerId, "line-opacity", 0.5);
+      }
+
+      const closedRoadsSource = map.getSource(closedRoadsSourceId);
+      if (closedRoadsSource) {
+        closedRoadsSource.setData(closureDisplayData);
+      } else {
+        map.addSource(closedRoadsSourceId, {
+          type: "geojson",
+          data: closureDisplayData,
+        });
+      }
+
+      if (!map.getLayer(closedRoadsLayerId)) {
+        map.addLayer(
+          {
+            id: closedRoadsLayerId,
+            type: "line",
+            source: closedRoadsSourceId,
+            layout: {
+              "line-cap": "round",
+              "line-join": "round",
+            },
+            paint: {
+              "line-color": "#dc2626",
+              "line-width": [
+                "interpolate",
+                ["linear"],
+                ["zoom"],
+                10, 3.5,
+                14, 4.5,
+                18, 6,
+              ],
+              "line-opacity": 1,
             },
           },
           beforeId
@@ -1967,7 +2089,8 @@ function DashboardMap({
 
         const properties = feature.properties || {};
         if (properties.is_closed) {
-          const report = findReportForRoad(properties, filteredReports) || {
+          const matchedReport = findReportForRoad(properties, filteredReports);
+          const report = matchedReport || {
             ...properties,
             blocks_road: true,
             report_type: properties.closure_reason || "Road blocked",
@@ -1975,6 +2098,13 @@ function DashboardMap({
             status: "validated",
             closed_roads: [properties.road_name || "Blocked road"],
           };
+
+          const rLng = Number(report.longitude ?? report.lng);
+          const rLat = Number(report.latitude ?? report.lat);
+          const popupLngLat =
+            Number.isFinite(rLng) && Number.isFinite(rLat)
+              ? [rLng, rLat]
+              : e.lngLat;
 
           if (currentHazardPopupRef.current) {
             try { currentHazardPopupRef.current.remove(); } catch {}
@@ -1990,7 +2120,7 @@ function DashboardMap({
           });
 
           popup
-            .setLngLat(e.lngLat)
+            .setLngLat(popupLngLat)
             .setDOMContent(
               createReportPopup(report, {
                 ...popupOptions,
@@ -2018,16 +2148,22 @@ function DashboardMap({
         if (!isDrawing && drawMode === "none") map.getCanvas().style.cursor = "";
       };
 
-      map.on("click", layerId, handleRoadClick);
-      map.on("mouseenter", layerId, handleMouseEnter);
-      map.on("mouseleave", layerId, handleMouseLeave);
+      [layerId, closedRoadsLayerId].forEach((targetLayerId) => {
+        if (map.getLayer(targetLayerId)) {
+          map.on("click", targetLayerId, handleRoadClick);
+          map.on("mouseenter", targetLayerId, handleMouseEnter);
+          map.on("mouseleave", targetLayerId, handleMouseLeave);
+        }
+      });
 
       return () => {
-        try {
-          map.off("click", layerId, handleRoadClick);
-          map.off("mouseenter", layerId, handleMouseEnter);
-          map.off("mouseleave", layerId, handleMouseLeave);
-        } catch (e) {}
+        [layerId, closedRoadsLayerId].forEach((targetLayerId) => {
+          try {
+            map.off("click", targetLayerId, handleRoadClick);
+            map.off("mouseenter", targetLayerId, handleMouseEnter);
+            map.off("mouseleave", targetLayerId, handleMouseLeave);
+          } catch (e) {}
+        });
       };
     } catch (err) {
       console.warn("Error updating roads layer:", err);
@@ -2035,7 +2171,7 @@ function DashboardMap({
   }, [mapLoaded, roads, filteredReports, popupOptions, isDrawing, drawMode, styleVersion]);
 
   /*
-   * Hazard reports symbol layers (reused from resident map)
+   * Hazard reports symbol layers (matches ResidentHome)
    */
   useEffect(() => {
     const map = mapRef.current;
@@ -2057,30 +2193,23 @@ function DashboardMap({
     const features = [];
     const seenReportIds = new Set();
 
-    // Group strictly by hazard report ID: exactly one marker per hazard report
+    // Group strictly by hazard report ID: anchored to exact report coordinates (matches ResidentHome)
     (filteredReports || []).forEach((report) => {
       if (!report || report.id == null) return;
       const reportIdStr = String(report.id);
       if (seenReportIds.has(reportIdStr)) return;
       seenReportIds.add(reportIdStr);
 
-      const blocked = isBlockedRoadReport(report);
-      let coords = null;
+      const lng = Number(report.longitude ?? report.lng);
+      const lat = Number(report.latitude ?? report.lat);
+      if (!Number.isFinite(lng) || !Number.isFinite(lat)) return;
+      const coords = [lng, lat];
 
-      if (blocked) {
-        coords = getReportBlockedRoadMidpoint(report, roads?.features);
-      }
-
-      if (!coords) {
-        const lng = Number(report.longitude ?? report.lng);
-        const lat = Number(report.latitude ?? report.lat);
-        if (Number.isFinite(lng) && Number.isFinite(lat)) {
-          coords = [lng, lat];
-        }
-      }
-
-      if (!coords) return;
-
+      // Match ResidentHome hazard icon classification: only use the no-entry "Road blocked"
+      // icon when the report/hazard type itself is a blockage/closure; otherwise show the
+      // warning triangle icon with the hazard's report type (e.g. Flood, Landslide).
+      const reportTypeText = `${report.report_type || ""} ${report.hazard_type || ""}`;
+      const blocked = /block|closed|obstruct/i.test(reportTypeText);
       const labelText = blocked ? "Road blocked" : report.report_type || "Hazard";
       const iconDef = blocked ? faBan : faTriangleExclamation;
       const iconNameFull = ensureHazardImage(map, blocked, labelText, iconDef, true);
@@ -2094,6 +2223,7 @@ function DashboardMap({
         },
         properties: {
           id: report.id,
+          icon_name: iconNameFull,
           icon_name_full: iconNameFull,
           icon_name_compact: iconNameCompact,
           is_blocked: blocked,
@@ -2136,17 +2266,21 @@ function DashboardMap({
         });
       }
 
-      // Compact layer (< 15.0): icon only, no label, no filter
+      const isMobileMap = typeof window !== "undefined" && window.innerWidth <= 768;
+      const hazardFullMinZoom = isMobileMap ? 16 : 15;
+      const hazardCompactIconSize = isMobileMap ? 30 / 34 : 1.0;
+
+      // Compact layer (< 15 desktop, < 16 mobile): icon only, no label
       if (!map.getLayer(layerIdCompact)) {
         map.addLayer({
           id: layerIdCompact,
           type: "symbol",
           source: sourceId,
-          maxzoom: 15.0,
+          maxzoom: hazardFullMinZoom,
           layout: {
             "icon-image": ["get", "icon_name_compact"],
             "icon-anchor": "center",
-            "icon-size": 1.0,
+            "icon-size": hazardCompactIconSize,
             "icon-allow-overlap": true,
             "icon-ignore-placement": true,
             "icon-padding": 0,
@@ -2154,16 +2288,18 @@ function DashboardMap({
           },
         });
       } else {
+        map.setLayerZoomRange(layerIdCompact, 0, hazardFullMinZoom);
+        map.setLayoutProperty(layerIdCompact, "icon-size", hazardCompactIconSize);
         map.setLayoutProperty(layerIdCompact, "visibility", "visible");
       }
 
-      // Full layer (>= 15.0): icon + label, no filter
+      // Full layer (>= 15 desktop, >= 16 mobile): icon + "Road blocked" label underneath
       if (!map.getLayer(layerIdFull)) {
         map.addLayer({
           id: layerIdFull,
           type: "symbol",
           source: sourceId,
-          minzoom: 15.0,
+          minzoom: hazardFullMinZoom,
           layout: {
             "icon-image": ["get", "icon_name_full"],
             "icon-anchor": "center",
@@ -2175,6 +2311,7 @@ function DashboardMap({
           },
         });
       } else {
+        map.setLayerZoomRange(layerIdFull, hazardFullMinZoom, 24);
         map.setLayoutProperty(layerIdFull, "visibility", "visible");
       }
 
@@ -2257,6 +2394,225 @@ function DashboardMap({
       });
     };
   }, [mapLoaded, filteredReports, roads, isDrawing, drawMode, popupOptions, styleVersion]);
+
+  /*
+   * Active rescue request markers (Admin / LGU staff map)
+   */
+  useEffect(() => {
+    const map = mapRef.current;
+    rescueMarkersRef.current.forEach((m) => {
+      try {
+        m.remove();
+      } catch {}
+    });
+    rescueMarkersRef.current = [];
+
+    if (!map || !mapLoaded || isDrawing || drawMode === "room") return;
+    if (!Array.isArray(rescueRequests) || rescueRequests.length === 0) return;
+
+    const statusMeta = {
+      pending: { label: "Pending", cls: "is-pending", color: "#dc2626" },
+      open: { label: "Pending", cls: "is-pending", color: "#dc2626" },
+      acknowledged: { label: "Acknowledged", cls: "is-acknowledged", color: "#d97706" },
+      responding: { label: "Responding", cls: "is-responding", color: "#2563eb" },
+    };
+
+    const created = [];
+    rescueRequests.forEach((rescue) => {
+      if (!rescue || rescue.id == null) return;
+      const lng = Number(rescue.longitude ?? rescue.lng);
+      const lat = Number(rescue.latitude ?? rescue.lat);
+      if (!Number.isFinite(lng) || !Number.isFinite(lat)) return;
+
+      const statusKey = String(rescue.status || "pending").toLowerCase();
+      if (statusKey === "resolved") return;
+      const meta = statusMeta[statusKey] || statusMeta.pending;
+      const requesterName = rescue.requester_name || "Resident";
+
+      const el = document.createElement("button");
+      el.type = "button";
+      el.className = `evacway-rescue-marker ${meta.cls}`;
+      el.setAttribute(
+        "aria-label",
+        `Rescue request (${meta.label}): ${requesterName}`
+      );
+
+      if (meta.cls === "is-pending") {
+        const pulse = document.createElement("span");
+        pulse.className = "evacway-rescue-pulse";
+        pulse.setAttribute("aria-hidden", "true");
+        el.appendChild(pulse);
+      }
+
+      const pin = document.createElement("span");
+      pin.className = "evacway-rescue-icon";
+      pin.style.setProperty("--rescue-pin-bg", meta.color);
+      pin.innerHTML = EVAC_RESCUE_ICON_HTML;
+
+      const label = document.createElement("span");
+      label.className = "evacway-rescue-label";
+
+      const dot = document.createElement("span");
+      dot.className = "evacway-rescue-label-dot";
+      dot.style.backgroundColor = meta.color;
+
+      const text = document.createElement("span");
+      text.className = "evacway-rescue-label-text";
+      text.textContent = `Rescue · ${requesterName}`;
+
+      label.append(dot, text);
+      el.append(pin, label);
+
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (isDrawing || drawMode !== "none") return;
+
+        if (currentHazardPopupRef.current) {
+          try {
+            currentHazardPopupRef.current.remove();
+          } catch {}
+          currentHazardPopupRef.current = null;
+        }
+
+        const popup = new mapboxgl.Popup({
+          offset: [0, -32],
+          className: "ew-popup",
+          maxWidth: "420px",
+          closeButton: false,
+          closeOnClick: true,
+        });
+
+        const content = createRescuePopup(rescue, {
+          onAdvanceStatus: onRescueAction?.onAdvanceStatus,
+          onOpenInRescueAlerts: onRescueAction?.onOpenInRescueAlerts,
+          onClose: () => popup.remove(),
+          popup,
+        });
+
+        popup.setLngLat([lng, lat]).setDOMContent(content).addTo(map);
+        currentHazardPopupRef.current = popup;
+      });
+
+      const marker = new mapboxgl.Marker({ element: el, anchor: "bottom" })
+        .setLngLat([lng, lat])
+        .addTo(map);
+
+      created.push(marker);
+    });
+
+    rescueMarkersRef.current = created;
+
+    return () => {
+      created.forEach((m) => {
+        try {
+          m.remove();
+        } catch {}
+      });
+    };
+  }, [mapLoaded, rescueRequests, isDrawing, drawMode, onRescueAction, styleVersion]);
+
+  /*
+   * Pending hazard reports awaiting staff review (Admin / LGU staff map)
+   */
+  useEffect(() => {
+    const map = mapRef.current;
+    pendingHazardMarkersRef.current.forEach((m) => {
+      try {
+        m.remove();
+      } catch {}
+    });
+    pendingHazardMarkersRef.current = [];
+
+    if (!map || !mapLoaded || isDrawing || drawMode === "room") return;
+    if (!Array.isArray(pendingHazardReports) || pendingHazardReports.length === 0) return;
+
+    const created = [];
+    const seen = new Set();
+
+    pendingHazardReports.forEach((report) => {
+      if (!report || report.id == null) return;
+      const idStr = String(report.id);
+      if (seen.has(idStr)) return;
+      seen.add(idStr);
+
+      const lng = Number(report.longitude ?? report.lng);
+      const lat = Number(report.latitude ?? report.lat);
+      if (!Number.isFinite(lng) || !Number.isFinite(lat)) return;
+
+      const reportType =
+        report.report_type || report.hazard_type || "Hazard report";
+
+      const el = document.createElement("button");
+      el.type = "button";
+      el.className = "evacway-pending-hazard-marker";
+      el.setAttribute(
+        "aria-label",
+        `Hazard report needs review: ${reportType}`
+      );
+
+      const badge = document.createElement("span");
+      badge.className = "evacway-pending-hazard-icon";
+      badge.innerHTML = EVAC_PENDING_HAZARD_ICON_HTML;
+
+      const label = document.createElement("span");
+      label.className = "evacway-pending-hazard-label";
+
+      const dot = document.createElement("span");
+      dot.className = "evacway-pending-hazard-label-dot";
+
+      const text = document.createElement("span");
+      text.className = "evacway-pending-hazard-label-text";
+      text.textContent = `Needs review · ${reportType}`;
+
+      label.append(dot, text);
+      el.append(badge, label);
+
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (isDrawing || drawMode !== "none") return;
+
+        if (currentHazardPopupRef.current) {
+          try {
+            currentHazardPopupRef.current.remove();
+          } catch {}
+          currentHazardPopupRef.current = null;
+        }
+
+        const popup = new mapboxgl.Popup({
+          offset: [0, -26],
+          className: "ew-popup",
+          maxWidth: "440px",
+          closeButton: false,
+          closeOnClick: true,
+        });
+
+        const content = createReportPopup(report, {
+          ...popupOptions,
+          onClose: () => popup.remove(),
+          popup,
+        });
+
+        popup.setLngLat([lng, lat]).setDOMContent(content).addTo(map);
+        currentHazardPopupRef.current = popup;
+      });
+
+      const marker = new mapboxgl.Marker({ element: el, anchor: "center" })
+        .setLngLat([lng, lat])
+        .addTo(map);
+
+      created.push(marker);
+    });
+
+    pendingHazardMarkersRef.current = created;
+
+    return () => {
+      created.forEach((m) => {
+        try {
+          m.remove();
+        } catch {}
+      });
+    };
+  }, [mapLoaded, pendingHazardReports, isDrawing, drawMode, popupOptions, styleVersion]);
 
   /*
    * Evacuation centers
@@ -2514,9 +2870,12 @@ function DashboardMap({
         (center.geometry.type === "Polygon" || center.geometry.type === "MultiPolygon")
       );
 
+      const isActive = props.is_active !== false;
+      const pinColor = isActive ? "#2563eb" : "#5b6b82";
+
       const element = document.createElement("button");
       element.type = "button";
-      element.className = `evacway-center-marker show-label ${isSelected ? "is-selected" : ""}`;
+      element.className = `evacway-center-marker ${isSelected ? "is-selected" : ""}${!isActive ? " evacway-center-marker-inactive" : ""}`;
       element.setAttribute(
         "aria-label",
         `Evacuation Center: ${props.name || "Center"}, ${occStatus.percent}% occupied (${occStatus.statusText})`
@@ -2524,9 +2883,9 @@ function DashboardMap({
 
       const pin = document.createElement("span");
       pin.className = "evacway-center-icon";
-      pin.style.setProperty("--pin-bg", occStatus.color);
-      pin.style.backgroundColor = occStatus.color;
-      pin.innerHTML = icon(faBuildingColumns).html.join("");
+      pin.style.setProperty("--pin-bg", pinColor);
+      pin.style.backgroundColor = pinColor;
+      pin.innerHTML = EVAC_SHELTER_ICON_HTML;
 
       const label = document.createElement("span");
       label.className = "evacway-center-label";
@@ -4080,44 +4439,48 @@ function DashboardMap({
 
       {/* RIGHT CONTROL STACK: Full view, My location, Map/Satellite, Help */}
       {!isDrawing && (
-        <div className="right-control-stack" role="group" aria-label="Map controls">
+        <div
+          className="dashboard-map__control-stack"
+          role="group"
+          aria-label="Map controls"
+        >
           {topRightSlot}
 
           {/* My location button */}
-          <button
-            type="button"
-            className="control-stack-btn"
+          <MapControlButton
+            icon={
+              <Crosshair
+                size={18}
+                strokeWidth={2}
+                className={locatingUser ? "dashboard-map__control-spin" : undefined}
+                aria-hidden="true"
+              />
+            }
             onClick={handleMyLocation}
             disabled={locatingUser}
             title="My location"
-            aria-label="My location"
-          >
-            <FontAwesomeIcon icon={faLocationCrosshairs} spin={locatingUser} />
-          </button>
+            ariaLabel="My location"
+          />
 
           {/* Map / Satellite toggle */}
-          <button
-            type="button"
+          <MapControlButton
+            icon={Layers}
+            active={mapStyle === "satellite"}
             onClick={() => changeMapStyle(mapStyle === "streets" ? "satellite" : "streets")}
-            className={`control-stack-btn ${mapStyle === "satellite" ? "active" : ""}`}
             title={mapStyle === "streets" ? "Switch to satellite" : "Switch to street map"}
-            aria-label={mapStyle === "streets" ? "Switch to satellite" : "Switch to street map"}
+            ariaLabel={mapStyle === "streets" ? "Switch to satellite" : "Switch to street map"}
             aria-pressed={mapStyle === "satellite"}
-          >
-            <FontAwesomeIcon icon={faSatelliteDish} />
-          </button>
+          />
 
           {/* What do the icons mean? */}
-          <button
-            type="button"
+          <MapControlButton
+            icon={HelpCircle}
+            active={helpOpen}
             onClick={() => setHelpOpen((o) => !o)}
-            className={`control-stack-btn ${helpOpen ? "active" : ""}`}
             title="What do the icons mean?"
-            aria-label="What do the icons mean?"
+            ariaLabel="What do the icons mean?"
             aria-expanded={helpOpen}
-          >
-            <FontAwesomeIcon icon={faCircleQuestion} />
-          </button>
+          />
         </div>
       )}
 
@@ -4126,6 +4489,7 @@ function DashboardMap({
         isOpen={helpOpen}
         onClose={() => setHelpOpen(false)}
         isMobile={typeof window !== "undefined" && window.innerWidth <= 768}
+        isStaff={Boolean(onStaffAction)}
       />
 
       {/* =====================================================
@@ -4260,7 +4624,7 @@ function DashboardMap({
         <aside className="mdp-panel">
           <header className="mdp-header">
             <div className="mdp-badge">
-              <FontAwesomeIcon icon={faBuildingColumns} />
+              <EvacShelterIcon size={16} />
             </div>
 
             <div className="mdp-heading">

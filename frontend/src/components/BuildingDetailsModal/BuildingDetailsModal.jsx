@@ -1,21 +1,29 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
-  faXmark,
-  faBuildingColumns,
-  faUsers,
-  faPhone,
-  faSpinner,
-  faDoorOpen,
-  faHouseUser,
-  faCheckCircle,
-  faChevronDown,
-  faArrowRightToBracket,
-} from "@fortawesome/free-solid-svg-icons";
+  X,
+  Building2,
+  DoorOpen,
+  Users,
+  Phone,
+  ChevronDown,
+  LogIn,
+  CheckCircle2,
+  AlertCircle,
+} from "lucide-react";
 import { api } from "../../services/api";
 import { findAssignedRoom } from "../../utils/resolveRoomBuilding";
 import { formatFloorLabel } from "../../utils/formatRoomLabel";
+import { StatusPill, ProgressBar } from "../ui";
 import "./BuildingDetailsModal.css";
+
+const FOCUSABLE_SELECTOR = [
+  'a[href]',
+  'button:not([disabled])',
+  'input:not([disabled])',
+  'select:not([disabled])',
+  'textarea:not([disabled])',
+  '[tabindex]:not([tabindex="-1"])',
+].join(', ');
 
 export default function BuildingDetailsModal({
   isOpen,
@@ -36,6 +44,7 @@ export default function BuildingDetailsModal({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [data, setData] = useState(null);
+  const [reloadNonce, setReloadNonce] = useState(0);
   const [selectedRoomId, setSelectedRoomId] = useState(null);
   const [expandedFloor, setExpandedFloor] = useState(null);
   const [expandedFamilyKeys, setExpandedFamilyKeys] = useState({});
@@ -62,18 +71,51 @@ export default function BuildingDetailsModal({
     } else if (lastActiveElementRef.current) {
       try {
         lastActiveElementRef.current.focus();
-      } catch (e) {}
+      } catch {
+        // Ignore focus restore errors if trigger unmounted
+      }
       lastActiveElementRef.current = null;
     }
   }, [isOpen]);
 
-  // Escape key handler
+  // Escape key & Tab focus trap inside modal
   useEffect(() => {
     if (!isOpen) return;
     function handleKeyDown(e) {
       if (e.key === "Escape") {
         e.stopPropagation();
         onClose?.();
+        return;
+      }
+
+      if (e.key === "Tab" && modalRef.current) {
+        const focusables = Array.from(
+          modalRef.current.querySelectorAll(FOCUSABLE_SELECTOR)
+        ).filter(
+          (el) =>
+            el.offsetParent !== null ||
+            el.getClientRects().length > 0
+        );
+
+        if (focusables.length === 0) {
+          e.preventDefault();
+          modalRef.current.focus();
+          return;
+        }
+
+        const first = focusables[0];
+        const last = focusables[focusables.length - 1];
+        const active = document.activeElement;
+
+        if (e.shiftKey) {
+          if (active === first || !modalRef.current.contains(active)) {
+            e.preventDefault();
+            last.focus();
+          }
+        } else if (active === last || !modalRef.current.contains(active)) {
+          e.preventDefault();
+          first.focus();
+        }
       }
     }
     window.addEventListener("keydown", handleKeyDown);
@@ -145,7 +187,7 @@ export default function BuildingDetailsModal({
     return () => {
       isMounted = false;
     };
-  }, [isOpen, buildingId, userHousehold, highlightedRoom]);
+  }, [isOpen, buildingId, userHousehold, highlightedRoom, reloadNonce]);
 
   useEffect(() => {
     if (!isOpen || loading || !highlightedRoom || !data) return;
@@ -202,20 +244,39 @@ export default function BuildingDetailsModal({
   const buildingFloors = Number(data?.floors || data?.building?.floors || initialBuildingData?.floors || 1);
   const floorGroups = useMemo(() => {
     const floors = [...new Set(sortedRooms.map((room) => room.floor).filter((floor) => floor != null))].sort((a, b) => a - b);
-    return [...floors.map((floor) => ({ floor, rooms: sortedRooms.filter((room) => Number(room.floor) === Number(floor)) })),
-      ...(sortedRooms.some((room) => room.floor == null) ? [{ floor: null, rooms: sortedRooms.filter((room) => room.floor == null) }] : [])];
+    return [
+      ...floors.map((floor) => ({
+        floor,
+        rooms: sortedRooms.filter((room) => Number(room.floor) === Number(floor)),
+      })),
+      ...(sortedRooms.some((room) => room.floor == null)
+        ? [{ floor: null, rooms: sortedRooms.filter((room) => room.floor == null) }]
+        : []),
+    ];
   }, [sortedRooms]);
-  const displayRooms = buildingFloors >= 2
-    ? floorGroups.flatMap((group) => [
-        ...(group.floor != null ? [{ __floorHeader: true, floor: group.floor, count: group.rooms.length }] : []),
-        ...(group.floor == null || expandedFloor == null || expandedFloor === Number(group.floor) ? group.rooms : []),
-      ])
-    : sortedRooms;
+
+  const displayRooms =
+    buildingFloors >= 2
+      ? floorGroups.flatMap((group) => [
+          ...(group.floor != null
+            ? [{ __floorHeader: true, floor: group.floor, count: group.rooms.length }]
+            : []),
+          ...(group.floor == null ||
+          expandedFloor == null ||
+          expandedFloor === Number(group.floor)
+            ? group.rooms
+            : []),
+        ])
+      : sortedRooms;
 
   useEffect(() => {
     if (!isOpen || buildingFloors < 2) return;
-    const foundRoom = findAssignedRoom(rooms, highlightedRoom) || sortedRooms.find((room) => String(room.id) === String(selectedRoomId));
-    setExpandedFloor(foundRoom?.floor ?? floorGroups.find((group) => group.floor != null)?.floor ?? null);
+    const foundRoom =
+      findAssignedRoom(rooms, highlightedRoom) ||
+      sortedRooms.find((room) => String(room.id) === String(selectedRoomId));
+    setExpandedFloor(
+      foundRoom?.floor ?? floorGroups.find((group) => group.floor != null)?.floor ?? null
+    );
   }, [isOpen, buildingFloors, rooms, highlightedRoom, floorGroups, sortedRooms, selectedRoomId]);
 
   const activeRoom = useMemo(() => {
@@ -250,43 +311,30 @@ export default function BuildingDetailsModal({
     totalCapacity > 0
       ? Math.min(100, Math.round((totalOccupied / totalCapacity) * 100))
       : 0;
-  const assignedPercent =
-    totalCapacity > 0
-      ? Math.min(100, Math.round((totalAssigned / totalCapacity) * 100))
-      : 0;
   const isBuildingFullyAssigned =
     totalCapacity > 0 && totalAssigned >= totalCapacity;
+  const spacesLeft = Math.max(0, totalCapacity - totalOccupied);
 
   let statusLabel = "Available";
-  let statusCls = "is-available";
-  let occFillColor = "#16a34a"; // Soft green
-  let occTextColor = "#15803d";
+  let statusVariant = "available";
+  let statusToneClass = "is-success";
 
   if (totalCapacity === 0) {
     statusLabel = "No data";
-    statusCls = "is-no-data";
-    occFillColor = "#94a3b8";
-    occTextColor = "#475569";
+    statusVariant = "neutral";
+    statusToneClass = "is-neutral";
   } else if (totalOccupied >= totalCapacity) {
     statusLabel = "Full";
-    statusCls = "is-full";
-    occFillColor = "#dc2626";
-    occTextColor = "#b91c1c";
+    statusVariant = "full";
+    statusToneClass = "is-danger";
   } else if (isBuildingFullyAssigned) {
     statusLabel = "Fully assigned";
-    statusCls = "is-fully-assigned";
-    occFillColor = "#16a34a";
-    occTextColor = "#b45309";
+    statusVariant = "fully-assigned";
+    statusToneClass = "is-warn";
   } else if (occPercent >= 70) {
     statusLabel = "Filling";
-    statusCls = "is-filling";
-    occFillColor = "#d97706";
-    occTextColor = "#b45309";
-  } else {
-    statusLabel = "Available";
-    statusCls = "is-available";
-    occFillColor = "#16a34a";
-    occTextColor = "#15803d";
+    statusVariant = "almost-full";
+    statusToneClass = "is-warn";
   }
 
   const hasStaffAccess =
@@ -300,7 +348,6 @@ export default function BuildingDetailsModal({
           onClose?.();
         }
       }}
-      aria-hidden={!isOpen}
     >
       <div
         ref={modalRef}
@@ -322,33 +369,29 @@ export default function BuildingDetailsModal({
                 <h2 id="bldg-modal-title" className="bldg-modal-title">
                   {buildingName}
                 </h2>
-                <span className={`bldg-status-badge ${statusCls}`}>
-                  <span className="bldg-status-dot" aria-hidden="true" />
-                  {statusLabel}
-                </span>
+                <StatusPill variant={statusVariant} label={statusLabel} />
               </div>
               <button
                 ref={closeBtnRef}
                 type="button"
                 className="bldg-modal-close-btn"
                 onClick={onClose}
-                aria-label="Close building details modal"
+                aria-label="Close"
                 title="Close (Esc)"
               >
-                <FontAwesomeIcon icon={faXmark} />
+                <X size={16} strokeWidth={2} aria-hidden="true" />
               </button>
             </div>
 
             <div className="bldg-modal-center-name">
-              <FontAwesomeIcon icon={faBuildingColumns} />
+              <Building2 size={14} strokeWidth={2} aria-hidden="true" />
               <span>{centerName}</span>
             </div>
           </div>
 
-          {/* Occupancy Card (Soft gray-blue background, 16px radius, 16px padding) */}
+          {/* Occupancy Card (bg #F8FAFC, 1px border) */}
           <div className="bldg-modal-occ-wrapper">
             <div className="bldg-occ-card">
-              {/* Top row */}
               <div className="bldg-occ-card-top">
                 <span className="bldg-occ-card-label">Building occupancy</span>
                 <div className="bldg-occ-figure">
@@ -359,55 +402,70 @@ export default function BuildingDetailsModal({
                 </div>
               </div>
 
-              {/* Progress bar (8px fully rounded, green = here, light blue = assigned, gray track = remaining) */}
-              <div className="bldg-occ-bar-track" aria-hidden="true">
-                {assignedPercent > 0 && (
-                  <div
-                    className="bldg-occ-bar-assigned"
-                    style={{ width: `${assignedPercent}%` }}
-                  />
-                )}
-                <div
-                  className="bldg-occ-bar-fill"
-                  style={{
-                    width: `${occPercent}%`,
-                    backgroundColor: occFillColor,
-                  }}
-                />
-              </div>
+              <ProgressBar
+                value={totalOccupied}
+                max={totalCapacity}
+                size={8}
+                ariaLabel={`Building occupancy: ${totalOccupied} of ${totalCapacity} here`}
+              />
 
-              {/* Bottom row */}
               <div className="bldg-occ-card-bottom">
-                <span className="bldg-occ-status-text" style={{ color: occTextColor }}>
+                <span className={`bldg-occ-status-text ${statusToneClass}`}>
                   {occPercent}% · {statusLabel}
                 </span>
-                <div className="bldg-occ-bottom-stats">
-                  <span className="bldg-occ-assigned-stat">
-                    <span className="bldg-occ-assigned-dot" aria-hidden="true" />
-                    {totalAssigned} assigned
-                  </span>
-                  <span className="bldg-occ-spaces-left">
-                    {totalCapacity > totalOccupied
-                      ? `${totalCapacity - totalOccupied} spaces left`
-                      : "No spaces left"}
-                  </span>
-                </div>
+                <span className="bldg-occ-bottom-meta">
+                  {totalAssigned} assigned · {spacesLeft}{" "}
+                  {spacesLeft === 1 ? "space" : "spaces"} left
+                </span>
               </div>
             </div>
           </div>
         </div>
 
-        {/* Loading / Error States */}
+        {/* Loading Skeletons */}
         {loading && (
-          <div className="bldg-modal-loading" role="status">
-            <FontAwesomeIcon icon={faSpinner} spin className="bldg-spinner-icon" />
-            <span>Loading building rooms and occupancy...</span>
+          <div
+            className="bldg-modal-body"
+            role="status"
+            aria-busy="true"
+            aria-label="Loading building rooms"
+          >
+            <div className="bldg-modal-rooms-section">
+              <div className="bldg-modal-rooms-header-row">
+                <span className="bldg-modal-subheading">Rooms</span>
+                <span className="bldg-modal-muted-hint">Loading rooms...</span>
+              </div>
+              {[0, 1, 2].map((idx) => (
+                <div key={idx} className="bldg-room-skeleton" aria-hidden="true">
+                  <div className="bldg-room-skeleton__row">
+                    <div className="bldg-room-skeleton__icon" />
+                    <div className="bldg-room-skeleton__copy">
+                      <div className="bldg-room-skeleton__line bldg-room-skeleton__line--title" />
+                      <div className="bldg-room-skeleton__line bldg-room-skeleton__line--sub" />
+                    </div>
+                    <div className="bldg-room-skeleton__pill" />
+                  </div>
+                  <div className="bldg-room-skeleton__bar" />
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
-        {error && (
-          <div className="bldg-modal-error" role="alert">
-            <span>{error}</span>
+        {/* Error State */}
+        {!loading && error && (
+          <div className="bldg-modal-body">
+            <div className="bldg-modal-error" role="alert">
+              <AlertCircle size={20} strokeWidth={2} aria-hidden="true" />
+              <p className="bldg-modal-error__text">{error}</p>
+              <button
+                type="button"
+                className="bldg-modal-retry-btn"
+                onClick={() => setReloadNonce((n) => n + 1)}
+              >
+                Retry
+              </button>
+            </div>
           </div>
         )}
 
@@ -428,33 +486,83 @@ export default function BuildingDetailsModal({
               </div>
 
               {buildingFloors >= 2 && (
-                <div className="bldg-floor-chips" aria-label="Jump to floor">
-                  <button type="button" className={expandedFloor == null ? 'is-active' : ''} onClick={() => setExpandedFloor(null)}>All</button>
-                  {floorGroups.filter((group) => group.floor != null).map(({ floor }) => (
-                    <button type="button" key={floor} className={Number(expandedFloor) === Number(floor) ? 'is-active' : ''} onClick={() => {
-                      setExpandedFloor(Number(floor));
-                      requestAnimationFrame(() => document.getElementById(`bldg-floor-${floor}`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }));
-                    }}>{formatFloorLabel(floor).replace(' floor', '')}</button>
-                  ))}
+                <div className="bldg-floor-chips" role="group" aria-label="Jump to floor">
+                  <button
+                    type="button"
+                    className={expandedFloor == null ? "is-active" : ""}
+                    onClick={() => setExpandedFloor(null)}
+                  >
+                    All
+                  </button>
+                  {floorGroups
+                    .filter((group) => group.floor != null)
+                    .map(({ floor }) => (
+                      <button
+                        type="button"
+                        key={floor}
+                        className={Number(expandedFloor) === Number(floor) ? "is-active" : ""}
+                        onClick={() => {
+                          setExpandedFloor(Number(floor));
+                          requestAnimationFrame(() => {
+                            const prefersReduced =
+                              typeof window !== "undefined" &&
+                              window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+                            document
+                              .getElementById(`bldg-floor-${floor}`)
+                              ?.scrollIntoView({
+                                block: "nearest",
+                                behavior: prefersReduced ? "auto" : "smooth",
+                              });
+                          });
+                        }}
+                      >
+                        {formatFloorLabel(floor).replace(" floor", "")}
+                      </button>
+                    ))}
                 </div>
               )}
 
-              <div
-                className="bldg-modal-rooms-accordion-list"
-                role="list"
-                aria-label="Rooms inside this building"
-              >
-                {sortedRooms.length === 0 ? (
-                  <div className="bldg-rooms-empty">
-                    No rooms mapped in this building yet.
-                  </div>
-                ) : (
-                  displayRooms.map((r) => {
-                    if (r.__floorHeader) return (
-                      <button type="button" id={`bldg-floor-${r.floor}`} key={`floor-header-${r.floor}`} className="bldg-floor-group-header" onClick={() => setExpandedFloor((current) => Number(current) === Number(r.floor) ? null : Number(r.floor))} aria-expanded={Number(expandedFloor) === Number(r.floor)}>
-                        <span>{formatFloorLabel(r.floor)} · {r.count} {r.count === 1 ? 'room' : 'rooms'}</span><FontAwesomeIcon icon={faChevronDown} />
-                      </button>
-                    );
+              {sortedRooms.length === 0 ? (
+                <div className="bldg-modal-no-rooms">
+                  <DoorOpen size={24} strokeWidth={1.75} aria-hidden="true" />
+                  <p>No rooms linked to this building yet.</p>
+                </div>
+              ) : (
+                <div
+                  className="bldg-modal-rooms-accordion-list"
+                  role="list"
+                  aria-label="Rooms inside this building"
+                >
+                  {displayRooms.map((r) => {
+                    if (r.__floorHeader) {
+                      const isFloorExpanded = Number(expandedFloor) === Number(r.floor);
+                      return (
+                        <button
+                          type="button"
+                          id={`bldg-floor-${r.floor}`}
+                          key={`floor-header-${r.floor}`}
+                          className="bldg-floor-group-header"
+                          onClick={() =>
+                            setExpandedFloor((current) =>
+                              Number(current) === Number(r.floor) ? null : Number(r.floor)
+                            )
+                          }
+                          aria-expanded={isFloorExpanded}
+                        >
+                          <span>
+                            {formatFloorLabel(r.floor)} · {r.count}{" "}
+                            {r.count === 1 ? "room" : "rooms"}
+                          </span>
+                          <ChevronDown
+                            size={15}
+                            strokeWidth={2}
+                            className={`bldg-room-chevron ${isFloorExpanded ? "is-rotated" : ""}`}
+                            aria-hidden="true"
+                          />
+                        </button>
+                      );
+                    }
+
                     const isExpanded = selectedRoomId === r.id;
                     const isFoundRoom = findAssignedRoom(rooms, highlightedRoom)?.id === r.id;
                     const rOcc = r.occupied || 0;
@@ -464,45 +572,32 @@ export default function BuildingDetailsModal({
                       rCap > 0
                         ? Math.min(100, Math.round((rOcc / rCap) * 100))
                         : 0;
-                    const rAssignedPct =
-                      rCap > 0
-                        ? Math.min(100, Math.round((rAssigned / rCap) * 100))
-                        : 0;
                     const rIsFullyAssigned = rCap > 0 && rAssigned >= rCap;
 
                     let rStatusText = "Available";
-                    let rStatusCls = "is-available";
-                    let rBarFillColor = "#16a34a";
+                    let rStatusVariant = "available";
 
                     if (rCap === 0) {
                       rStatusText = "No data";
-                      rStatusCls = "is-no-data";
-                      rBarFillColor = "#94a3b8";
+                      rStatusVariant = "neutral";
                     } else if (rOcc >= rCap) {
                       rStatusText = "Full";
-                      rStatusCls = "is-full";
-                      rBarFillColor = "#dc2626";
+                      rStatusVariant = "full";
                     } else if (rIsFullyAssigned) {
                       rStatusText = "Fully assigned";
-                      rStatusCls = "is-fully-assigned";
-                      rBarFillColor = "#16a34a";
+                      rStatusVariant = "fully-assigned";
                     } else if (rPct >= 70) {
                       rStatusText = "Filling";
-                      rStatusCls = "is-filling";
-                      rBarFillColor = "#d97706";
-                    } else {
-                      rStatusText = "Available";
-                      rStatusCls = "is-available";
-                      rBarFillColor = "#16a34a";
+                      rStatusVariant = "almost-full";
                     }
 
                     const isMine = checkIsMine(r);
-                    const isMyHouseholdCheckedIn = Boolean(
+                    const isMyFamilyCheckedIn = Boolean(
                       r.my_household?.is_checked_in ||
                         userHousehold?.is_checked_in ||
                         userHousehold?.room?.is_checked_in
                     );
-                    const myHouseholdStatusLabel = isMyHouseholdCheckedIn
+                    const myFamilyStatusLabel = isMyFamilyCheckedIn
                       ? "Checked in"
                       : "Reserved for your family";
                     const entrance =
@@ -532,7 +627,6 @@ export default function BuildingDetailsModal({
                         } ${isMine ? "is-my-room" : ""} ${isFoundRoom ? "is-found-room" : ""}`}
                         role="listitem"
                       >
-                        {/* Clean white room card button */}
                         <button
                           type="button"
                           className="bldg-room-card-btn"
@@ -543,9 +637,9 @@ export default function BuildingDetailsModal({
                           aria-controls={`room-content-${r.id}`}
                         >
                           <div className="bldg-room-card-main">
-                            {/* 40px soft-tinted rounded door icon */}
-                            <div className="bldg-room-icon-box">
-                              <FontAwesomeIcon icon={faDoorOpen} />
+                            {/* 36px icon tile */}
+                            <div className="bldg-room-icon-box" aria-hidden="true">
+                              <DoorOpen size={17} strokeWidth={2} />
                             </div>
 
                             {/* Room Name & Muted Subline */}
@@ -556,11 +650,13 @@ export default function BuildingDetailsModal({
                                 </span>
                                 {isMine && (
                                   <span className="bldg-badge-yours">
-                                    <FontAwesomeIcon icon={faCheckCircle} />{" "}
-                                    {myHouseholdStatusLabel}
+                                    <CheckCircle2 size={11} strokeWidth={2.25} aria-hidden="true" />
+                                    <span>{myFamilyStatusLabel}</span>
                                   </span>
                                 )}
-                                {isFoundRoom && <span className="bldg-badge-assigned">Assigned</span>}
+                                {isFoundRoom && (
+                                  <span className="bldg-badge-assigned">Assigned</span>
+                                )}
                               </div>
                               <div className="bldg-room-subline">
                                 {rOcc} of {rCap} here · {rAssigned} assigned
@@ -568,44 +664,32 @@ export default function BuildingDetailsModal({
                               </div>
                             </div>
 
-                            {/* Status Pill & Rotating Chevron */}
+                            {/* StatusPill & Rotating Chevron */}
                             <div className="bldg-room-card-right">
-                              <span
-                                className={`bldg-room-status-pill ${rStatusCls}`}
-                              >
-                                {rStatusText}
-                              </span>
-                              <FontAwesomeIcon
-                                icon={faChevronDown}
+                              <StatusPill
+                                variant={rStatusVariant}
+                                label={rStatusText}
+                              />
+                              <ChevronDown
+                                size={15}
+                                strokeWidth={2}
                                 className={`bldg-room-chevron ${
                                   isExpanded ? "is-rotated" : ""
                                 }`}
+                                aria-hidden="true"
                               />
                             </div>
                           </div>
 
-                          {/* Thin 4px progress bar inside the card under the text */}
-                          <div
-                            className="bldg-room-bar-track"
-                            aria-hidden="true"
-                          >
-                            {rAssignedPct > 0 && (
-                              <div
-                                className="bldg-room-bar-assigned"
-                                style={{ width: `${rAssignedPct}%` }}
-                              />
-                            )}
-                            <div
-                              className="bldg-room-bar-fill"
-                              style={{
-                                width: `${rPct}%`,
-                                backgroundColor: rBarFillColor,
-                              }}
-                            />
-                          </div>
+                          <ProgressBar
+                            value={rOcc}
+                            max={rCap}
+                            size={6}
+                            ariaLabel={`${roomLabel} occupancy: ${rPct}%`}
+                          />
                         </button>
 
-                        {/* Accordion expandable panel */}
+                        {/* Expanded room panel */}
                         {isExpanded && (
                           <div
                             id={`room-content-${r.id}`}
@@ -613,14 +697,16 @@ export default function BuildingDetailsModal({
                             role="region"
                             aria-label={`Details for ${roomLabel}`}
                           >
-                            {/* Room details & space banner */}
                             <div className="bldg-resident-space-wrap">
+                              {/* Summary card */}
                               <div className="bldg-resident-space-banner">
                                 <div className="bldg-resident-space-left">
                                   <span className="bldg-space-big">
                                     {rCap > 0
                                       ? unassignedSpaces > 0
-                                        ? `${unassignedSpaces} spaces left`
+                                        ? `${unassignedSpaces} ${
+                                            unassignedSpaces === 1 ? "space" : "spaces"
+                                          } left`
                                         : rIsFullyAssigned
                                           ? "Fully assigned"
                                           : "Room is currently full"
@@ -630,20 +716,15 @@ export default function BuildingDetailsModal({
                                     {rOcc} of {rCap} here · {rAssigned} assigned
                                   </span>
                                 </div>
-                                <div className="bldg-room-pills-row">
-                                  <span
-                                    className={`bldg-room-status-pill ${rStatusCls}`}
-                                  >
-                                    {rStatusText}
-                                  </span>
-                                </div>
+                                <StatusPill
+                                  variant={rStatusVariant}
+                                  label={rStatusText}
+                                />
                               </div>
 
                               {entrance && (
                                 <div className="bldg-room-entrance-callout">
-                                  <FontAwesomeIcon
-                                    icon={faArrowRightToBracket}
-                                  />
+                                  <LogIn size={14} strokeWidth={2} aria-hidden="true" />
                                   <span>
                                     Enter via <strong>{entrance}</strong>
                                   </span>
@@ -651,279 +732,269 @@ export default function BuildingDetailsModal({
                               )}
 
                               {/* Families assigned to this room */}
-                              {!hideHouseholds && (() => {
-                                const roomFamilies = Array.isArray(r.families)
-                                  ? r.families
-                                  : [];
-                                const totalRoomMembers =
-                                  roomFamilies.reduce(
-                                    (sum, fam) =>
-                                      sum +
-                                      Number(
-                                        (Array.isArray(fam.members)
-                                          ? fam.members.length
-                                          : null) ??
-                                          fam.assigned_members ??
-                                          fam.member_count ??
-                                          0
-                                      ),
-                                    0
-                                  ) || rAssigned;
+                              {!hideHouseholds &&
+                                (() => {
+                                  const roomFamilies = Array.isArray(r.families)
+                                    ? r.families
+                                    : [];
+                                  const totalRoomMembers =
+                                    roomFamilies.reduce(
+                                      (sum, fam) =>
+                                        sum +
+                                        Number(
+                                          (Array.isArray(fam.members)
+                                            ? fam.members.length
+                                            : null) ??
+                                            fam.assigned_members ??
+                                            fam.member_count ??
+                                            0
+                                        ),
+                                      0
+                                    ) || rAssigned;
 
-                                return (
-                                  <div className="bldg-staff-families-wrap">
-                                    <div className="bldg-staff-header">
-                                      <span>
-                                        Assigned families ({roomFamilies.length})
-                                      </span>
-                                      <span className="bldg-staff-total-members">
-                                        {totalRoomMembers}{" "}
-                                        {totalRoomMembers === 1
-                                          ? "member"
-                                          : "members"}{" "}
-                                        ({rAssigned} assigned)
-                                      </span>
-                                    </div>
-
-                                    {roomFamilies.length === 0 ? (
-                                      <div className="bldg-families-empty">
-                                        No families assigned yet
+                                  return (
+                                    <div className="bldg-staff-families-wrap">
+                                      <div className="bldg-staff-header">
+                                        <span>
+                                          Assigned families ({roomFamilies.length})
+                                        </span>
+                                        <span className="bldg-staff-total-members">
+                                          {totalRoomMembers}{" "}
+                                          {totalRoomMembers === 1
+                                            ? "member"
+                                            : "members"}{" "}
+                                          ({rAssigned} assigned)
+                                        </span>
                                       </div>
-                                    ) : (
-                                      <div className="bldg-families-stack">
-                                        {roomFamilies.map((fam, fIdx) => {
-                                          const famKey = `${r.id}-fam-${
-                                            fam.family_id || fIdx
-                                          }`;
-                                          const isFamExpanded = Boolean(
-                                            expandedFamilyKeys[famKey]
-                                          );
-                                          const famMembers = Array.isArray(
-                                            fam.members
-                                          )
-                                            ? fam.members
-                                            : [];
-                                          const famMemberCount =
-                                            famMembers.length ||
-                                            Number(
-                                              fam.assigned_members ??
-                                                fam.member_count ??
-                                                1
-                                            );
-                                          const famCheckedIn = Boolean(
-                                            fam.is_checked_in
-                                          );
-                                          const famChipText =
-                                            fam.checkin_status ||
-                                            (famCheckedIn
-                                              ? "Checked in"
-                                              : "Not yet arrived");
 
-                                          return (
-                                            <div
-                                              key={
-                                                fam.family_id || `fam-${fIdx}`
-                                              }
-                                              className={`bldg-family-item-card ${
-                                                isFamExpanded
-                                                  ? "is-expanded"
-                                                  : ""
-                                              }`}
-                                            >
-                                              <button
-                                                type="button"
-                                                className="bldg-family-toggle-btn"
-                                                onClick={() =>
-                                                  toggleFamilyExpanded(famKey)
+                                      {roomFamilies.length === 0 ? (
+                                        <div className="bldg-families-empty">
+                                          No families assigned yet
+                                        </div>
+                                      ) : (
+                                        <div className="bldg-families-stack">
+                                          {roomFamilies.map((fam, fIdx) => {
+                                            const famKey = `${r.id}-fam-${
+                                              fam.family_id || fIdx
+                                            }`;
+                                            const isFamExpanded = Boolean(
+                                              expandedFamilyKeys[famKey]
+                                            );
+                                            const famMembers = Array.isArray(
+                                              fam.members
+                                            )
+                                              ? fam.members
+                                              : [];
+                                            const famMemberCount =
+                                              famMembers.length ||
+                                              Number(
+                                                fam.assigned_members ??
+                                                  fam.member_count ??
+                                                  1
+                                              );
+                                            const famCheckedIn = Boolean(
+                                              fam.is_checked_in
+                                            );
+                                            const famChipLabel = famCheckedIn
+                                              ? "Arrived"
+                                              : "Not yet arrived";
+
+                                            return (
+                                              <div
+                                                key={
+                                                  fam.family_id || `fam-${fIdx}`
                                                 }
-                                                aria-expanded={isFamExpanded}
+                                                className={`bldg-family-item-card ${
+                                                  isFamExpanded
+                                                    ? "is-expanded"
+                                                    : ""
+                                                }`}
                                               >
-                                                <div className="bldg-family-top">
-                                                  <strong className="bldg-family-name">
-                                                    {fam.head_name ||
-                                                      "Unknown Family Head"}
-                                                  </strong>
-                                                  <div className="bldg-family-top-right">
-                                                    <span
-                                                      className={`bldg-family-checkin-chip ${
-                                                        famCheckedIn
-                                                          ? "is-checked-in"
-                                                          : "is-not-arrived"
-                                                      }`}
-                                                    >
-                                                      {famChipText}
-                                                    </span>
-                                                    <span className="bldg-family-count">
-                                                      <FontAwesomeIcon
-                                                        icon={faUsers}
+                                                <button
+                                                  type="button"
+                                                  className="bldg-family-toggle-btn"
+                                                  onClick={() =>
+                                                    toggleFamilyExpanded(famKey)
+                                                  }
+                                                  aria-expanded={isFamExpanded}
+                                                >
+                                                  <div className="bldg-family-top">
+                                                    <strong className="bldg-family-name">
+                                                      {fam.head_name ||
+                                                        "Unknown Family Head"}
+                                                    </strong>
+                                                    <div className="bldg-family-top-right">
+                                                      <StatusPill
+                                                        variant={
+                                                          famCheckedIn
+                                                            ? "arrived"
+                                                            : "pending-arrival"
+                                                        }
+                                                        label={famChipLabel}
+                                                        className="bldg-pill-sm"
                                                       />
+                                                      <span className="bldg-family-count">
+                                                        <Users
+                                                          size={12}
+                                                          strokeWidth={2}
+                                                          aria-hidden="true"
+                                                        />
+                                                        <span>
+                                                          {famMemberCount}{" "}
+                                                          {famMemberCount === 1
+                                                            ? "member"
+                                                            : "members"}
+                                                        </span>
+                                                      </span>
+                                                      <ChevronDown
+                                                        size={14}
+                                                        strokeWidth={2}
+                                                        className={`bldg-family-chevron ${
+                                                          isFamExpanded
+                                                            ? "is-rotated"
+                                                            : ""
+                                                        }`}
+                                                        aria-hidden="true"
+                                                      />
+                                                    </div>
+                                                  </div>
+
+                                                  {fam.contact_number &&
+                                                    fam.contact_number !==
+                                                      "N/A" && (
+                                                      <div className="bldg-family-contact">
+                                                        <Phone
+                                                          size={12}
+                                                          strokeWidth={2}
+                                                          aria-hidden="true"
+                                                        />
+                                                        <span>
+                                                          {fam.contact_number}
+                                                        </span>
+                                                      </div>
+                                                    )}
+
+                                                  {Array.isArray(
+                                                    fam.special_needs
+                                                  ) &&
+                                                    fam.special_needs.length >
+                                                      0 && (
+                                                      <div className="bldg-family-tags">
+                                                        {fam.special_needs.map(
+                                                          (flag) => (
+                                                            <span
+                                                              key={flag}
+                                                              className="bldg-special-flag"
+                                                            >
+                                                              {flag}
+                                                            </span>
+                                                          )
+                                                        )}
+                                                      </div>
+                                                    )}
+                                                </button>
+
+                                                {isFamExpanded && (
+                                                  <div className="bldg-family-members-panel">
+                                                    <div className="bldg-family-members-header">
                                                       <span>
                                                         {famMemberCount}{" "}
                                                         {famMemberCount === 1
                                                           ? "member"
                                                           : "members"}
                                                       </span>
-                                                    </span>
-                                                    <FontAwesomeIcon
-                                                      icon={faChevronDown}
-                                                      className={`bldg-family-chevron ${
-                                                        isFamExpanded
-                                                          ? "is-rotated"
-                                                          : ""
-                                                      }`}
-                                                    />
-                                                  </div>
-                                                </div>
-
-                                                {fam.contact_number &&
-                                                  fam.contact_number !==
-                                                    "N/A" && (
-                                                    <div className="bldg-family-contact">
-                                                      <FontAwesomeIcon
-                                                        icon={faPhone}
-                                                      />
                                                       <span>
-                                                        {fam.contact_number}
+                                                        Total in room: {rAssigned}{" "}
+                                                        assigned
                                                       </span>
                                                     </div>
-                                                  )}
-
-                                                {Array.isArray(
-                                                  fam.special_needs
-                                                ) &&
-                                                  fam.special_needs.length >
-                                                    0 && (
-                                                    <div className="bldg-family-tags">
-                                                      {fam.special_needs.map(
-                                                        (flag) => (
-                                                          <span
-                                                            key={flag}
-                                                            className={`bldg-special-flag flag-${flag
-                                                              .toLowerCase()
-                                                              .replace(
-                                                                /[^a-z0-9]/g,
-                                                                "-"
-                                                              )}`}
-                                                          >
-                                                            {flag}
-                                                          </span>
-                                                        )
-                                                      )}
-                                                    </div>
-                                                  )}
-                                              </button>
-
-                                              {isFamExpanded && (
-                                                <div className="bldg-family-members-panel">
-                                                  <div className="bldg-family-members-header">
-                                                    <span>
-                                                      {famMemberCount}{" "}
-                                                      {famMemberCount === 1
-                                                        ? "member"
-                                                        : "members"}
-                                                    </span>
-                                                    <span>
-                                                      Total in room: {rAssigned}{" "}
-                                                      assigned
-                                                    </span>
-                                                  </div>
-                                                  {famMembers.length > 0 ? (
-                                                    <div className="bldg-family-members-list">
-                                                      {famMembers.map(
-                                                        (mem, mIdx) => {
-                                                          const memName =
-                                                            typeof mem ===
-                                                            "string"
-                                                              ? mem
-                                                              : mem.full_name ||
-                                                                mem.name ||
-                                                                "Family Member";
-                                                          const hasMemCheckin =
-                                                            mem &&
-                                                            typeof mem ===
-                                                              "object" &&
-                                                            (typeof mem.is_checked_in ===
-                                                              "boolean" ||
-                                                              mem.checked_in_at !==
-                                                                undefined ||
+                                                    {famMembers.length > 0 ? (
+                                                      <div className="bldg-family-members-list">
+                                                        {famMembers.map(
+                                                          (mem, mIdx) => {
+                                                            const memName =
+                                                              typeof mem ===
+                                                              "string"
+                                                                ? mem
+                                                                : mem.full_name ||
+                                                                  mem.name ||
+                                                                  "Family Member";
+                                                            const hasMemCheckin =
+                                                              mem &&
+                                                              typeof mem ===
+                                                                "object" &&
+                                                              (typeof mem.is_checked_in ===
+                                                                "boolean" ||
+                                                                mem.checked_in_at !==
+                                                                  undefined ||
+                                                                Boolean(
+                                                                  mem.checkin_status
+                                                                ));
+                                                            const memCheckedIn =
                                                               Boolean(
-                                                                mem.checkin_status
-                                                              ));
-                                                          const memCheckedIn =
-                                                            Boolean(
-                                                              mem?.is_checked_in ||
-                                                                mem?.checked_in_at
-                                                            );
-                                                          const memChip =
-                                                            mem?.checkin_status ||
-                                                            (memCheckedIn
-                                                              ? "Checked in"
-                                                              : "Not yet arrived");
+                                                                mem?.is_checked_in ||
+                                                                  mem?.checked_in_at
+                                                              );
+                                                            const memChipLabel =
+                                                              memCheckedIn
+                                                                ? "Arrived"
+                                                                : "Not yet arrived";
 
-                                                          return (
-                                                            <div
-                                                              key={
-                                                                mem?.resident_id ||
-                                                                `mem-${mIdx}`
-                                                              }
-                                                              className="bldg-family-member-row"
-                                                            >
-                                                              <span className="bldg-family-member-name">
-                                                                {memName}
-                                                              </span>
-                                                              {hasMemCheckin && (
-                                                                <span
-                                                                  className={`bldg-family-checkin-chip ${
-                                                                    memCheckedIn
-                                                                      ? "is-checked-in"
-                                                                      : "is-not-arrived"
-                                                                  }`}
-                                                                >
-                                                                  {memChip}
+                                                            return (
+                                                              <div
+                                                                key={
+                                                                  mem?.resident_id ||
+                                                                  `mem-${mIdx}`
+                                                                }
+                                                                className="bldg-family-member-row"
+                                                              >
+                                                                <span className="bldg-family-member-name">
+                                                                  {memName}
                                                                 </span>
-                                                              )}
-                                                            </div>
-                                                          );
-                                                        }
-                                                      )}
-                                                    </div>
-                                                  ) : (
-                                                    <div className="bldg-family-members-empty">
-                                                      {famMemberCount}{" "}
-                                                      {famMemberCount === 1
-                                                        ? "member"
-                                                        : "members"}{" "}
-                                                      assigned
-                                                    </div>
-                                                  )}
-                                                </div>
-                                              )}
-                                            </div>
-                                          );
-                                        })}
-                                      </div>
-                                    )}
-                                  </div>
-                                );
-                              })()}
-
+                                                                {hasMemCheckin && (
+                                                                  <StatusPill
+                                                                    variant={
+                                                                      memCheckedIn
+                                                                        ? "arrived"
+                                                                        : "pending-arrival"
+                                                                    }
+                                                                    label={memChipLabel}
+                                                                    className="bldg-pill-sm"
+                                                                  />
+                                                                )}
+                                                              </div>
+                                                            );
+                                                          }
+                                                        )}
+                                                      </div>
+                                                    ) : (
+                                                      <div className="bldg-family-members-empty">
+                                                        {famMemberCount}{" "}
+                                                        {famMemberCount === 1
+                                                          ? "member"
+                                                          : "members"}{" "}
+                                                        assigned
+                                                      </div>
+                                                    )}
+                                                  </div>
+                                                )}
+                                              </div>
+                                            );
+                                          })}
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })()}
                             </div>
                           </div>
                         )}
                       </div>
                     );
-                  })
-                )}
-              </div>
+                  })}
+                </div>
+              )}
             </div>
-
-            {/* Empty state if building has no rooms yet */}
-            {sortedRooms.length === 0 && (
-              <div className="bldg-modal-no-rooms">
-                <FontAwesomeIcon icon={faDoorOpen} />
-                <p>No rooms linked to this building yet.</p>
-              </div>
-            )}
           </div>
         )}
 

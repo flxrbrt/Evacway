@@ -1,13 +1,17 @@
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
-  faBuildingColumns,
   faBuilding,
   faTriangleExclamation,
   faBan,
   faXmark,
 } from "@fortawesome/free-solid-svg-icons";
+import {
+  EvacShelterIcon,
+  EvacRescueIcon,
+  EvacPendingHazardIcon,
+} from "./evacShelterIcon";
 
-export default function IconLegendModal({ isOpen, onClose, isMobile = false }) {
+export default function IconLegendModal({ isOpen, onClose, isMobile = false, isStaff = false }) {
   if (!isOpen) return null;
 
   return (
@@ -43,7 +47,7 @@ export default function IconLegendModal({ isOpen, onClose, isMobile = false }) {
           <div className="help-icon-list">
             <div className="legend-item">
               <div className="legend-icon-wrapper place-center">
-                <FontAwesomeIcon icon={faBuildingColumns} />
+                <EvacShelterIcon size={15} />
               </div>
               <span>Safe evacuation center where your family can stay.</span>
             </div>
@@ -65,6 +69,22 @@ export default function IconLegendModal({ isOpen, onClose, isMobile = false }) {
               </div>
               <span>Road that is blocked or closed and cannot be passed.</span>
             </div>
+            {isStaff && (
+              <>
+                <div className="legend-item">
+                  <div className="legend-icon-wrapper staff-rescue">
+                    <EvacRescueIcon size={14} />
+                  </div>
+                  <span>Active rescue request waiting for LGU response.</span>
+                </div>
+                <div className="legend-item">
+                  <div className="legend-icon-wrapper staff-pending-hazard">
+                    <EvacPendingHazardIcon size={14} />
+                  </div>
+                  <span>Hazard report pending staff review and validation.</span>
+                </div>
+              </>
+            )}
 
             <div className="help-section-divider" role="separator" />
 

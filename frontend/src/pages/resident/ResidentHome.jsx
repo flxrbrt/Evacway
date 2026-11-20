@@ -8,6 +8,7 @@ import { api, BASE_URL } from "../../services/api";
 import HazardReportModal from "../../components/HazardReportModal/HazardReportModal";
 import RescueAlertModal from "../../components/RescueAlertModal/RescueAlertModal";
 import { MapLegend } from "../../components/DashboardMap/MapOverlays";
+import { EVAC_SHELTER_ICON_HTML, EvacShelterIcon } from "../../components/DashboardMap/evacShelterIcon";
 import { getCenterCoordinates } from "../../utils/mapCenterCoordinates";
 import { resolveRoomBuilding } from "../../utils/resolveRoomBuilding";
 import { needsLocationConfirmation } from "../../utils/locationConfirmation";
@@ -3394,6 +3395,8 @@ const ResidentHome = () => {
           statusColor = "#2563eb"; // Blue: User Center
         }
 
+        const pinColor = isMine ? "#1d4ed8" : "#2563eb";
+
         const element = document.createElement("button");
         element.type = "button";
         element.className = `evacway-center-marker${isMine ? " evacway-center-marker-mine" : ""}${isSelected ? " is-selected" : ""}`;
@@ -3404,9 +3407,9 @@ const ResidentHome = () => {
 
         const iconElement = document.createElement("span");
         iconElement.className = "evacway-center-icon";
-        iconElement.style.setProperty("--pin-bg", statusColor);
-        iconElement.style.backgroundColor = statusColor;
-        iconElement.innerHTML = icon(faBuildingColumns).html.join("");
+        iconElement.style.setProperty("--pin-bg", pinColor);
+        iconElement.style.backgroundColor = pinColor;
+        iconElement.innerHTML = EVAC_SHELTER_ICON_HTML;
 
         const label = document.createElement("span");
         label.className = "evacway-center-label";
@@ -6016,7 +6019,7 @@ const ResidentHome = () => {
     <div className="help-icon-list">
       <div className="legend-item">
         <div className="legend-icon-wrapper place-center">
-          <FontAwesomeIcon icon={faBuildingColumns} />
+          <EvacShelterIcon size={15} />
         </div>
         <span>Safe evacuation center where your family can stay.</span>
       </div>

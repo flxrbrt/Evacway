@@ -751,8 +751,8 @@
   position: absolute !important;
   top: 0;
   left: 0;
-  width: 34px;
-  height: 39px;
+  width: 36px;
+  height: 42px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -770,79 +770,135 @@
   overflow: visible !important;
 }
 
-.evacway-center-marker:hover {
-  z-index: 25;
+.evacway-center-marker:hover,
+.evacway-center-marker:focus-visible {
+  z-index: 35;
+}
+
+.evacway-center-marker.is-selected {
+  z-index: 30;
 }
 
 .evacway-center-icon {
   position: relative;
-  width: 34px !important;
-  height: 34px !important;
-  min-width: 34px !important;
-  min-height: 34px !important;
-  max-width: 34px !important;
-  max-height: 34px !important;
+  width: 36px !important;
+  height: 36px !important;
+  min-width: 36px !important;
+  min-height: 36px !important;
+  max-width: 36px !important;
+  max-height: 36px !important;
   aspect-ratio: 1 / 1 !important;
   flex-shrink: 0 !important;
   flex-grow: 0 !important;
-  border-radius: 50% !important;
-  background: var(--pin-bg, #2563eb);
-  color: #ffffff;
-  border: 2px solid #ffffff;
+  border-radius: var(--radius-full) !important;
+  background-color: var(--pin-bg, var(--primary));
+  color: var(--ew-text-inverse);
+  border: 2.5px solid var(--surface);
   box-shadow: var(--shadow-md);
   display: flex !important;
   align-items: center !important;
   justify-content: center !important;
   box-sizing: border-box !important;
-  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s ease;
+  transition: transform 150ms ease, box-shadow 150ms ease, background-color 150ms ease;
+}
+
+.evacway-center-icon::after {
+  content: "";
+  position: absolute;
+  bottom: -6px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 0;
+  height: 0;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-top: 6px solid var(--pin-bg, var(--primary));
+  transition: border-top-color 150ms ease;
 }
 
 .evacway-center-icon svg {
-  width: 16px !important;
-  height: 16px !important;
-  color: #ffffff;
+  width: 18px !important;
+  height: 18px !important;
+  min-width: 18px !important;
+  min-height: 18px !important;
+  max-width: 18px !important;
+  max-height: 18px !important;
+  color: var(--ew-text-inverse);
+  fill: currentColor;
   display: block;
 }
 
-.evacway-center-marker:hover .evacway-center-icon {
-  transform: translateY(-2px) scale(1.08);
+.evacway-center-marker:hover .evacway-center-icon,
+.evacway-center-marker:focus-visible .evacway-center-icon {
+  transform: translateY(-2px) scale(1.06);
   box-shadow: var(--shadow-lg);
 }
 
-.evacway-center-label {
+.evacway-center-marker:not(.evacway-center-marker-inactive):hover .evacway-center-icon,
+.evacway-center-marker:not(.evacway-center-marker-inactive):focus-visible .evacway-center-icon {
+  background-color: var(--primary-hover) !important;
+}
+
+.evacway-center-marker:not(.evacway-center-marker-inactive):hover .evacway-center-icon::after,
+.evacway-center-marker:not(.evacway-center-marker-inactive):focus-visible .evacway-center-icon::after {
+  border-top-color: var(--primary-hover);
+}
+
+.evacway-center-marker:focus-visible .evacway-center-icon {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.evacway-center-marker.is-selected .evacway-center-icon {
+  border-color: var(--surface);
+  box-shadow: var(--shadow-focus), var(--shadow-md);
+}
+
+/* Hover-only center label pill */
+.evacway-center-label,
+.evacway-center-marker.show-label .evacway-center-label {
   display: inline-flex !important;
   position: absolute;
-  top: calc(100% + 5px);
+  bottom: calc(100% + 8px);
+  top: auto;
   left: 50%;
-  transform: translateX(-50%);
+  transform: translateX(-50%) translateY(4px);
   align-items: center;
-  gap: 5px;
-  padding: 3px 9px 3px 7px;
-  background: rgba(255, 255, 255, 0.96);
-  backdrop-filter: blur(14px) saturate(180%);
-  -webkit-backdrop-filter: blur(14px) saturate(180%);
-  color: #0f172a;
-  font-family: var(--font-body, 'Public Sans', system-ui, -apple-system, sans-serif);
-  font-size: 9.5px;
-  font-weight: 700;
-  line-height: 1.25;
-  letter-spacing: 0.02em;
-  border-radius: 999px;
-  border: 1px solid rgba(226, 232, 240, 0.9);
+  gap: 6px;
+  padding: 5px 10px 5px 8px;
+  background-color: var(--surface);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.2;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
   box-shadow: var(--shadow-md);
   pointer-events: none;
   white-space: nowrap;
-  max-width: 140px;
+  max-width: 240px;
   overflow: hidden;
   text-overflow: ellipsis;
-  transition: opacity 0.2s ease, transform 0.2s ease;
-  z-index: 1;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 150ms ease, transform 150ms ease, visibility 150ms ease;
+  z-index: 40;
+}
+
+.evacway-center-marker:hover .evacway-center-label,
+.evacway-center-marker:focus-visible .evacway-center-label {
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(-50%) translateY(0);
 }
 
 .evacway-center-label-dot {
   width: 6px;
   height: 6px;
-  border-radius: 50%;
+  min-width: 6px;
+  min-height: 6px;
+  border-radius: var(--radius-full);
   flex-shrink: 0;
 }
 
@@ -853,75 +909,462 @@
 }
 
 .evacway-center-marker-inactive .evacway-center-icon {
-  background: #9ca3af;
+  background-color: var(--muted);
 }
 
 .evacway-center-marker-inactive .evacway-center-label {
-  color: #4b5563;
+  color: var(--text-2);
 }
 
-/* Vertical map control stack (Full view, My location, Map/Satellite, Help) */
-.right-control-stack {
-  position: absolute;
-  top: calc(12px + env(safe-area-inset-top, 0px));
-  right: calc(12px + env(safe-area-inset-right, 0px));
-  z-index: var(--z-map-controls, 400);
+@media (prefers-reduced-motion: reduce) {
+  .evacway-center-icon,
+  .evacway-center-icon::after,
+  .evacway-center-label,
+  .evacway-rescue-icon,
+  .evacway-rescue-label,
+  .evacway-pending-hazard-icon,
+  .evacway-pending-hazard-label {
+    transition: none;
+  }
+
+  .evacway-center-marker:hover .evacway-center-icon,
+  .evacway-center-marker:focus-visible .evacway-center-icon,
+  .evacway-rescue-marker:hover .evacway-rescue-icon,
+  .evacway-rescue-marker:focus-visible .evacway-rescue-icon,
+  .evacway-pending-hazard-marker:hover .evacway-pending-hazard-icon,
+  .evacway-pending-hazard-marker:focus-visible .evacway-pending-hazard-icon {
+    transform: none;
+  }
+
+  .evacway-rescue-pulse {
+    animation: none;
+  }
+}
+
+/* ==========================================
+   RESCUE REQUEST MARKERS (Admin / Staff Map)
+   ========================================== */
+.evacway-rescue-marker {
+  position: absolute !important;
+  top: 0;
+  left: 0;
+  width: 36px;
+  height: 42px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  align-items: center;
+  justify-content: flex-start;
+  background: transparent !important;
+  border: none !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  cursor: pointer;
+  z-index: 25;
+  user-select: none;
+  outline: none;
+  pointer-events: auto;
+  overflow: visible !important;
 }
 
-.control-stack-btn {
-  width: 44px;
-  height: 44px;
-  min-width: 44px;
-  min-height: 44px;
-  border-radius: 12px;
-  background: #ffffff;
-  color: var(--ink, #0e1f3a);
-  border: 1px solid var(--border, #e3e8f0);
+.evacway-rescue-marker:hover,
+.evacway-rescue-marker:focus-visible {
+  z-index: 45;
+}
+
+@keyframes evacwayRescuePulse {
+  0% {
+    transform: scale(1);
+    opacity: 0.65;
+  }
+  70% {
+    transform: scale(1.7);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1.7);
+    opacity: 0;
+  }
+}
+
+.evacway-rescue-pulse {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-full);
+  background-color: var(--danger);
+  opacity: 0.45;
+  pointer-events: none;
+  animation: evacwayRescuePulse 2s ease-out infinite;
+}
+
+.evacway-rescue-icon {
+  position: relative;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-full);
+  background-color: var(--rescue-pin-bg, var(--danger));
+  color: var(--ew-text-inverse);
+  border: 2.5px solid var(--surface);
   box-shadow: var(--shadow-md);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 16px;
-  cursor: pointer;
-  transition: all 150ms ease;
-  user-select: none;
-  position: relative;
-  padding: 0;
   box-sizing: border-box;
+  transition: transform 150ms ease, box-shadow 150ms ease;
 }
 
-.control-stack-btn:hover {
-  background: var(--bg, #f6f8fb);
-  border-color: var(--muted, #5b6b82);
-  color: var(--brand, #2563eb);
+.evacway-rescue-icon::after {
+  content: "";
+  position: absolute;
+  bottom: -6px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 0;
+  height: 0;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-top: 6px solid var(--rescue-pin-bg, var(--danger));
 }
 
-.control-stack-btn.active {
-  background: var(--brand, #2563eb);
-  border-color: var(--brand, #2563eb);
-  color: #ffffff;
+.evacway-rescue-icon svg {
+  width: 18px;
+  height: 18px;
+  display: block;
 }
 
-.control-stack-btn:disabled {
-  opacity: 0.7;
-  cursor: default;
+.evacway-rescue-marker:hover .evacway-rescue-icon,
+.evacway-rescue-marker:focus-visible .evacway-rescue-icon {
+  transform: translateY(-2px) scale(1.06);
+  box-shadow: var(--shadow-lg);
 }
 
-.control-stack-btn:focus-visible {
-  outline: 2px solid var(--brand, #2563eb);
+.evacway-rescue-marker:focus-visible .evacway-rescue-icon {
+  outline: 2px solid var(--primary);
   outline-offset: 2px;
 }
 
+.evacway-rescue-label {
+  display: inline-flex;
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%) translateY(4px);
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px 5px 8px;
+  background-color: var(--surface);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.2;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-md);
+  pointer-events: none;
+  white-space: nowrap;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 150ms ease, transform 150ms ease, visibility 150ms ease;
+  z-index: 50;
+}
+
+.evacway-rescue-marker:hover .evacway-rescue-label,
+.evacway-rescue-marker:focus-visible .evacway-rescue-label {
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(-50%) translateY(0);
+}
+
+.evacway-rescue-label-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  flex-shrink: 0;
+}
+
+.evacway-rescue-label-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ==========================================
+   PENDING HAZARD REPORT MARKERS (Needs Review)
+   ========================================== */
+.evacway-pending-hazard-marker {
+  position: absolute !important;
+  top: 0;
+  left: 0;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent !important;
+  border: none !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  cursor: pointer;
+  z-index: 22;
+  user-select: none;
+  outline: none;
+  pointer-events: auto;
+  overflow: visible !important;
+}
+
+.evacway-pending-hazard-marker:hover,
+.evacway-pending-hazard-marker:focus-visible {
+  z-index: 44;
+}
+
+.evacway-pending-hazard-icon {
+  position: relative;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-md);
+  background-color: var(--warn);
+  color: var(--ew-text-inverse);
+  border: 2px solid var(--surface);
+  box-shadow: var(--shadow-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  transition: transform 150ms ease, box-shadow 150ms ease;
+}
+
+.evacway-pending-hazard-icon::before {
+  content: "";
+  position: absolute;
+  inset: -5px;
+  border-radius: var(--radius-lg);
+  border: 1.5px dashed var(--warn);
+  pointer-events: none;
+}
+
+.evacway-pending-hazard-icon svg {
+  width: 17px;
+  height: 17px;
+  display: block;
+}
+
+.evacway-pending-hazard-marker:hover .evacway-pending-hazard-icon,
+.evacway-pending-hazard-marker:focus-visible .evacway-pending-hazard-icon {
+  transform: translateY(-2px) scale(1.06);
+  box-shadow: var(--shadow-lg);
+}
+
+.evacway-pending-hazard-marker:focus-visible .evacway-pending-hazard-icon {
+  outline: 2px solid var(--primary);
+  outline-offset: 3px;
+}
+
+.evacway-pending-hazard-label {
+  display: inline-flex;
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 50%;
+  transform: translateX(-50%) translateY(4px);
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px 5px 8px;
+  background-color: var(--surface);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.2;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-md);
+  pointer-events: none;
+  white-space: nowrap;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 150ms ease, transform 150ms ease, visibility 150ms ease;
+  z-index: 50;
+}
+
+.evacway-pending-hazard-marker:hover .evacway-pending-hazard-label,
+.evacway-pending-hazard-marker:focus-visible .evacway-pending-hazard-label {
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(-50%) translateY(0);
+}
+
+.evacway-pending-hazard-label-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background-color: var(--warn);
+  flex-shrink: 0;
+}
+
+.evacway-pending-hazard-label-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ==========================================
+   RESCUE POPUP & STAFF LEGEND EXTRAS
+   ========================================== */
+.map-report-status-pill.status-responding {
+  background-color: var(--primary-50);
+  color: var(--primary-hover);
+  border-color: var(--primary-200);
+}
+
+.map-report-status-pill.status-responding .map-report-status-dot {
+  background-color: var(--primary);
+}
+
+.map-rescue-loc-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  background-color: var(--bg-2);
+  color: var(--text-2);
+  font-size: var(--text-caption);
+  font-weight: 600;
+}
+
+.map-rescue-meta-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background-color: var(--bg-2);
+}
+
+.map-rescue-meta-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  font-size: 12.5px;
+}
+
+.map-rescue-meta-label {
+  color: var(--muted);
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+.map-rescue-meta-val {
+  color: var(--text);
+  font-weight: 500;
+  text-align: right;
+  word-break: break-word;
+}
+
+.map-rescue-meta-link {
+  color: var(--primary-hover);
+  font-weight: 600;
+  text-decoration: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.map-rescue-meta-link:hover {
+  text-decoration: underline;
+}
+
+.map-rescue-meta-link:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+  border-radius: var(--radius-xs);
+}
+
+.map-report-btn-primary {
+  height: 34px;
+  padding: 0 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--primary);
+  background-color: var(--primary);
+  color: var(--ew-text-inverse);
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 150ms ease, border-color 150ms ease;
+}
+
+.map-report-btn-primary:hover:not(:disabled) {
+  background-color: var(--primary-hover);
+  border-color: var(--primary-hover);
+}
+
+.map-report-btn-primary:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.map-report-btn-primary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.legend-icon-wrapper.staff-rescue {
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-full);
+  background-color: var(--danger);
+  color: var(--ew-text-inverse);
+}
+
+.legend-icon-wrapper.staff-pending-hazard {
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-sm);
+  background-color: var(--warn);
+  color: var(--ew-text-inverse);
+}
+
+/* Vertical map control stack (Full view, My location, Map layers, Help) */
+.dashboard-map__control-stack {
+  position: absolute;
+  top: calc(var(--space-4) + env(safe-area-inset-top, 0px));
+  right: calc(var(--space-4) + env(safe-area-inset-right, 0px));
+  z-index: 400;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+@keyframes dashboardMapCtrlSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.dashboard-map__control-spin {
+  animation: dashboardMapCtrlSpin 1s linear infinite;
+}
+
 @media (max-width: 768px) {
-  .right-control-stack {
-    top: calc(12px + env(safe-area-inset-top, 0px)) !important;
-    right: calc(12px + env(safe-area-inset-right, 0px)) !important;
-    bottom: auto !important;
-    z-index: var(--z-map-controls, 400) !important;
-    gap: 8px !important;
+  .dashboard-map__control-stack {
+    top: calc(var(--space-3) + env(safe-area-inset-top, 0px));
+    right: calc(var(--space-3) + env(safe-area-inset-right, 0px));
+    gap: 10px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dashboard-map__control-spin {
+    animation: none;
   }
 }
 
@@ -1941,91 +2384,6 @@
    - Selected one is larger with a ring
    - Name label appears from zoom 14
    ========================================================= */
-.evacway-center-marker {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  background: none;
-  border: none;
-  padding: 0;
-  cursor: pointer;
-  z-index: 10;
-  user-select: none;
-}
-
-.evacway-center-marker:hover {
-  z-index: 20;
-}
-
-.evacway-center-marker:hover .evacway-center-pin {
-  transform: scale(1.12);
-}
-
-.evacway-center-marker.is-selected {
-  z-index: 30;
-}
-
-/* Round marker pin */
-.evacway-center-pin {
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #ffffff;
-  border: 2.5px solid #ffffff;
-  box-shadow: var(--shadow-sm);
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-  box-sizing: border-box;
-}
-
-.evacway-center-pin svg {
-  width: 14px;
-  height: 14px;
-  fill: currentColor;
-}
-
-/* Selected marker is larger with a ring */
-.evacway-center-marker.is-selected .evacway-center-pin {
-  width: 42px;
-  height: 42px;
-  border: 3px solid #ffffff;
-  box-shadow: var(--shadow-focus), var(--shadow-md);
-  transform: translateY(-2px);
-}
-
-.evacway-center-marker.is-selected .evacway-center-pin svg {
-  width: 18px;
-  height: 18px;
-}
-
-/* Name label appears from zoom 14 */
-.evacway-center-label {
-  display: none;
-  margin-top: 5px;
-  padding: 3px 8px;
-  background: rgba(14, 31, 58, 0.88);
-  backdrop-filter: blur(4px);
-  color: #ffffff;
-  font-family: var(--font-body, 'Public Sans', system-ui, sans-serif);
-  font-size: 11px;
-  font-weight: 600;
-  border-radius: 6px;
-  white-space: nowrap;
-  pointer-events: none;
-  box-shadow: var(--shadow-md);
-  max-width: 160px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  letter-spacing: 0.01em;
-}
-
-.evacway-center-marker.show-label .evacway-center-label {
-  display: block;
-}
-
 /* Center marker during room placement mode */
 .evacway-center-marker.is-room-placement-mode {
   pointer-events: none !important;

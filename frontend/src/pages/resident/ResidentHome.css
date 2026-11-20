@@ -1163,7 +1163,11 @@
 }
 
 .legend-icon-wrapper.place-center {
-  color: #2563eb;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-full);
+  background-color: var(--primary);
+  color: var(--ew-text-inverse);
 }
 
 .legend-icon-wrapper.place-building {
@@ -4577,26 +4581,26 @@
 }
 
 .evacway-center-icon svg {
-  width: 15px !important;
-  height: 15px !important;
-  min-width: 15px !important;
-  min-height: 15px !important;
-  max-width: 15px !important;
-  max-height: 15px !important;
+  width: 18px !important;
+  height: 18px !important;
+  min-width: 18px !important;
+  min-height: 18px !important;
+  max-width: 18px !important;
+  max-height: 18px !important;
   fill: currentColor;
   display: block;
 }
 
-.evacway-center-marker:hover .evacway-center-icon {
-  transform: translateY(-2px) scale(1.08);
-  box-shadow: var(--shadow-md);
+.evacway-center-marker:hover .evacway-center-icon,
+.evacway-center-marker:focus-visible .evacway-center-icon {
+  transform: translateY(-2px) scale(1.06);
+  box-shadow: var(--shadow-lg);
 }
 
 .evacway-center-marker-mine .evacway-center-icon,
 .evacway-center-marker.is-selected .evacway-center-icon {
-  border-color: #ffffff;
-  box-shadow: var(--shadow-focus);
-  transform: translateY(-2px) scale(1.08);
+  border-color: var(--surface);
+  box-shadow: var(--shadow-focus), var(--shadow-md);
 }
 
 .evacway-center-details {
@@ -4612,64 +4616,69 @@
   white-space: nowrap;
 }
 
-.evacway-center-label {
-  display: none;
+.evacway-center-label,
+.evacway-center-marker.show-label .evacway-center-label {
+  display: inline-flex !important;
   position: absolute;
-  top: calc(100% + 5px);
+  bottom: calc(100% + 8px);
+  top: auto;
   left: 50%;
-  transform: translateX(-50%);
+  transform: translateX(-50%) translateY(4px);
   align-items: center;
-  gap: 5px;
-  padding: 3px 9px 3px 7px;
-  background: rgba(255, 255, 255, 0.96);
-  backdrop-filter: blur(14px) saturate(180%);
-  -webkit-backdrop-filter: blur(14px) saturate(180%);
-  color: #0f172a;
-  font-family: var(--font-body, 'Public Sans', system-ui, -apple-system, sans-serif);
-  font-size: 9.5px;
-  font-weight: 700;
+  gap: 6px;
+  padding: 5px 10px 5px 8px;
+  background-color: var(--surface);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 12px;
+  font-weight: 600;
   line-height: 1.2;
-  letter-spacing: 0.025em;
-  border-radius: 9999px;
-  border: 1px solid rgba(226, 232, 240, 0.95);
-  box-shadow: var(--shadow-xs);
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-md);
   pointer-events: none;
   white-space: nowrap;
-  max-width: 320px;
-  z-index: 15;
-  transition: box-shadow 0.18s ease, transform 0.18s ease;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0;
+  visibility: hidden;
+  z-index: 40;
+  transition: opacity 150ms ease, transform 150ms ease, visibility 150ms ease;
 }
 
 .resident-home .evacway-center-label {
-  /* Override the shared dashboard label rule; clicks bubble to the marker. */
-  pointer-events: auto;
+  pointer-events: none;
 }
 
-.evacway-center-marker.show-label .evacway-center-label {
-  display: inline-flex;
+.evacway-center-marker:hover .evacway-center-label,
+.evacway-center-marker:focus-visible .evacway-center-label {
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(-50%) translateY(0);
 }
 
 .evacway-center-label-dot {
-  width: 5px;
-  height: 5px;
-  min-width: 5px;
-  min-height: 5px;
-  border-radius: 50%;
+  width: 6px;
+  height: 6px;
+  min-width: 6px;
+  min-height: 6px;
+  border-radius: var(--radius-full);
   flex-shrink: 0;
-  background: #16a34a;
-  box-shadow: var(--shadow-focus);
+  background-color: var(--success);
 }
 
 .evacway-center-label-text {
   white-space: nowrap;
-  overflow: visible;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .evacway-center-marker-mine .evacway-center-label {
-  color: #1d4ed8;
-  border-color: rgba(147, 197, 253, 0.95);
-  background: rgba(240, 247, 255, 0.96);
-  box-shadow: var(--shadow-xs);
+  color: var(--primary-hover);
+  border-color: var(--primary-200);
+  background-color: var(--primary-50);
+  box-shadow: var(--shadow-md);
 }
 
 @media (max-width: 768px) {
@@ -4718,11 +4727,13 @@
     transform: none;
   }
 
-  .evacway-center-label {
-    top: calc(100% + 2px);
-    font-size: 10px;
+  .evacway-center-label,
+  .evacway-center-marker.show-label .evacway-center-label {
+    bottom: calc(100% + 6px);
+    top: auto;
+    font-size: 11px;
     padding: 4px 8px;
-    max-width: 120px;
+    max-width: 180px;
   }
 
   .evacway-center-label-text {

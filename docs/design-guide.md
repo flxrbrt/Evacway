@@ -49,9 +49,11 @@ Component: `frontend/src/components/ui/SectionHeader.jsx`
 
 Component: `frontend/src/components/ui/StatusPill.jsx`
 
-- `active`: success tone (`--success-bg` background, `--success-fg` text, `--success` dot).
+- `active` / `available`: success tone (`--success-bg` background, `--success-fg` text, `--success` dot).
 - `inactive`: neutral grey tone (`--neutral-soft` background, `--neutral-fg` text, `--neutral-dot` dot).
-- Also supports existing domain variants (`available`, `arrived`, `approved`, `pending`, `rejected`, `validated`, `resolved`, `responding`, `full`, `almost-full`, `partial`, `unmapped`, etc.).
+- `unmapped` / `not-mapped` (`Not mapped`): neutral grey Unmapped pill (`--neutral-soft` background, `--neutral-fg` text, `--neutral-dot` dot).
+- `fully-assigned` (`Fully assigned`): warn tone (`--warn-bg` background, `--warn-fg` text, `--warn` dot).
+- Also supports existing domain variants (`arrived`, `approved`, `pending`, `rejected`, `validated`, `resolved`, `responding`, `full`, `almost-full`, `partial`, etc.).
 
 ## RoleChip
 
@@ -59,3 +61,26 @@ Component: `frontend/src/components/ui/RoleChip.jsx`
 
 - `admin` (`Admin`): `--primary-50` background with `--primary-hover` (`#1D4ED8`) text.
 - `lgu_personnel` (`LGU Personnel`): `--surface` (white) background with `1px solid var(--border)` and `--text-2` text.
+
+## SegmentedControl
+
+Component: `frontend/src/components/ui/SegmentedControl.jsx`
+
+- Container: `--segmented-bg` (`#E9EDF3`), `padding: 3px`, `--radius-md`, `1px solid var(--border)`.
+- Active segment: `--surface` (white) with `--shadow-xs` and `--text` `600` weight.
+- Supports `fullWidth` for equal-width tabs inside side panels.
+
+## MapControlButton
+
+Component: `frontend/src/components/ui/MapControlButton.jsx`
+
+- `40px × 40px` `<button type="button">`, `--surface` (white), `--radius-md`, `--shadow-md`, no border, `18px` icon.
+- Requires `ariaLabel` (or `aria-label`).
+- `2px solid var(--primary)` focus outline; respects `prefers-reduced-motion: reduce`.
+
+## MapOverlayPanel
+
+Component: `frontend/src/components/ui/MapOverlayPanel.jsx`
+
+- Floating map panel surface: `--surface` (white), `1px solid var(--border)`, `--radius-2xl`, `--shadow-md`.
+- Supports polymorphic `as` (`section`, `aside`, `div`, etc.).

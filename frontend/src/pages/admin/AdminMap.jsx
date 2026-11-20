@@ -1,6 +1,27 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  Maximize2,
+  Minimize2,
+  Plus,
+  LifeBuoy,
+  AlertTriangle,
+  Search,
+  X,
+  PanelLeftClose,
+  Building2,
+  Building,
+  Home,
+  Landmark,
+  Pencil,
+  MapPin,
+  AlertCircle,
+  ExternalLink,
+  ChevronRight,
+  ChevronDown,
+  ChevronUp,
+} from "lucide-react";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
   faSearch,
@@ -39,12 +60,16 @@ import {
   faHome,
   faPlaceOfWorship,
   faWarehouse,
-  faExpand,
-  faCompress,
   faBuilding,
-  faLifeRing,
   faTriangleExclamation,
 } from "@fortawesome/free-solid-svg-icons";
+import {
+  MapControlButton,
+  MapOverlayPanel,
+  StatusPill,
+  ProgressBar,
+  SegmentedControl,
+} from "../../components/ui";
 
 import { api } from "../../services/api";
 import { useAuth } from "../../context/AuthContext";
@@ -246,7 +271,8 @@ export default function AdminMap() {
   const hazardZonesQuery = useHazardZones();
   const { data: sogodBoundary = null } = useSogodBoundary();
   const allHazardReportsQuery = useHazardReports("all", {
-    enabled: Boolean(deepLinkedHazardId),
+    refetchInterval: 30000,
+    refetchIntervalInBackground: false,
   });
   const publicHazardReportsQuery = usePublicHazardReports({
     enabled: Boolean(deepLinkedHazardId),
@@ -258,7 +284,7 @@ export default function AdminMap() {
   const centers = centersQuery.data ?? null;
   const hazardZones = hazardZonesQuery.data ?? null;
   const { rooms: allLoadedRooms } = useRoomsForCenters(centers);
-  const { buildingsGeoJSON, refetch: refetchBuildings } = useBuildingsForCenters(centers);
+  const { buildingsGeoJSON, isLoading: buildingsLoading, refetch: refetchBuildings } = useBuildingsForCenters(centers);
 
   // Map of center ID -> active room count for list rows
   const roomsCountByCenterId = useMemo(() => {
@@ -294,9 +320,9 @@ export default function AdminMap() {
     return centers.features.filter((c) => !isCenterMapped(c)).length;
   }, [centers]);
 
-  // Rescue requests query for action bar badge
+  // Rescue requests query for action bar badge & map overlay markers
   const rescueRequestsQuery = useRescueRequests();
-  const openRescueCount = useMemo(() => {
+  const activeRescueRequests = useMemo(() => {
     const data = rescueRequestsQuery.data;
     const list = Array.isArray(data)
       ? data
@@ -307,9 +333,31 @@ export default function AdminMap() {
           : [];
     return list.filter((r) => {
       const s = String(r.status || "").toLowerCase();
+      return s !== "resolved" && s !== "completed" && s !== "cancelled";
+    });
+  }, [rescueRequestsQuery.data]);
+
+  const openRescueCount = useMemo(() => {
+    return activeRescueRequests.filter((r) => {
+      const s = String(r.status || "").toLowerCase();
       return s === "pending" || s === "open";
     }).length;
-  }, [rescueRequestsQuery.data]);
+  }, [activeRescueRequests]);
+
+  // Pending hazard reports awaiting staff review
+  const pendingHazardReports = useMemo(() => {
+    const data = allHazardReportsQuery.data;
+    const list = Array.isArray(data)
+      ? data
+      : Array.isArray(data?.data)
+        ? data.data
+        : Array.isArray(data?.reports)
+          ? data.reports
+          : [];
+    return list.filter(
+      (r) => String(r?.status || "").toLowerCase() === "pending"
+    );
+  }, [allHazardReportsQuery.data]);
 
   // Barangays data for Add Center wizard
   const { data: barangaysData = [] } = useBarangays();
@@ -382,16 +430,49 @@ export default function AdminMap() {
     );
   }, [selectedCenterRooms]);
 
-  // Filters & Search
+  // Filters & Search (active centers tab lives in URL: ?centers=all | mapped | not-mapped)
   const [searchQuery, setSearchQuery] = useState("");
-  const [filter, setFilter] = useState("all"); // "all" | "mapped" | "unmapped"
+  const rawCentersTab = searchParams.get("centers");
+  const filter =
+    rawCentersTab === "mapped" || rawCentersTab === "not-mapped"
+      ? rawCentersTab
+      : "all";
+  const setFilter = useCallback(
+    (nextTab) => {
+      const normalized =
+        nextTab === "mapped" || nextTab === "not-mapped" ? nextTab : "all";
+      const nextParams = new URLSearchParams(location.search);
+      nextParams.set("centers", normalized);
+      const qs = nextParams.toString();
+      navigate(`${location.pathname}${qs ? `?${qs}` : ""}`, { replace: true });
+    },
+    [location.pathname, location.search, navigate]
+  );
   const [geocodingResults, setGeocodingResults] = useState([]);
   const [geocodingLoading, setGeocodingLoading] = useState(false);
 
-  // Panel state: Desktop floating panel starts collapsed by default
-  const [panelCollapsed, setPanelCollapsed] = useState(
-    !deepLinkedCenterId && !deepLinkedBuildingId
-  );
+  // Panel state: collapsed by default on initial load (unless deep-linked on >=1024px) and auto-collapsed below 1024px
+  const [panelCollapsed, setPanelCollapsed] = useState(() => {
+    if (typeof window !== "undefined" && window.innerWidth < 1024) {
+      return true;
+    }
+    return !deepLinkedCenterId && !deepLinkedBuildingId;
+  });
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return;
+    const mq = window.matchMedia("(max-width: 1023px)");
+    const handleViewportChange = (e) => {
+      if (e.matches) {
+        setPanelCollapsed(true);
+      }
+    };
+    if (mq.matches) {
+      setPanelCollapsed(true);
+    }
+    mq.addEventListener("change", handleViewportChange);
+    return () => mq.removeEventListener("change", handleViewportChange);
+  }, []);
   const [panelSubView, setPanelSubView] = useState("details"); // "details" | "map_rooms"
   const previousSubViewRef = useRef("details");
 
@@ -597,6 +678,20 @@ export default function AdminMap() {
     onEdit: handleEditReport,
     onDelete: handleDeleteReport,
   }), [isAdmin, handleVerifyReport, handleResolveReport, handleEditReport, handleDeleteReport]);
+
+  const handleAdvanceRescueStatus = useCallback(async (rescue, nextStatus) => {
+    await api.updateRescueRequest(rescue.id, nextStatus);
+    queryClient.invalidateQueries({ queryKey: queryKeys.rescueRequests });
+  }, [queryClient]);
+
+  const handleOpenRescueAlerts = useCallback((rescue) => {
+    navigate(`${basePath}?tab=rescue&rescue=${rescue.id}`);
+  }, [navigate, basePath]);
+
+  const rescueActions = useMemo(() => ({
+    onAdvanceStatus: handleAdvanceRescueStatus,
+    onOpenInRescueAlerts: handleOpenRescueAlerts,
+  }), [handleAdvanceRescueStatus, handleOpenRescueAlerts]);
 
   // Placement Flow state
   const [isMapping, setIsMapping] = useState(false);
@@ -2165,7 +2260,7 @@ export default function AdminMap() {
       const mapped = isCenterMapped(center);
 
       if (filter === "mapped" && !mapped) return false;
-      if (filter === "unmapped" && mapped) return false;
+      if (filter === "not-mapped" && mapped) return false;
 
       if (!searchQuery.trim()) return true;
       const q = searchQuery.toLowerCase().trim();
@@ -2178,312 +2273,18 @@ export default function AdminMap() {
     });
   }, [allCentersList, filter, searchQuery]);
 
-  // Single card snap-scroll window state and handlers
-  const [currentCenterIndex, setCurrentCenterIndex] = useState(0);
-  const currentIndexRef = useRef(0);
+  // Scrollable centers list refs & sync
   const listWindowRef = useRef(null);
-  const [listWindowEl, setListWindowEl] = useState(null);
   const lastSelectedCenterIdRef = useRef(null);
-  const filteredCentersRef = useRef(filteredCenters);
-  filteredCentersRef.current = filteredCenters;
 
-  const cardStepRef = useRef(184 + 12);
-  const isLockedRef = useRef(false);
-  const lastMoveTimeRef = useRef(0);
-  const unlockTimerRef = useRef(null);
-  const listTouchStartYRef = useRef(0);
-  const listTouchLastYRef = useRef(0);
-  const listTouchStartIndexRef = useRef(0);
-
-  const setListWindowNode = useCallback((node) => {
-    listWindowRef.current = node;
-    setListWindowEl(node);
-  }, []);
-
-  const computeCardStep = useCallback(() => {
-    const el = listWindowRef.current;
-    if (!el) return cardStepRef.current;
-    const cards = el.querySelectorAll(".admin-map-center-item");
-    if (cards.length >= 2) {
-      const diff = cards[1].offsetTop - cards[0].offsetTop;
-      if (diff > 0) {
-        cardStepRef.current = diff;
-        return diff;
-      }
-    }
-    if (cards.length === 1) {
-      const rectHeight =
-        cards[0].offsetHeight ||
-        cards[0].getBoundingClientRect().height ||
-        184;
-      const style =
-        typeof window !== "undefined" ? window.getComputedStyle(el) : null;
-      const gap = style
-        ? parseFloat(style.rowGap || style.gap || "12") || 12
-        : 12;
-      const step = rectHeight + gap;
-      if (step > 0) {
-        cardStepRef.current = step;
-        return step;
-      }
-    }
-    cardStepRef.current = 184 + 12;
-    return cardStepRef.current;
-  }, []);
-
-  const scheduleUnlock = useCallback((minDelayMs) => {
-    if (unlockTimerRef.current) {
-      clearTimeout(unlockTimerRef.current);
-    }
-    const now = Date.now();
-    const elapsedSinceMove = now - lastMoveTimeRef.current;
-    const remainingCooldown = Math.max(0, 500 - elapsedSinceMove);
-    const delay = Math.max(minDelayMs, remainingCooldown);
-
-    unlockTimerRef.current = setTimeout(() => {
-      isLockedRef.current = false;
-      unlockTimerRef.current = null;
-    }, delay);
-  }, []);
-
-  const engageLock = useCallback(() => {
-    isLockedRef.current = true;
-    lastMoveTimeRef.current = Date.now();
-    scheduleUnlock(500);
-  }, [scheduleUnlock]);
-
-  const extendLock = useCallback(() => {
-    if (!isLockedRef.current) return;
-    scheduleUnlock(120);
-  }, [scheduleUnlock]);
-
+  // Reset scroll to top when search query or filter tab changes
   useEffect(() => {
-    return () => {
-      if (unlockTimerRef.current) {
-        clearTimeout(unlockTimerRef.current);
-      }
-    };
-  }, []);
-
-  const scrollToCard = useCallback(
-    (targetIndex, { lock = true, instant = false } = {}) => {
-      const list = filteredCentersRef.current;
-      const count = list.length;
-      if (count === 0) {
-        currentIndexRef.current = 0;
-        setCurrentCenterIndex(0);
-        if (lock) engageLock();
-        if (listWindowRef.current) {
-          listWindowRef.current.scrollTo({ top: 0, behavior: "auto" });
-        }
-        return;
-      }
-
-      const clampedIndex = Math.min(count - 1, Math.max(0, targetIndex));
-      currentIndexRef.current = clampedIndex;
-      setCurrentCenterIndex(clampedIndex);
-
-      if (lock) {
-        engageLock();
-      }
-
-      const el = listWindowRef.current;
-      if (!el) return;
-
-      const cardStep = computeCardStep();
-      const prefersReduced =
-        instant ||
-        (typeof window !== "undefined" &&
-          window.matchMedia &&
-          window.matchMedia("(prefers-reduced-motion: reduce)").matches);
-
-      el.scrollTo({
-        top: clampedIndex * cardStep,
-        behavior: prefersReduced ? "auto" : "smooth",
-      });
-    },
-    [computeCardStep, engageLock]
-  );
-
-  const handleWheelRef = useRef(null);
-  handleWheelRef.current = (e) => {
-    const count = filteredCentersRef.current.length;
-    if (count <= 1) return;
-
-    const { deltaY, deltaMode } = e;
-    if (!Number.isFinite(deltaY) || deltaY === 0) return;
-
-    const direction = deltaY > 0 ? 1 : -1;
-    const currentIdx = currentIndexRef.current;
-
-    // If at first or last card and scrolling further out, do not call preventDefault()
-    if (
-      (direction < 0 && currentIdx <= 0) ||
-      (direction > 0 && currentIdx >= count - 1)
-    ) {
-      if (isLockedRef.current) {
-        extendLock();
-      }
-      return;
+    if (listWindowRef.current) {
+      listWindowRef.current.scrollTop = 0;
     }
+  }, [searchQuery, filter]);
 
-    e.preventDefault();
-
-    if (isLockedRef.current) {
-      extendLock();
-      return;
-    }
-
-    // Ignore small deltas (in pixel mode; treat line/page modes by sign of deltaY)
-    if (deltaMode === 0 && Math.abs(deltaY) < 8) {
-      return;
-    }
-
-    const nextIdx = Math.min(count - 1, Math.max(0, currentIdx + direction));
-    if (nextIdx !== currentIdx) {
-      scrollToCard(nextIdx, { lock: true });
-    }
-  };
-
-  useEffect(() => {
-    if (!listWindowEl) return;
-
-    const step = computeCardStep();
-    listWindowEl.scrollTo({
-      top: currentIndexRef.current * step,
-      behavior: "auto",
-    });
-
-    const onWheel = (e) => {
-      handleWheelRef.current?.(e);
-    };
-
-    listWindowEl.addEventListener("wheel", onWheel, { passive: false });
-    return () => {
-      listWindowEl.removeEventListener("wheel", onWheel);
-    };
-  }, [listWindowEl, computeCardStep]);
-
-  // Recompute cardStep on resize and keep scroll aligned
-  useEffect(() => {
-    const handleResize = () => {
-      const step = computeCardStep();
-      if (listWindowRef.current) {
-        listWindowRef.current.scrollTo({
-          top: currentIndexRef.current * step,
-          behavior: "auto",
-        });
-      }
-    };
-    window.addEventListener("resize", handleResize);
-    return () => window.removeEventListener("resize", handleResize);
-  }, [computeCardStep]);
-
-  // Recompute cardStep when the card list changes
-  useEffect(() => {
-    computeCardStep();
-    const maxIdx = Math.max(0, filteredCenters.length - 1);
-    if (currentIndexRef.current > maxIdx) {
-      scrollToCard(maxIdx, { lock: true });
-    }
-  }, [filteredCenters, computeCardStep, scrollToCard]);
-
-  const handleListTouchStart = useCallback((e) => {
-    if (!e.touches || e.touches.length === 0) return;
-    listTouchStartYRef.current = e.touches[0].clientY;
-    listTouchLastYRef.current = e.touches[0].clientY;
-    listTouchStartIndexRef.current = currentIndexRef.current;
-  }, []);
-
-  const handleListTouchMove = useCallback((e) => {
-    if (!e.touches || e.touches.length === 0) return;
-    listTouchLastYRef.current = e.touches[0].clientY;
-  }, []);
-
-  const handleListTouchEnd = useCallback(
-    (e) => {
-      const count = filteredCentersRef.current.length;
-      if (count <= 1) return;
-      const endY =
-        e.changedTouches && e.changedTouches.length > 0
-          ? e.changedTouches[0].clientY
-          : listTouchLastYRef.current;
-      const deltaY = listTouchStartYRef.current - endY;
-
-      if (Math.abs(deltaY) <= 30) {
-        if (Math.abs(deltaY) > 0) {
-          scrollToCard(currentIndexRef.current, { lock: false });
-        }
-        return;
-      }
-
-      if (isLockedRef.current) {
-        scrollToCard(currentIndexRef.current, { lock: false });
-        return;
-      }
-
-      const direction = deltaY > 0 ? 1 : -1;
-      const baseIndex = listTouchStartIndexRef.current;
-      const nextIdx = Math.min(count - 1, Math.max(0, baseIndex + direction));
-      scrollToCard(nextIdx, { lock: true });
-    },
-    [scrollToCard]
-  );
-
-  const handleListKeyDown = useCallback(
-    (e) => {
-      const count = filteredCentersRef.current.length;
-      if (count === 0) return;
-      if (e.key === "ArrowDown") {
-        e.preventDefault();
-        if (isLockedRef.current) return;
-        if (currentIndexRef.current < count - 1) {
-          scrollToCard(currentIndexRef.current + 1, { lock: true });
-        }
-      } else if (e.key === "ArrowUp") {
-        e.preventDefault();
-        if (isLockedRef.current) return;
-        if (currentIndexRef.current > 0) {
-          scrollToCard(currentIndexRef.current - 1, { lock: true });
-        }
-      } else if (e.key === "Home") {
-        e.preventDefault();
-        if (isLockedRef.current) return;
-        if (currentIndexRef.current !== 0) {
-          scrollToCard(0, { lock: true });
-        }
-      } else if (e.key === "End") {
-        e.preventDefault();
-        if (isLockedRef.current) return;
-        if (currentIndexRef.current !== count - 1) {
-          scrollToCard(count - 1, { lock: true });
-        }
-      }
-    },
-    [scrollToCard]
-  );
-
-  const handleScrollPrev = useCallback(() => {
-    if (isLockedRef.current) return;
-    if (currentIndexRef.current > 0) {
-      scrollToCard(currentIndexRef.current - 1, { lock: true });
-    }
-  }, [scrollToCard]);
-
-  const handleScrollNext = useCallback(() => {
-    const count = filteredCentersRef.current.length;
-    if (isLockedRef.current) return;
-    if (currentIndexRef.current < count - 1) {
-      scrollToCard(currentIndexRef.current + 1, { lock: true });
-    }
-  }, [scrollToCard]);
-
-  // When search query or filter tab changes, scroll back to first matching card with lock engaged
-  useEffect(() => {
-    scrollToCard(0, { lock: true });
-  }, [searchQuery, filter, scrollToCard]);
-
-  // When selected center changes from outside (e.g. map click or deep link), scroll to it with lock engaged
+  // Scroll selected card into view when selection changes from outside (e.g., map click or deep link)
   useEffect(() => {
     if (!selectedCenter) {
       lastSelectedCenterIdRef.current = null;
@@ -2492,21 +2293,27 @@ export default function AdminMap() {
     const currentSelectedId = String(
       selectedCenter.properties?.id ?? selectedCenter.id ?? ""
     );
-    if (!currentSelectedId) return;
-
-    if (currentSelectedId !== lastSelectedCenterIdRef.current) {
-      lastSelectedCenterIdRef.current = currentSelectedId;
-      const targetIdx = filteredCenters.findIndex(
-        (c) => String(c.properties?.id ?? c.id ?? "") === currentSelectedId
-      );
-      if (targetIdx >= 0) {
-        scrollToCard(targetIdx, { lock: true });
-      }
+    if (!currentSelectedId || currentSelectedId === lastSelectedCenterIdRef.current) {
+      return;
     }
-  }, [selectedCenter, filteredCenters, scrollToCard]);
+    lastSelectedCenterIdRef.current = currentSelectedId;
+    const container = listWindowRef.current;
+    if (!container) return;
+    const cardEl = container.querySelector(
+      `[data-center-id="${CSS.escape ? CSS.escape(currentSelectedId) : currentSelectedId}"]`
+    );
+    if (cardEl && typeof cardEl.scrollIntoView === "function") {
+      const prefersReduced =
+        typeof window !== "undefined" &&
+        window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+      cardEl.scrollIntoView({
+        block: "nearest",
+        behavior: prefersReduced ? "auto" : "smooth",
+      });
+    }
+  }, [selectedCenter, filteredCenters]);
 
-
-  // Render Center List Item (one card in single-card snap window)
+  // Render Center Card in scrollable list
   function renderCenterItem(center) {
     const props = center.properties || center;
     const centerId = props.id ?? center.id;
@@ -2514,32 +2321,15 @@ export default function AdminMap() {
     const isSelected =
       selectedCenter &&
       String(selectedCenter.properties?.id ?? selectedCenter.id) ===
-      String(centerId);
+        String(centerId);
     const active = Boolean(props.is_active);
     const roomCount =
       roomsCountByCenterId[centerId] ??
       props.total_rooms ??
       props.room_count ??
       0;
-    const buildingCount = buildingsCountByCenterId[centerId] || 0;
     const capacity = Number(props.capacity || 0);
     const occupied = Number(props.occupied || 0);
-    const assigned = Number(props.assigned ?? props.total_assigned ?? 0);
-    const occPct =
-      capacity > 0 ? Math.min(100, Math.round((occupied / capacity) * 100)) : 0;
-    const assignedPct =
-      capacity > 0 ? Math.min(100, Math.round((assigned / capacity) * 100)) : 0;
-    const isFull = capacity > 0 && occupied >= capacity;
-    const barColor =
-      capacity <= 0
-        ? "#94a3b8"
-        : isFull
-          ? "#dc2626"
-          : occPct >= 70
-            ? "#d97706"
-            : occupied > 0
-              ? "#16a34a"
-              : "#94a3b8";
 
     // Show at most 2 barangays, then "+N"
     let barangayText = "Sogod";
@@ -2566,99 +2356,91 @@ export default function AdminMap() {
       typeNames[centerType] ||
       centerType.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 
-    // Row 2: one muted line: “Olisihan · Single venue · 0 rooms”
     const row2Text = `${barangayText} · ${typeText} · ${roomCount} ${roomCount === 1 ? "room" : "rooms"}`;
 
-    // Status pill: “Not mapped” in soft red, “Active” in soft green, or “Inactive” in soft gray
-    let statusTone = "active";
-    let statusLabel = "Active";
-    if (!mapped) {
-      statusTone = "unmapped";
-      statusLabel = "Not mapped";
-    } else if (!active) {
-      statusTone = "inactive";
-      statusLabel = "Inactive";
-    }
+    const statusVariant = !mapped
+      ? "not-mapped"
+      : active
+        ? "active"
+        : "inactive";
+
+    const centerName = props.name || "Evacuation Center";
 
     return (
-      <div
+      <article
         key={centerId}
-        role="option"
-        tabIndex={0}
-        className={`admin-map-center-item ${isSelected ? "is-selected" : ""}`}
-        onClick={() => handleSelectCenter(center)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            handleSelectCenter(center);
-          }
-        }}
-        aria-selected={isSelected}
+        data-center-id={String(centerId)}
+        className={`admin-map-center-card ${isSelected ? "is-selected" : ""}`}
       >
-        {/* Row 1: Name + Status pill */}
-        <div className="admin-map-item-row1">
-          <span className="admin-map-item-name">{props.name || "Evacuation Center"}</span>
-          <span className={`admin-map-status-pill status-${statusTone}`}>
-            {statusLabel}
-          </span>
-        </div>
-
-        {/* Row 2: Muted line: "Olisihan · Single venue · 0 rooms" */}
-        <div className="admin-map-item-row2">
-          {row2Text}
-        </div>
-
-        {/* Row 3: Slim 4px primary blue progress bar with "3 of 70 here" */}
-        <div className="admin-map-item-row3">
-          <div className="admin-map-item-occ-text">
-            {occupied} of {capacity} here
+        <button
+          type="button"
+          className="admin-map-center-card__select"
+          onClick={() => handleSelectCenter(center)}
+          aria-pressed={Boolean(isSelected)}
+        >
+          <div className="admin-map-center-card__header">
+            <span className="admin-map-center-card__name">{centerName}</span>
+            <StatusPill variant={statusVariant} />
           </div>
-          <div className="admin-map-item-progress-track" aria-hidden="true">
-            <div
-              className="admin-map-item-progress-fill"
-              style={{ width: `${occPct}%` }}
+
+          <div className="admin-map-center-card__meta">{row2Text}</div>
+
+          <div className="admin-map-center-card__occupancy">
+            <div className="admin-map-center-card__occ-text">
+              <strong>{occupied}</strong> of {capacity} here
+            </div>
+            <ProgressBar
+              value={occupied}
+              max={capacity}
+              size={6}
+              ariaLabel={`${centerName} occupancy: ${occupied} of ${capacity} here`}
             />
           </div>
-        </div>
+        </button>
 
-          {/* Actions Row: Place on map / Edit polygon and Add building as secondary outline buttons */}
-          <div className="admin-map-item-actions-row">
+        <div className="admin-map-center-card__actions">
+          <button
+            type="button"
+            className="admin-map-btn-secondary-outline"
+            onClick={() => {
+              handleCloseCenterModal?.();
+              startPlacementFlow(center);
+            }}
+            title={
+              mapped
+                ? `Edit polygon for ${centerName}`
+                : `Place ${centerName} on map`
+            }
+          >
+            {mapped ? (
+              <Pencil size={13} strokeWidth={2} aria-hidden="true" />
+            ) : (
+              <MapPin size={13} strokeWidth={2} aria-hidden="true" />
+            )}
+            <span>{mapped ? "Edit polygon" : "Place on map"}</span>
+          </button>
+          {!isVenueOrHouse && (
             <button
               type="button"
-              className="admin-map-btn-secondary-outline"
-              onClick={(e) => {
-                e.stopPropagation();
-                handleCloseCenterModal?.();
-                startPlacementFlow(center);
+              className={`admin-map-btn-secondary-outline ${!mapped ? "is-disabled" : ""}`}
+              onClick={() => {
+                if (mapped) {
+                  startAddBuildingFlowForCenter(center);
+                }
               }}
-              title={mapped ? `Edit polygon for ${props.name || "center"}` : `Place ${props.name || "center"} on map`}
-              aria-label={mapped ? "Edit polygon" : "Place on map"}
+              title={
+                mapped
+                  ? `Add building to ${centerName}`
+                  : "Place the center on the map first"
+              }
+              disabled={!mapped}
             >
-              <FontAwesomeIcon
-                icon={mapped ? faPen : faDrawPolygon}
-                size="xs"
-              />
-              <span>{mapped ? "Edit polygon" : "Place on map"}</span>
+              <Plus size={13} strokeWidth={2.25} aria-hidden="true" />
+              <span>Add building</span>
             </button>
-            {!isVenueOrHouse && (
-              <button
-                type="button"
-                className={`admin-map-btn-secondary-outline ${!mapped ? "is-disabled" : ""}`}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (mapped) {
-                    startAddBuildingFlowForCenter(center);
-                  }
-                }}
-                title={mapped ? `Add building to ${props.name || "center"}` : "Place the center on the map first"}
-                disabled={!mapped}
-              >
-                <FontAwesomeIcon icon={faPlus} size="xs" />
-                <span>Add building</span>
-              </button>
-            )}
-          </div>
-      </div>
+          )}
+        </div>
+      </article>
     );
   }
 
@@ -4071,7 +3853,7 @@ export default function AdminMap() {
       <>
         {!compactOnly && (
           <div className="admin-map-search-wrap">
-            <FontAwesomeIcon icon={faSearch} className="admin-map-search-icon" />
+            <Search size={15} strokeWidth={2} className="admin-map-search-icon" aria-hidden="true" />
             <input
               type="text"
               value={searchQuery}
@@ -4087,67 +3869,68 @@ export default function AdminMap() {
                 onClick={() => setSearchQuery("")}
                 aria-label="Clear search query"
               >
-                <FontAwesomeIcon icon={faXmark} />
+                <X size={14} strokeWidth={2} aria-hidden="true" />
               </button>
             )}
           </div>
         )}
 
-        <div
-          className="admin-map-filter-row"
-          role="group"
-          aria-label="Filter centers by mapping status"
-        >
-          <button
-            type="button"
-            className={`admin-map-filter-btn ${filter === "all" ? "is-active" : ""}`}
-            onClick={() => setFilter("all")}
-          >
-            <span>All</span>
-            <span className="admin-map-tab-count">{allCentersList.length}</span>
-          </button>
-
-          <button
-            type="button"
-            className={`admin-map-filter-btn ${filter === "mapped" ? "is-active" : ""}`}
-            onClick={() => setFilter("mapped")}
-          >
-            <span>Mapped</span>
-            <span className="admin-map-tab-count">{mappedCount}</span>
-          </button>
-
-          <button
-            type="button"
-            className={`admin-map-filter-btn ${filter === "unmapped" ? "is-active" : ""}`}
-            onClick={() => setFilter("unmapped")}
-          >
-            <span>Not mapped</span>
-            <span className="admin-map-tab-count">{unmappedCount}</span>
-          </button>
-        </div>
+        <SegmentedControl
+          size="sm"
+          className="admin-map-centers-segmented"
+          ariaLabel="Filter centers by mapping status"
+          value={filter}
+          onChange={setFilter}
+          options={[
+            { value: "all", label: "All", count: allCentersList.length },
+            { value: "mapped", label: "Mapped", count: mappedCount },
+            { value: "not-mapped", label: "Not mapped", count: unmappedCount },
+          ]}
+        />
       </>
     );
   }
 
-  // Single card snap window + indicator
+  // Scrollable list of center cards with skeleton loading, empty, and error states
   function renderPanelContent() {
     if (centersQuery.isLoading) {
       return (
-        <div className="admin-map-list-window" tabIndex={0} role="listbox" aria-label="Evacuation centers">
-          <div className="admin-map-skeleton-card" />
+        <div
+          className="admin-map-centers-list"
+          role="region"
+          aria-label="Evacuation centers"
+          aria-busy="true"
+        >
+          {[0, 1, 2, 3].map((idx) => (
+            <div key={idx} className="admin-map-skeleton-card" aria-hidden="true">
+              <div className="admin-map-skeleton-row">
+                <div className="admin-map-skeleton-line admin-map-skeleton-line--title" />
+                <div className="admin-map-skeleton-pill" />
+              </div>
+              <div className="admin-map-skeleton-line admin-map-skeleton-line--meta" />
+              <div className="admin-map-skeleton-line admin-map-skeleton-line--bar" />
+              <div className="admin-map-skeleton-actions">
+                <div className="admin-map-skeleton-btn" />
+                <div className="admin-map-skeleton-btn" />
+              </div>
+            </div>
+          ))}
         </div>
       );
     }
 
     if (centersQuery.isError) {
       return (
-        <div className="admin-map-list-window" tabIndex={0} role="listbox" aria-label="Evacuation centers">
-          <div className="admin-map-error-state" role="alert">
-            <FontAwesomeIcon icon={faCircleExclamation} className="admin-map-state-icon is-error" />
-            <span>Failed to load evacuation centers.</span>
+        <div className="admin-map-centers-list" role="region" aria-label="Evacuation centers">
+          <div className="admin-map-panel-state is-error" role="alert">
+            <AlertCircle size={22} strokeWidth={2} className="admin-map-panel-state__icon" aria-hidden="true" />
+            <p className="admin-map-panel-state__title">Failed to load evacuation centers.</p>
+            <p className="admin-map-panel-state__desc">
+              Check your connection and try again.
+            </p>
             <button
               type="button"
-              className="admin-map-state-retry-btn"
+              className="admin-map-btn-secondary-outline"
               onClick={() => centersQuery.refetch()}
             >
               Retry
@@ -4158,64 +3941,56 @@ export default function AdminMap() {
     }
 
     const hasCenters = filteredCenters.length > 0;
+    const hasActiveFilters = Boolean(searchQuery.trim()) || filter !== "all";
 
     return (
-      <>
-        <div
-          ref={setListWindowNode}
-          className="admin-map-list-window"
-          tabIndex={0}
-          role="listbox"
-          aria-label="Evacuation centers"
-          onKeyDown={handleListKeyDown}
-          onTouchStart={handleListTouchStart}
-          onTouchMove={handleListTouchMove}
-          onTouchEnd={handleListTouchEnd}
-        >
-          {hasCenters ? (
-            filteredCenters.map(renderCenterItem)
-          ) : (
-            <div className="admin-map-empty-state">
-              <FontAwesomeIcon icon={faBuildingColumns} className="admin-map-state-icon" />
-              <span>No centers found</span>
-            </div>
-          )}
-        </div>
-
-        <div className="admin-map-card-indicator" role="navigation" aria-label="Center navigation">
-          <button
-            type="button"
-            className="admin-map-indicator-btn"
-            onClick={handleScrollPrev}
-            disabled={!hasCenters || currentCenterIndex <= 0}
-            aria-label="Previous center"
-            title="Previous center"
-          >
-            <FontAwesomeIcon icon={faChevronUp} />
-          </button>
-          <span className="admin-map-indicator-text" aria-live="polite">
-            {hasCenters
-              ? `${currentCenterIndex + 1} of ${filteredCenters.length}`
-              : "0 of 0"}
-          </span>
-          <button
-            type="button"
-            className="admin-map-indicator-btn"
-            onClick={handleScrollNext}
-            disabled={!hasCenters || currentCenterIndex >= filteredCenters.length - 1}
-            aria-label="Next center"
-            title="Next center"
-          >
-            <FontAwesomeIcon icon={faChevronDown} />
-          </button>
-        </div>
-      </>
+      <div
+        ref={listWindowRef}
+        className="admin-map-centers-list"
+        role="region"
+        aria-label="Evacuation centers"
+      >
+        {hasCenters ? (
+          filteredCenters.map(renderCenterItem)
+        ) : (
+          <div className="admin-map-panel-state">
+            <Building2 size={22} strokeWidth={1.75} className="admin-map-panel-state__icon" aria-hidden="true" />
+            <p className="admin-map-panel-state__title">
+              {hasActiveFilters ? "No centers match your filters" : "No evacuation centers yet"}
+            </p>
+            <p className="admin-map-panel-state__desc">
+              {hasActiveFilters
+                ? "Try adjusting your search or switching tabs."
+                : "Add an evacuation center to get started."}
+            </p>
+            {hasActiveFilters && (
+              <button
+                type="button"
+                className="admin-map-btn-secondary-outline"
+                onClick={() => {
+                  setSearchQuery("");
+                  setFilter("all");
+                }}
+              >
+                Clear filters
+              </button>
+            )}
+          </div>
+        )}
+      </div>
     );
   }
 
-  // Phase 2: Center Details Panel over the map (matches resident map design)
+  // Center Detail Overlay Panel next to the Centers panel (no modal backdrop)
   function renderCenterDetailsModal() {
-    if (!centerModalOpen || !selectedCenter) return null;
+    if (
+      !centerModalOpen ||
+      !selectedCenter ||
+      isMapping ||
+      (isDrawingBuilding && redrawingBuildingId)
+    ) {
+      return null;
+    }
     const props = selectedCenter.properties || selectedCenter || {};
     const centerId = props.id ?? selectedCenter.id;
     const active = Boolean(props.is_active);
@@ -4223,294 +3998,568 @@ export default function AdminMap() {
     const capacity = Number(props.capacity || 0);
     const occupied = Number(props.occupied || 0);
     const assigned = Number(props.assigned ?? props.total_assigned ?? 0);
-    const occ = getOccupancyStatus(occupied, capacity);
-    const roomCount =
-      roomsCountByCenterId[centerId] ??
-      selectedCenterRooms.length ??
-      props.total_rooms ??
-      props.room_count ??
-      0;
     const buildingCount = centerBuildings.length;
     const barangays = props.barangays || props.barangay_breakdown || [];
     const barangayText =
       barangays.length > 0
         ? barangays.map((b) => displayEntityName(b.name || b)).join(", ")
         : displayEntityName(props.barangay_name || props.address) ||
-        "Sogod, Southern Leyte";
+          "Sogod, Southern Leyte";
     const addressText = displayEntityName(props.address);
 
-    const isVenueOrHouse = props.center_type && props.center_type !== "campus";
+    const isVenueOrHouse = Boolean(
+      props.center_type && props.center_type !== "campus"
+    );
+    const showShelterAndFamilies = isVenueOrHouse || !mapped;
     const spaceLeft = Math.max(0, capacity - occupied);
     const centerFamilies = selectedCenterDetailsQuery.data?.families || [];
     const isOwner = props.center_type === "private_property" && props.owner_name;
 
     const centerType = props.center_type || "campus";
     const typeConfig = {
-      campus: { label: "Campus", icon: faBuildingColumns },
-      private_property: { label: "Private Property", icon: faHome },
-      single_venue: { label: "Single Venue", icon: faPlaceOfWorship },
+      campus: { label: "Campus", Icon: Building2 },
+      private_property: { label: "Private Property", Icon: Home },
+      single_venue: { label: "Single Venue", Icon: Landmark },
     };
     const typeInfo = typeConfig[centerType] || typeConfig.campus;
+    const TypeIcon = typeInfo.Icon;
+    const centerName = props.name || "Evacuation Center";
 
     return (
-      <>
-        {isMobile && (
-          <div
-            className="popover-backdrop"
-            onClick={handleCloseCenterModal}
-            aria-hidden="true"
-          />
-        )}
+      <MapOverlayPanel
+        as="aside"
+        ref={centerModalDialogRef}
+        tabIndex={-1}
+        role="region"
+        aria-label={`${centerName} details`}
+        className={`admin-map-detail-panel ${isMobile ? "is-mobile" : ""}`}
+      >
+        {/* Fixed Top Section: Header, 3 Stat Boxes, Action Row */}
         <div
-          ref={centerModalDialogRef}
-          className={`center-bottom-card ${isMobile ? "mobile" : ""}`}
-          role="dialog"
-          aria-label="Evacuation Center Details"
+          className={`admin-map-detail-top ${centerPanelScrolled ? "is-scrolled" : ""}`}
         >
-          {/* Fixed Top Section: Header, Quick Stats, Admin Actions */}
-          <div className={`center-card-top-fixed ${centerPanelScrolled ? "is-scrolled" : ""}`}>
-            {isMobile && <div className="sheet-handle" aria-hidden="true" />}
-
-            {/* Header */}
-            <div className="center-card-header">
-              <div className="center-card-header-main">
-                <div className="center-card-name-row">
-                  <h3 className="center-card-title">{props.name || "Evacuation Center"}</h3>
-                  <span className={`center-status-badge ${active ? "open" : "mine"}`}>
-                    <span className="center-status-dot" />
-                    {active ? "Active" : "Inactive"}
-                  </span>
-                  <span className="admin-map-neutral-tag">
-                    <FontAwesomeIcon icon={typeInfo.icon} size="xs" />
-                    {typeInfo.label}
-                  </span>
-                </div>
-                <div className="center-card-address" title={barangayText}>
-                  {barangayText}
-                  {addressText && addressText !== barangayText ? ` · ${addressText}` : ""}
-                  {isOwner ? ` · Owner: ${props.owner_name}` : ""}
-                </div>
+          {/* Header */}
+          <div className="admin-map-detail-header">
+            <div className="admin-map-detail-header-main">
+              <div className="admin-map-detail-title-row">
+                <h3 className="admin-map-detail-title">{centerName}</h3>
+                <StatusPill variant={active ? "active" : "inactive"} />
+                <span className="admin-map-detail-type-chip">
+                  <TypeIcon size={12} strokeWidth={2} aria-hidden="true" />
+                  <span>{typeInfo.label}</span>
+                </span>
               </div>
+              <p className="admin-map-detail-meta" title={barangayText}>
+                {barangayText}
+                {addressText && addressText !== barangayText
+                  ? ` · ${addressText}`
+                  : ""}
+                {isOwner ? ` · Owner: ${props.owner_name}` : ""}
+              </p>
+            </div>
 
-              <button
-                type="button"
-                className="center-card-close-btn"
-                onClick={handleCloseCenterModal}
-                aria-label="Close details"
-                title="Close"
+            <button
+              type="button"
+              className="admin-map-detail-close-btn"
+              onClick={handleCloseCenterModal}
+              aria-label="Close"
+              title="Close"
+            >
+              <X size={16} strokeWidth={2} aria-hidden="true" />
+            </button>
+          </div>
+
+          {/* 3 Stat Boxes in a Row */}
+          <div className="admin-map-detail-stats">
+            <div className="admin-map-detail-stat">
+              <div
+                className={`admin-map-detail-stat__val is-boundary ${mapped ? "is-mapped" : "is-unmapped"}`}
               >
-                <FontAwesomeIcon icon={faXmark} />
-              </button>
+                {mapped ? (
+                  <MapPin size={14} strokeWidth={2.25} aria-hidden="true" />
+                ) : (
+                  <AlertCircle size={14} strokeWidth={2.25} aria-hidden="true" />
+                )}
+                <span>{mapped ? "Mapped" : "Unmapped"}</span>
+              </div>
+              <span className="admin-map-detail-stat__label">Boundary</span>
             </div>
 
-            {/* Quick stats: 3 stat tiles */}
-            <div className="center-stat-tiles-row">
-              {/* Boundary / Mapped Status */}
-              <div className="center-stat-tile">
-                <div className="center-stat-val-row">
-                  <FontAwesomeIcon
-                    icon={mapped ? faMapPin : faCircleExclamation}
-                    className="center-stat-pin-icon"
-                    style={{ color: mapped ? "#16a34a" : "#dc2626" }}
-                  />
-                  <span className="center-stat-num" style={{ fontSize: "14px", textTransform: "capitalize" }}>
-                    {mapped ? "Mapped" : "Unmapped"}
-                  </span>
-                </div>
-                <span className="center-stat-lbl">boundary</span>
+            <div className="admin-map-detail-stat">
+              <div className="admin-map-detail-stat__val">
+                <strong>{occupied}</strong>
+                {capacity > 0 && <span>of {capacity}</span>}
               </div>
-
-              {/* Occupied */}
-              <div className="center-stat-tile">
-                <div className="center-stat-val-row">
-                  <span className="center-stat-num">{occupied}</span>
-                  {capacity > 0 && <span className="center-stat-sub">of {capacity}</span>}
-                </div>
-                <span className="center-stat-lbl">here</span>
-              </div>
-
-              {/* Assigned */}
-              <div className="center-stat-tile">
-                <div className="center-stat-val-row">
-                  <span className="center-stat-num">{assigned}</span>
-                  {capacity > 0 && <span className="center-stat-sub">of {capacity}</span>}
-                </div>
-                <span className="center-stat-lbl">assigned</span>
-              </div>
+              <span className="admin-map-detail-stat__label">here</span>
             </div>
 
-            {/* Admin Action Buttons Row */}
-            <div className="admin-center-actions-row">
+            <div className="admin-map-detail-stat">
+              <div className="admin-map-detail-stat__val">
+                <strong>{assigned}</strong>
+                {capacity > 0 && <span>of {capacity}</span>}
+              </div>
+              <span className="admin-map-detail-stat__label">assigned</span>
+            </div>
+          </div>
+
+          {/* Action Row (34px secondary buttons) */}
+          <div className="admin-map-detail-actions">
+            <button
+              type="button"
+              className="admin-map-btn-secondary-outline"
+              onClick={() => {
+                handleCloseCenterModal();
+                startPlacementFlow(selectedCenter);
+              }}
+            >
+              {mapped ? (
+                <Pencil size={13} strokeWidth={2} aria-hidden="true" />
+              ) : (
+                <MapPin size={13} strokeWidth={2} aria-hidden="true" />
+              )}
+              <span>{mapped ? "Edit polygon" : "Place on map"}</span>
+            </button>
+
+            {!isVenueOrHouse && mapped && (
               <button
                 type="button"
                 className="admin-map-btn-secondary-outline"
                 onClick={() => {
                   handleCloseCenterModal();
-                  startPlacementFlow(selectedCenter);
+                  startAddBuildingFlowForCenter(selectedCenter);
                 }}
               >
-                <FontAwesomeIcon icon={mapped ? faPen : faDrawPolygon} size="xs" />
-                <span>{mapped ? "Edit polygon" : "Place on map"}</span>
+                <Plus size={13} strokeWidth={2.25} aria-hidden="true" />
+                <span>Add building</span>
               </button>
+            )}
 
-              {!isVenueOrHouse && mapped && (
-                <button
-                  type="button"
-                  className="admin-map-btn-secondary-outline"
-                  onClick={() => {
-                    handleCloseCenterModal();
-                    startAddBuildingFlowForCenter(selectedCenter);
-                  }}
-                >
-                  <FontAwesomeIcon icon={faPlus} size="xs" />
-                  <span>Add building</span>
-                </button>
-              )}
-
-              <button
-                type="button"
-                className="admin-map-btn-secondary-outline"
-                onClick={() => {
-                  navigate(`${basePath}/evacuation-centers/${centerId}`);
-                }}
-              >
-                <FontAwesomeIcon icon={faArrowUpRightFromSquare} size="xs" />
-                <span>Details</span>
-              </button>
-            </div>
+            <Link
+              to={`${basePath}/evacuation-centers/${centerId}`}
+              className="admin-map-btn-secondary-outline"
+            >
+              <ExternalLink size={13} strokeWidth={2} aria-hidden="true" />
+              <span>Details</span>
+            </Link>
           </div>
+        </div>
 
-          {/* Scrollable Body: Buildings List (Campus) or Shelter Space / Households */}
-          <div
-            className="center-card-scroll-body"
-            onScroll={(e) => setCenterPanelScrolled(e.currentTarget.scrollTop > 4)}
-          >
-            {isVenueOrHouse ? (
-              <div className="center-card-buildings-section">
-                <div className="center-card-buildings-header">
-                  <span className="buildings-header-title">Shelter Space</span>
-                  <span className="buildings-header-sub">
-                    {props.center_type === "private_property" ? "Private Property" : "Single Venue"}
-                  </span>
-                </div>
-                <div className="center-shelter-space-card">
-                  <div className="center-shelter-row">
-                    <span className="center-shelter-label">Capacity</span>
-                    <strong className="center-shelter-val">{capacity} people</strong>
-                  </div>
-                  <div className="center-shelter-row">
-                    <span className="center-shelter-label">Space remaining</span>
-                    <strong
-                      className="center-shelter-val"
-                      style={{ color: spaceLeft > 0 ? "#16a34a" : "#dc2626" }}
+        {/* Scrollable Body */}
+        <div
+          className="admin-map-detail-body"
+          onScroll={(e) => setCenterPanelScrolled(e.currentTarget.scrollTop > 4)}
+        >
+          {/* Buildings section for campus centers */}
+          {!isVenueOrHouse && (
+            <section
+              className="admin-map-detail-section"
+              aria-label="Center buildings"
+            >
+              <div className="admin-map-detail-section-header">
+                <h4 className="admin-map-detail-section-title">
+                  Buildings ({buildingCount})
+                </h4>
+                <span className="admin-map-detail-section-hint">
+                  Tap a building to view rooms
+                </span>
+              </div>
+
+              {buildingsLoading && buildingCount === 0 ? (
+                <div
+                  className="admin-map-detail-buildings-list"
+                  aria-busy="true"
+                  aria-label="Loading buildings"
+                >
+                  {[0, 1].map((idx) => (
+                    <div
+                      key={idx}
+                      className="admin-map-skeleton-card"
+                      aria-hidden="true"
                     >
-                      {spaceLeft} space{spaceLeft === 1 ? "" : "s"} left
-                    </strong>
-                  </div>
-                  {props.building_material && (
-                    <div className="center-shelter-row">
-                      <span className="center-shelter-label">Building material</span>
-                      <span className="center-shelter-val">{props.building_material}</span>
+                      <div className="admin-map-skeleton-row">
+                        <div className="admin-map-skeleton-line admin-map-skeleton-line--title" />
+                        <div className="admin-map-skeleton-pill" />
+                      </div>
+                      <div className="admin-map-skeleton-line admin-map-skeleton-line--meta" />
+                      <div className="admin-map-skeleton-line admin-map-skeleton-line--bar" />
                     </div>
+                  ))}
+                </div>
+              ) : buildingCount === 0 ? (
+                <div className="admin-map-detail-empty-dashed">
+                  <p className="admin-map-detail-empty-text">
+                    No buildings yet.{" "}
+                    {mapped
+                      ? "Draw one to link its rooms."
+                      : "Place this center on the map to draw buildings."}
+                  </p>
+                  {mapped && (
+                    <button
+                      type="button"
+                      className="admin-map-btn-secondary-outline"
+                      onClick={() => {
+                        handleCloseCenterModal();
+                        startAddBuildingFlowForCenter(selectedCenter);
+                      }}
+                    >
+                      <Plus size={13} strokeWidth={2.25} aria-hidden="true" />
+                      <span>Add building</span>
+                    </button>
                   )}
                 </div>
+              ) : (
+                <div className="admin-map-detail-buildings-list" role="list">
+                  {centerBuildings.map((b) => {
+                    const bProps = b.properties || {};
+                    const bId = bProps.id ?? b.id;
+                    const bName = bProps.name || "Building";
+                    const bRoomCount =
+                      bProps.room_count ??
+                      selectedCenterRooms.filter(
+                        (r) => String(r.building_id) === String(bId)
+                      ).length;
+                    const bCap = Number(bProps.capacity || 0);
+                    const bOcc = Number(bProps.occupied || 0);
+                    const bAssigned = Number(bProps.assigned ?? 0);
+                    const bPct =
+                      bCap > 0
+                        ? Math.min(100, Math.round((bOcc / bCap) * 100))
+                        : 0;
 
-                {/* Assigned households */}
-                <div className="center-card-buildings-header" style={{ marginTop: 14 }}>
-                  <span className="buildings-header-title">Assigned Families ({centerFamilies.length})</span>
-                </div>
-                {selectedCenterDetailsQuery.isLoading ? (
-                  <div style={{ padding: "16px 20px", color: "#64748b", fontSize: 13, textAlign: "center" }}>
-                    Loading assigned families...
-                  </div>
-                ) : centerFamilies.length === 0 ? (
-                  <div className="center-buildings-empty">
-                    <span>No families assigned to this shelter yet.</span>
-                  </div>
-                ) : (
-                  centerFamilies.map((fam) => {
-                    const famId = fam.id || fam.family_id;
-                    const isExpanded = Boolean(expandedCenterFamilyIds[famId]);
-                    const members = fam.members || [];
-                    const memCount = fam.resident_count ?? fam.member_count ?? members.length ?? 1;
+                    let statusVariant = "available";
+                    let statusLabel = "Available";
+
+                    if (bCap === 0) {
+                      statusVariant = "neutral";
+                      statusLabel = "No data";
+                    } else if (bOcc >= bCap) {
+                      statusVariant = "full";
+                      statusLabel = "Full";
+                    } else if (bAssigned >= bCap) {
+                      statusVariant = "fully-assigned";
+                      statusLabel = "Fully assigned";
+                    } else if (bPct >= 80) {
+                      statusVariant = "almost-full";
+                      statusLabel = "Almost full";
+                    }
+
+                    const bMapped = Boolean(
+                      b.geometry &&
+                        b.geometry.coordinates &&
+                        b.geometry.coordinates.length > 0
+                    );
+                    const isSelectedBuilding =
+                      selectedBuildingId != null &&
+                      String(selectedBuildingId) === String(bId);
+
+                    const handleOpenBuilding = () => {
+                      setSelectedBuildingId(bId);
+                      const centroid = getPolygonCentroid(b.geometry);
+                      if (centroid) {
+                        setMapFocusLocation({
+                          ...centroid,
+                          zoom: 18,
+                          noPin: true,
+                          requestedAt: Date.now(),
+                        });
+                      }
+                      setBuildingModalOpen(true);
+                    };
+
+                    const handleBuildingPolygonAction = () => {
+                      setSelectedBuildingDetail(b);
+                      setBuildingEditBoundaryError(null);
+                      if (bMapped) {
+                        const points = polygonToPoints(b.geometry);
+                        setBuildingEditOriginalPoints(points);
+                        setBuildingEditUndoStack([]);
+                        setIsRedrawingBuildingFromScratch(points.length < 3);
+                        setNewBuildingPoints(points.length >= 3 ? points : []);
+                        setRedrawingBuildingId(bId);
+                        setIsDrawingBuilding(true);
+                        handleCloseCenterModal();
+                      } else {
+                        setNewBuildingPoints([]);
+                        setBuildingEditOriginalPoints([]);
+                        setBuildingEditUndoStack([]);
+                        setIsRedrawingBuildingFromScratch(true);
+                        setRedrawingBuildingId(bId);
+                        setIsDrawingBuilding(true);
+                        handleCloseCenterModal();
+                      }
+                    };
 
                     return (
-                      <div
-                        key={famId}
-                        style={{
-                          display: "flex",
-                          flexDirection: "column",
-                          background: "#ffffff",
-                          border: "1px solid #e2e8f0",
-                          borderRadius: 8,
-                          marginBottom: 8,
-                          overflow: "hidden",
-                        }}
+                      <article
+                        key={bId}
+                        role="listitem"
+                        className={`admin-map-building-card ${isSelectedBuilding ? "is-selected" : ""}`}
                       >
                         <button
                           type="button"
+                          className="admin-map-building-card__select"
+                          onClick={handleOpenBuilding}
+                          aria-pressed={isSelectedBuilding}
+                        >
+                          <div className="admin-map-building-card__main">
+                            <div
+                              className="admin-map-building-card__icon"
+                              aria-hidden="true"
+                            >
+                              <Building size={18} strokeWidth={2} />
+                            </div>
+
+                            <div className="admin-map-building-card__info">
+                              <span className="admin-map-building-card__name">
+                                {bName}
+                              </span>
+                              <span className="admin-map-building-card__sub">
+                                {bOcc} of {bCap} here · {bAssigned} assigned
+                              </span>
+                            </div>
+
+                            <div className="admin-map-building-card__right">
+                              <span className="admin-map-building-card__rooms">
+                                <span>
+                                  {bRoomCount}{" "}
+                                  {bRoomCount === 1 ? "room" : "rooms"}
+                                </span>
+                                <ChevronRight
+                                  size={14}
+                                  strokeWidth={2}
+                                  aria-hidden="true"
+                                />
+                              </span>
+                              <StatusPill
+                                variant={statusVariant}
+                                label={statusLabel}
+                              />
+                            </div>
+                          </div>
+
+                          <div className="admin-map-building-card__bar-row">
+                            <ProgressBar
+                              value={bOcc}
+                              max={bCap}
+                              size={8}
+                              ariaLabel={`${bName} occupancy: ${bPct}%`}
+                            />
+                            <span className="admin-map-building-card__pct">
+                              {bPct}%
+                            </span>
+                          </div>
+                        </button>
+
+                        <div className="admin-map-building-card__footer">
+                          <button
+                            type="button"
+                            className="admin-map-btn-secondary-outline"
+                            onClick={handleBuildingPolygonAction}
+                            title={
+                              bMapped
+                                ? `Edit ${bName} polygon`
+                                : `Map ${bName} polygon`
+                            }
+                          >
+                            {bMapped ? (
+                              <Pencil
+                                size={13}
+                                strokeWidth={2}
+                                aria-hidden="true"
+                              />
+                            ) : (
+                              <MapPin
+                                size={13}
+                                strokeWidth={2}
+                                aria-hidden="true"
+                              />
+                            )}
+                            <span>
+                              {bMapped ? "Edit polygon" : "Map building"}
+                            </span>
+                          </button>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
+          )}
+
+          {/* Shelter Capacity & Assigned Families (single venue, private property, or unmapped center) */}
+          {showShelterAndFamilies && (
+            <section
+              className="admin-map-detail-section"
+              aria-label="Shelter capacity and assigned families"
+            >
+              <div className="admin-map-detail-section-header">
+                <h4 className="admin-map-detail-section-title">
+                  Shelter capacity
+                </h4>
+                <span className="admin-map-detail-section-hint">
+                  {typeInfo.label}
+                </span>
+              </div>
+
+              <div className="admin-map-shelter-card">
+                <div className="admin-map-shelter-row">
+                  <span className="admin-map-shelter-label">Capacity</span>
+                  <strong className="admin-map-shelter-val">
+                    {capacity} {capacity === 1 ? "person" : "people"}
+                  </strong>
+                </div>
+                <div className="admin-map-shelter-row">
+                  <span className="admin-map-shelter-label">
+                    Space remaining
+                  </span>
+                  <strong
+                    className={`admin-map-shelter-val ${spaceLeft > 0 ? "is-available" : "is-full"}`}
+                  >
+                    {spaceLeft} {spaceLeft === 1 ? "space" : "spaces"} left
+                  </strong>
+                </div>
+                {props.building_material && (
+                  <div className="admin-map-shelter-row">
+                    <span className="admin-map-shelter-label">
+                      Building material
+                    </span>
+                    <span className="admin-map-shelter-val">
+                      {props.building_material}
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {/* Assigned families */}
+              <div className="admin-map-detail-section-header admin-map-detail-section-header--spaced">
+                <h4 className="admin-map-detail-section-title">
+                  Assigned families ({centerFamilies.length})
+                </h4>
+              </div>
+
+              {selectedCenterDetailsQuery.isLoading ? (
+                <div
+                  className="admin-map-detail-families-list"
+                  aria-busy="true"
+                  aria-label="Loading assigned families"
+                >
+                  {[0, 1].map((idx) => (
+                    <div
+                      key={idx}
+                      className="admin-map-skeleton-card"
+                      aria-hidden="true"
+                    >
+                      <div className="admin-map-skeleton-line admin-map-skeleton-line--title" />
+                      <div className="admin-map-skeleton-line admin-map-skeleton-line--meta" />
+                    </div>
+                  ))}
+                </div>
+              ) : selectedCenterDetailsQuery.isError &&
+                typeof api.getEvacuationCenterDetails === "function" ? (
+                <div className="admin-map-panel-state is-error" role="alert">
+                  <AlertCircle
+                    size={20}
+                    strokeWidth={2}
+                    className="admin-map-panel-state__icon"
+                    aria-hidden="true"
+                  />
+                  <p className="admin-map-panel-state__title">
+                    Failed to load assigned families.
+                  </p>
+                  <button
+                    type="button"
+                    className="admin-map-btn-secondary-outline"
+                    onClick={() => selectedCenterDetailsQuery.refetch()}
+                  >
+                    Retry
+                  </button>
+                </div>
+              ) : centerFamilies.length === 0 ? (
+                <div className="admin-map-detail-empty-dashed">
+                  <p className="admin-map-detail-empty-text">
+                    No families assigned to this shelter yet.
+                  </p>
+                </div>
+              ) : (
+                <div className="admin-map-detail-families-list">
+                  {centerFamilies.map((fam) => {
+                    const famId = fam.id || fam.family_id;
+                    const isExpanded = Boolean(expandedCenterFamilyIds[famId]);
+                    const members = fam.members || [];
+                    const memCount =
+                      fam.resident_count ??
+                      fam.member_count ??
+                      members.length ??
+                      1;
+
+                    return (
+                      <div key={famId} className="admin-map-family-card">
+                        <button
+                          type="button"
+                          className="admin-map-family-card__toggle"
+                          aria-expanded={isExpanded}
                           onClick={() =>
                             setExpandedCenterFamilyIds((prev) => ({
                               ...prev,
                               [famId]: !prev[famId],
                             }))
                           }
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "space-between",
-                            padding: "10px 14px",
-                            border: "none",
-                            background: "transparent",
-                            cursor: "pointer",
-                            textAlign: "left",
-                            width: "100%",
-                          }}
                         >
-                          <div>
-                            <strong style={{ fontSize: 13, color: "#0f172a" }}>
-                              {fam.head_name || fam.head_of_family || "Unnamed Family"}
-                            </strong>
-                            <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>
-                              {fam.family_code || `FM-${famId}`} · {memCount} {memCount === 1 ? "member" : "members"}
-                            </div>
+                          <div className="admin-map-family-card__info">
+                            <span className="admin-map-family-card__head">
+                              {fam.head_name ||
+                                fam.head_of_family ||
+                                "Unnamed Family"}
+                            </span>
+                            <span className="admin-map-family-card__meta">
+                              {fam.family_code || `FM-${famId}`} · {memCount}{" "}
+                              {memCount === 1 ? "member" : "members"}
+                            </span>
                           </div>
-                          <FontAwesomeIcon
-                            icon={isExpanded ? faChevronUp : faChevronDown}
-                            style={{ color: "#94a3b8", fontSize: 12 }}
-                          />
+                          {isExpanded ? (
+                            <ChevronUp
+                              size={15}
+                              strokeWidth={2}
+                              className="admin-map-family-card__chevron"
+                              aria-hidden="true"
+                            />
+                          ) : (
+                            <ChevronDown
+                              size={15}
+                              strokeWidth={2}
+                              className="admin-map-family-card__chevron"
+                              aria-hidden="true"
+                            />
+                          )}
                         </button>
 
                         {isExpanded && (
-                          <div
-                            style={{
-                              padding: "8px 14px 12px",
-                              background: "#f8fafc",
-                              borderTop: "1px solid #e2e8f0",
-                              fontSize: 12,
-                            }}
-                          >
+                          <div className="admin-map-family-card__members">
                             {members.length === 0 ? (
-                              <span style={{ color: "#64748b" }}>
+                              <p className="admin-map-family-card__empty">
                                 No individual member records listed.
-                              </span>
+                              </p>
                             ) : (
-                              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                              <table className="admin-map-family-table">
                                 <thead>
-                                  <tr style={{ color: "#64748b", textAlign: "left", borderBottom: "1px solid #e2e8f0" }}>
-                                    <th style={{ padding: "4px 0", fontWeight: 600 }}>Name</th>
-                                    <th style={{ padding: "4px 0", fontWeight: 600 }}>Age</th>
-                                    <th style={{ padding: "4px 0", fontWeight: 600 }}>Gender</th>
+                                  <tr>
+                                    <th>Name</th>
+                                    <th>Age</th>
+                                    <th>Gender</th>
                                   </tr>
                                 </thead>
                                 <tbody>
                                   {members.map((m, idx) => (
-                                    <tr key={m.id || idx} style={{ borderBottom: "1px solid #f1f5f9" }}>
-                                      <td style={{ padding: "4px 0", color: "#1e293b" }}>
-                                        {m.full_name || m.name || `${m.first_name || ""} ${m.last_name || ""}`.trim() || "Member"}
+                                    <tr key={m.id || idx}>
+                                      <td className="admin-map-family-table__name">
+                                        {m.full_name ||
+                                          m.name ||
+                                          `${m.first_name || ""} ${m.last_name || ""}`.trim() ||
+                                          "Member"}
                                       </td>
-                                      <td style={{ padding: "4px 0", color: "#64748b" }}>{m.age ?? "—"}</td>
-                                      <td style={{ padding: "4px 0", color: "#64748b" }}>{m.gender ?? "—"}</td>
+                                      <td>{m.age ?? "—"}</td>
+                                      <td>{m.gender ?? "—"}</td>
                                     </tr>
                                   ))}
                                 </tbody>
@@ -4520,211 +4569,13 @@ export default function AdminMap() {
                         )}
                       </div>
                     );
-                  })
-                )}
-              </div>
-            ) : (
-              <div className="center-card-buildings-section">
-                <div className="center-card-buildings-header">
-                  <span className="buildings-header-title">Buildings ({buildingCount})</span>
-                  <span className="buildings-header-sub">Tap building to view rooms</span>
+                  })}
                 </div>
-                {buildingCount === 0 ? (
-                  <div className="center-buildings-empty" style={{ textAlign: "center", padding: "20px 0" }}>
-                    <div style={{ color: "#64748b", marginBottom: 10 }}>
-                      No buildings yet. Draw one to link its rooms.
-                    </div>
-                    {mapped && (
-                      <button
-                        type="button"
-                        className="admin-map-btn-secondary-outline"
-                        onClick={() => {
-                          handleCloseCenterModal();
-                          startAddBuildingFlowForCenter(selectedCenter);
-                        }}
-                      >
-                        <FontAwesomeIcon icon={faPlus} size="xs" /> Add building
-                      </button>
-                    )}
-                  </div>
-                ) : (
-                  <div className="center-card-buildings-list" role="list">
-                    {centerBuildings.map((b) => {
-                      const bProps = b.properties || {};
-                      const bId = bProps.id ?? b.id;
-                      const bName = bProps.name || "Building";
-                      const bRoomCount =
-                        bProps.room_count ??
-                        selectedCenterRooms.filter((r) => String(r.building_id) === String(bId)).length;
-                      const bCap = Number(bProps.capacity || 0);
-                      const bOcc = Number(bProps.occupied || 0);
-                      const bAssigned = Number(bProps.assigned ?? 0);
-                      const bPct = bCap > 0 ? Math.min(100, Math.round((bOcc / bCap) * 100)) : 0;
-                      const bAssignedPct = bCap > 0 ? Math.min(100, Math.round((bAssigned / bCap) * 100)) : 0;
-
-                      let statusKey = "available";
-                      let statusLabel = "Available";
-                      let statusDotColor = "#16a34a";
-                      let bColor = "#16a34a";
-
-                      if (bCap === 0) {
-                        statusKey = "no-data";
-                        statusLabel = "No data";
-                        statusDotColor = "#94a3b8";
-                        bColor = "#94a3b8";
-                      } else if (bOcc >= bCap) {
-                        statusKey = "full";
-                        statusLabel = "Full";
-                        statusDotColor = "#dc2626";
-                        bColor = "#dc2626";
-                      } else if (bAssigned >= bCap) {
-                        statusKey = "fully-assigned";
-                        statusLabel = "Fully assigned";
-                        statusDotColor = "#d97706";
-                        bColor = "#d97706";
-                      } else if (bPct >= 70) {
-                        statusKey = "filling";
-                        statusLabel = "Filling";
-                        statusDotColor = "#d97706";
-                        bColor = "#d97706";
-                      }
-
-                      const bMapped = Boolean(b.geometry && b.geometry.coordinates && b.geometry.coordinates.length > 0);
-
-                      const handleBuildingPolygonAction = (e) => {
-                        e.stopPropagation();
-                        setSelectedBuildingDetail(b);
-                        setBuildingEditBoundaryError(null);
-                        if (bMapped) {
-                          const points = polygonToPoints(b.geometry);
-                          setBuildingEditOriginalPoints(points);
-                          setBuildingEditUndoStack([]);
-                          setIsRedrawingBuildingFromScratch(points.length < 3);
-                          setNewBuildingPoints(points.length >= 3 ? points : []);
-                          setRedrawingBuildingId(bId);
-                          setIsDrawingBuilding(true);
-                          handleCloseCenterModal();
-                        } else {
-                          setNewBuildingPoints([]);
-                          setBuildingEditOriginalPoints([]);
-                          setBuildingEditUndoStack([]);
-                          setIsRedrawingBuildingFromScratch(true);
-                          setRedrawingBuildingId(bId);
-                          setIsDrawingBuilding(true);
-                          handleCloseCenterModal();
-                        }
-                      };
-
-                      return (
-                        <div
-                          key={bId}
-                          className="center-building-card"
-                          role="button"
-                          tabIndex={0}
-                          onClick={() => {
-                            setSelectedBuildingId(bId);
-                            const centroid = getPolygonCentroid(b.geometry);
-                            if (centroid) {
-                              setMapFocusLocation({
-                                ...centroid,
-                                zoom: 18,
-                                noPin: true,
-                                requestedAt: Date.now(),
-                              });
-                            }
-                            handleCloseCenterModal();
-                            setBuildingModalOpen(true);
-                          }}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter" || e.key === " ") {
-                              e.preventDefault();
-                              setSelectedBuildingId(bId);
-                              const centroid = getPolygonCentroid(b.geometry);
-                              if (centroid) {
-                                setMapFocusLocation({
-                                  ...centroid,
-                                  zoom: 18,
-                                  noPin: true,
-                                  requestedAt: Date.now(),
-                                });
-                              }
-                              handleCloseCenterModal();
-                              setBuildingModalOpen(true);
-                            }
-                          }}
-                        >
-                          <div className="center-building-card-main">
-                            <div className="center-building-icon-square" aria-hidden="true">
-                              <FontAwesomeIcon icon={faBuilding} />
-                            </div>
-
-                            <div className="center-building-card-info">
-                              <div className="center-building-name-line">
-                                <span className="center-building-card-name">{bName}</span>
-                              </div>
-                              <div className="center-building-card-sub">
-                                {bOcc} of {bCap} here · {bAssigned} assigned
-                              </div>
-                            </div>
-
-                            <div className="center-building-card-right">
-                              <div className="center-building-rooms-wrap">
-                                <span className="center-building-rooms-text">
-                                  {bRoomCount} {bRoomCount === 1 ? "room" : "rooms"}
-                                </span>
-                                <FontAwesomeIcon icon={faChevronRight} className="center-building-chevron" />
-                              </div>
-                              <span className={`center-bldg-badge is-${statusKey}`}>
-                                <span className="center-bldg-dot" style={{ backgroundColor: statusDotColor }} />
-                                {statusLabel}
-                              </span>
-                            </div>
-                          </div>
-
-                          {/* Progress bar */}
-                          <div className="center-building-bar-row">
-                            <div className="center-building-bar-track" aria-hidden="true">
-                              {bAssignedPct > 0 && (
-                                <div
-                                  className="center-building-bar-assigned"
-                                  style={{ width: `${Math.min(100, bAssignedPct)}%` }}
-                                />
-                              )}
-                              <div
-                                className="center-building-bar-fill"
-                                style={{
-                                  width: `${Math.min(100, bPct)}%`,
-                                  backgroundColor: bColor,
-                                }}
-                              />
-                            </div>
-                            <span className="center-building-pct-text">{bPct}%</span>
-                          </div>
-
-                          {/* Building polygon action button */}
-                          <div style={{ marginTop: 6, display: "flex", justifyContent: "flex-end" }}>
-                            <button
-                              type="button"
-                              className="admin-map-btn-secondary-outline"
-                              style={{ fontSize: "11px", padding: "2px 8px" }}
-                              onClick={handleBuildingPolygonAction}
-                              title={bMapped ? `Edit ${bName} polygon` : `Map ${bName} polygon`}
-                              aria-label={bMapped ? "Edit polygon" : "Map building"}
-                            >
-                              <FontAwesomeIcon icon={bMapped ? faPen : faDrawPolygon} size="xs" />
-                              <span>{bMapped ? "Edit polygon" : "Map building"}</span>
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
+              )}
+            </section>
+          )}
         </div>
-      </>
+      </MapOverlayPanel>
     );
   }
 
@@ -4855,17 +4706,19 @@ export default function AdminMap() {
                 hazardZones={hazardZones}
                 selectedCenter={selectedCenter}
                 onStaffAction={staffActions}
+                rescueRequests={activeRescueRequests}
+                pendingHazardReports={pendingHazardReports}
+                onRescueAction={rescueActions}
                 topRightSlot={
                   !isDrawingBuilding && !isPlacingRoom ? (
-                    <button
-                      type="button"
-                      className={`control-stack-btn ${isFullView ? "active" : ""}`}
+                    <MapControlButton
+                      icon={isFullView ? Minimize2 : Maximize2}
+                      active={isFullView}
+                      aria-pressed={isFullView}
                       onClick={() => setIsFullView((v) => !v)}
                       title={isFullView ? "Exit full view" : "Full view"}
-                      aria-label={isFullView ? "Exit full view" : "Full view"}
-                    >
-                      <FontAwesomeIcon icon={isFullView ? faCompress : faExpand} />
-                    </button>
+                      ariaLabel={isFullView ? "Exit full view" : "Full view"}
+                    />
                   ) : null
                 }
                 panelSubView={panelSubView}
@@ -5147,10 +5000,11 @@ export default function AdminMap() {
           </div>
 
           {/* ---------------------------------------------------------
-              DESKTOP FLOATING PANEL (Width 360px, left 16px, top 16px)
+              DESKTOP FLOATING PANEL (360px wide, 20px margins, full height)
               --------------------------------------------------------- */}
           {!isMobile && !panelCollapsed && !isMapping && !(isDrawingBuilding && redrawingBuildingId) && (
-            <aside
+            <MapOverlayPanel
+              as="aside"
               className={`admin-map-floating-panel ${selectedCenter && panelSubView === "map_rooms" ? "is-rooms-panel" : ""}`}
               aria-label="Evacuation Centers Panel"
             >
@@ -5172,9 +5026,9 @@ export default function AdminMap() {
                         className="admin-map-panel-collapse-btn"
                         onClick={() => setPanelCollapsed(true)}
                         title="Collapse panel"
-                        aria-label="Collapse centers panel"
+                        aria-label="Collapse panel"
                       >
-                        <FontAwesomeIcon icon={faChevronLeft} />
+                        <PanelLeftClose size={16} strokeWidth={2} aria-hidden="true" />
                       </button>
                     </div>
                     {renderPanelHeaderControls()}
@@ -5185,11 +5039,11 @@ export default function AdminMap() {
                   </div>
                 </>
               )}
-            </aside>
+            </MapOverlayPanel>
           )}
 
           {/* ---------------------------------------------------------
-              COLLAPSED CENTERS PILL BUTTON (Desktop & Mobile)
+              COLLAPSED CENTERS BUTTON (Desktop & Mobile)
               --------------------------------------------------------- */}
           {((!isMobile && panelCollapsed) || (isMobile && !mobileCentersSheetOpen)) &&
             !isMapping &&
@@ -5209,14 +5063,14 @@ export default function AdminMap() {
                   unmappedCentersCount > 0 ? `, ${unmappedCentersCount} not mapped` : ""
                 }`}
               >
-                <FontAwesomeIcon icon={faHouseFlag} className="admin-map-centers-pill-icon" />
+                <Building2 size={16} strokeWidth={2} className="admin-map-centers-pill-icon" aria-hidden="true" />
                 <span className="admin-map-centers-pill-label">
                   Centers ({allCentersList.length})
                 </span>
                 {unmappedCentersCount > 0 && (
                   <span
                     className="admin-map-sheet-badge"
-                    aria-label={`${unmappedCentersCount} unmapped center${unmappedCentersCount !== 1 ? "s" : ""}`}
+                    aria-hidden="true"
                   >
                     {unmappedCentersCount}
                   </span>
@@ -5487,48 +5341,55 @@ export default function AdminMap() {
             onClose={handleCloseBuildingModal}
           />
 
-          {/* Circular Action Button Row (matches resident map) */}
+          {/* Bottom-right floating action buttons */}
           {!isMapping && !(isDrawingBuilding && redrawingBuildingId) && (
             <div
-              className="bottom-actions-container"
+              className="admin-map-fab-bar"
               role="toolbar"
               aria-label="Admin quick actions"
             >
               <button
                 type="button"
-                className="action-btn-circle action-btn-primary"
+                className="admin-map-fab admin-map-fab--primary"
                 onClick={handleOpenAddCenter}
                 aria-label="Add Evacuation Center"
               >
-                <FontAwesomeIcon icon={faPlus} style={{ fontSize: "20px" }} />
-                <span className="action-tooltip" role="tooltip">
+                <Plus size={20} strokeWidth={2.25} aria-hidden="true" />
+                <span className="admin-map-fab__tooltip" role="tooltip">
                   Add Evacuation Center
                 </span>
               </button>
 
               <button
                 type="button"
-                className="action-btn-circle action-btn-secondary"
+                className="admin-map-fab admin-map-fab--secondary"
                 onClick={() => navigate(`${basePath}?tab=rescue`)}
                 aria-label={`Rescue Alerts${openRescueCount > 0 ? ` (${openRescueCount} open)` : ""}`}
               >
-                <FontAwesomeIcon icon={faLifeRing} style={{ fontSize: "20px" }} />
+                <LifeBuoy size={20} strokeWidth={2} aria-hidden="true" />
                 {openRescueCount > 0 && (
-                  <span className="action-badge-count">{openRescueCount}</span>
+                  <span className="admin-map-fab__badge" aria-hidden="true">
+                    {openRescueCount}
+                  </span>
                 )}
-                <span className="action-tooltip" role="tooltip">
+                <span className="admin-map-fab__tooltip" role="tooltip">
                   Rescue alerts
                 </span>
               </button>
 
               <button
                 type="button"
-                className="action-btn-circle action-btn-secondary"
+                className="admin-map-fab admin-map-fab--secondary"
                 onClick={() => navigate(`${basePath}?tab=reports`)}
-                aria-label="Hazard Reports"
+                aria-label={`Hazard Reports${pendingHazardReports.length > 0 ? ` (${pendingHazardReports.length} pending review)` : ""}`}
               >
-                <FontAwesomeIcon icon={faTriangleExclamation} style={{ fontSize: "20px" }} />
-                <span className="action-tooltip" role="tooltip">
+                <AlertTriangle size={20} strokeWidth={2} aria-hidden="true" />
+                {pendingHazardReports.length > 0 && (
+                  <span className="admin-map-fab__badge is-warn" aria-hidden="true">
+                    {pendingHazardReports.length}
+                  </span>
+                )}
+                <span className="admin-map-fab__tooltip" role="tooltip">
                   Hazard reports
                 </span>
               </button>

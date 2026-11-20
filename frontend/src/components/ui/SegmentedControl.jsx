@@ -26,6 +26,7 @@ export default function SegmentedControl({
   ariaLabel = 'Options',
   role = 'tablist',
   size = 'md',
+  fullWidth = false,
   className = '',
   ...rest
 }) {
@@ -65,7 +66,7 @@ export default function SegmentedControl({
 
   return (
     <div
-      className={`ui-segmented ${size === 'sm' ? 'ui-segmented--sm' : ''} ${className}`.trim()}
+      className={`ui-segmented ${size === 'sm' ? 'ui-segmented--sm' : ''} ${fullWidth ? 'ui-segmented--full' : ''} ${className}`.trim()}
       role={role}
       aria-label={ariaLabel}
       {...rest}

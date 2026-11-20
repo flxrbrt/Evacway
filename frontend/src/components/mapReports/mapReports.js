@@ -508,15 +508,19 @@ export function createReportPopup(report, options = {}) {
   statusRow.className = "map-report-status-row";
 
   const isBlocked = isBlockedRoadReport(report);
+  const rawStatus = String(report?.status || "").toLowerCase();
+  const isPendingReview = rawStatus === "pending";
   let statusText = "Reported";
   let statusKey = "reported";
 
-  if (isBlocked) {
+  if (isPendingReview) {
+    statusText = "Needs review";
+    statusKey = "pending";
+  } else if (isBlocked) {
     statusText = "Road Blocked";
     statusKey = "blocked";
   } else if (report?.status) {
-    const s = String(report.status).toLowerCase();
-    statusKey = s;
+    statusKey = rawStatus;
     statusText = report.status.charAt(0).toUpperCase() + report.status.slice(1);
   } else if (report?.risk_level) {
     const r = String(report.risk_level).toLowerCase();
@@ -576,8 +580,8 @@ export function createReportPopup(report, options = {}) {
   const body = document.createElement("div");
   body.className = "map-report-body";
 
-  // Content Section: Alert Banner (Avoid this road)
-  if (isBlocked) {
+  // Content Section: Alert Banner (Avoid this road) — only for validated blockages
+  if (isBlocked && !isPendingReview) {
     const alertBanner = document.createElement("div");
     alertBanner.className = "map-report-alert-banner";
 
@@ -781,5 +785,217 @@ export function createReportPopup(report, options = {}) {
 
   popup.appendChild(body);
 
+  return popup;
+}
+
+const RESCUE_STATUS_META = {
+  pending: { label: "Pending", cls: "status-danger", next: "acknowledged", nextLabel: "Acknowledge" },
+  open: { label: "Pending", cls: "status-danger", next: "acknowledged", nextLabel: "Acknowledge" },
+  acknowledged: { label: "Acknowledged", cls: "status-pending", next: "responding", nextLabel: "Start responding" },
+  responding: { label: "Responding", cls: "status-responding", next: "resolved", nextLabel: "Mark resolved" },
+  resolved: { label: "Resolved", cls: "status-resolved", next: null, nextLabel: null },
+};
+
+export function createRescuePopup(rescue, options = {}) {
+  const popup = document.createElement("div");
+  popup.className = "map-report-popup map-rescue-popup";
+
+  // Header
+  const header = document.createElement("div");
+  header.className = "map-report-header";
+
+  const headerText = document.createElement("div");
+  headerText.className = "map-report-header-text";
+
+  const title = document.createElement("h3");
+  title.className = "map-report-title";
+  title.textContent = rescue?.requester_name || "Rescue request";
+  headerText.appendChild(title);
+
+  const statusRow = document.createElement("div");
+  statusRow.className = "map-report-status-row";
+
+  let currentStatus = String(rescue?.status || "pending").toLowerCase();
+  const initialMeta = RESCUE_STATUS_META[currentStatus] || RESCUE_STATUS_META.pending;
+
+  const statusPill = document.createElement("span");
+  statusPill.className = `map-report-status-pill ${initialMeta.cls}`;
+
+  const statusDot = document.createElement("span");
+  statusDot.className = "map-report-status-dot";
+  statusDot.setAttribute("aria-hidden", "true");
+
+  statusPill.append(statusDot, document.createTextNode(initialMeta.label));
+  statusRow.appendChild(statusPill);
+
+  if (rescue?.location_source) {
+    const locBadge = document.createElement("span");
+    locBadge.className = "map-rescue-loc-badge";
+    const srcLabel = rescue.location_source === "manual" ? "Manual pin" : "GPS";
+    const acc = Number(rescue.accuracy);
+    locBadge.textContent =
+      rescue.location_source !== "manual" && Number.isFinite(acc) && acc > 0
+        ? `${srcLabel} ±${Math.round(acc)}m`
+        : srcLabel;
+    statusRow.appendChild(locBadge);
+  }
+
+  headerText.appendChild(statusRow);
+  header.appendChild(headerText);
+
+  const closeBtn = document.createElement("button");
+  closeBtn.type = "button";
+  closeBtn.className = "map-report-close-btn";
+  closeBtn.setAttribute("aria-label", "Close rescue details");
+  closeBtn.setAttribute("title", "Close");
+  closeBtn.innerHTML = icon(faXmark).html.join("");
+  closeBtn.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (typeof options.onClose === "function") {
+      options.onClose();
+    } else if (options.popup && typeof options.popup.remove === "function") {
+      options.popup.remove();
+    }
+  });
+  header.appendChild(closeBtn);
+  popup.appendChild(header);
+
+  // Body
+  const body = document.createElement("div");
+  body.className = "map-report-body";
+
+  // Contact & Location details
+  const hasContact = Boolean(rescue?.requester_contact && String(rescue.requester_contact).trim());
+  const hasLocationDesc = Boolean(rescue?.location_description && String(rescue.location_description).trim());
+
+  if (hasContact || hasLocationDesc) {
+    const metaCard = document.createElement("div");
+    metaCard.className = "map-rescue-meta-card";
+
+    if (hasContact) {
+      const row = document.createElement("div");
+      row.className = "map-rescue-meta-row";
+      const lbl = document.createElement("span");
+      lbl.className = "map-rescue-meta-label";
+      lbl.textContent = "Contact";
+      const link = document.createElement("a");
+      link.className = "map-rescue-meta-link";
+      link.href = `tel:${String(rescue.requester_contact).replace(/[^+\d]/g, "")}`;
+      link.textContent = String(rescue.requester_contact).trim();
+      row.append(lbl, link);
+      metaCard.appendChild(row);
+    }
+
+    if (hasLocationDesc) {
+      const row = document.createElement("div");
+      row.className = "map-rescue-meta-row";
+      const lbl = document.createElement("span");
+      lbl.className = "map-rescue-meta-label";
+      lbl.textContent = "Location";
+      const val = document.createElement("span");
+      val.className = "map-rescue-meta-val";
+      val.textContent = String(rescue.location_description).trim();
+      row.append(lbl, val);
+      metaCard.appendChild(row);
+    }
+
+    body.appendChild(metaCard);
+  }
+
+  // Emergency description
+  if (rescue?.description && String(rescue.description).trim()) {
+    const descWrap = document.createElement("div");
+    descWrap.className = "map-report-desc-wrap";
+    const desc = document.createElement("p");
+    desc.className = "map-report-desc";
+    desc.textContent = String(rescue.description).trim();
+    descWrap.appendChild(desc);
+    body.appendChild(descWrap);
+  }
+
+  // Proof photos
+  const photos = extractPhotoUrls({ photos: rescue?.proof_images });
+  renderPhotoCarousel(photos, body);
+
+  // Requested timestamp
+  if (rescue?.created_at) {
+    const date = new Date(rescue.created_at);
+    if (!Number.isNaN(date.getTime())) {
+      const timeElem = document.createElement("div");
+      timeElem.className = "map-report-time";
+      timeElem.textContent = `Requested ${date.toLocaleDateString(undefined, {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+      })} at ${date.toLocaleTimeString(undefined, {
+        hour: "numeric",
+        minute: "2-digit",
+      })}`;
+      body.appendChild(timeElem);
+    }
+  }
+
+  // Staff actions
+  const actionRow = document.createElement("div");
+  actionRow.className = "map-report-staff-actions";
+
+  if (initialMeta.next && typeof options.onAdvanceStatus === "function") {
+    const advanceBtn = document.createElement("button");
+    advanceBtn.type = "button";
+    advanceBtn.className = "map-report-btn-primary";
+    advanceBtn.textContent = initialMeta.nextLabel;
+
+    advanceBtn.addEventListener("click", async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const meta = RESCUE_STATUS_META[currentStatus];
+      if (!meta?.next) return;
+      advanceBtn.disabled = true;
+      try {
+        await options.onAdvanceStatus(rescue, meta.next);
+        currentStatus = meta.next;
+        const nextMeta = RESCUE_STATUS_META[currentStatus] || RESCUE_STATUS_META.resolved;
+        statusPill.className = `map-report-status-pill ${nextMeta.cls}`;
+        statusPill.innerHTML = "";
+        const dot = document.createElement("span");
+        dot.className = "map-report-status-dot";
+        dot.setAttribute("aria-hidden", "true");
+        statusPill.append(dot, document.createTextNode(nextMeta.label));
+
+        if (nextMeta.next) {
+          advanceBtn.textContent = nextMeta.nextLabel;
+          advanceBtn.disabled = false;
+        } else {
+          advanceBtn.remove();
+          if (typeof options.onClose === "function") {
+            options.onClose();
+          }
+        }
+      } catch {
+        advanceBtn.disabled = false;
+      }
+    });
+    actionRow.appendChild(advanceBtn);
+  }
+
+  if (typeof options.onOpenInRescueAlerts === "function") {
+    const openBtn = document.createElement("button");
+    openBtn.type = "button";
+    openBtn.className = "map-report-btn-secondary";
+    openBtn.textContent = "Open in Rescue Alerts";
+    openBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      options.onOpenInRescueAlerts(rescue);
+    });
+    actionRow.appendChild(openBtn);
+  }
+
+  if (actionRow.children.length > 0) {
+    body.appendChild(actionRow);
+  }
+
+  popup.appendChild(body);
   return popup;
 }
