@@ -1,16 +1,17 @@
---
+﻿--
 -- PostgreSQL database dump
 --
 
--- Dumped from database version 16.4 (Debian 16.4-1.pgdg110+2)
--- Dumped by pg_dump version 16.4 (Debian 16.4-1.pgdg110+2)
+
+-- Dumped from database version 18.4
+-- Dumped by pg_dump version 18.4
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
 SET idle_in_transaction_session_timeout = 0;
 SET client_encoding = 'UTF8';
 SET standard_conforming_strings = on;
-SELECT pg_catalog.set_config('search_path', 'public', false);
+SELECT pg_catalog.set_config('search_path', '', false);
 SET check_function_bodies = false;
 SET xmloption = content;
 SET client_min_messages = warning;
@@ -104,7 +105,7 @@ COMMENT ON EXTENSION pgcrypto IS 'cryptographic functions';
 -- Name: postgis; Type: EXTENSION; Schema: -; Owner: -
 --
 
--- CREATE EXTENSION IF NOT EXISTS postgis WITH SCHEMA extensions;
+CREATE EXTENSION IF NOT EXISTS postgis WITH SCHEMA extensions;
 
 
 --
@@ -112,6 +113,20 @@ COMMENT ON EXTENSION pgcrypto IS 'cryptographic functions';
 --
 
 COMMENT ON EXTENSION postgis IS 'PostGIS geometry and geography spatial types and functions';
+
+
+--
+-- Name: pgrouting; Type: EXTENSION; Schema: -; Owner: -
+--
+
+CREATE EXTENSION IF NOT EXISTS pgrouting WITH SCHEMA public;
+
+
+--
+-- Name: EXTENSION pgrouting; Type: COMMENT; Schema: -; Owner: -
+--
+
+COMMENT ON EXTENSION pgrouting IS 'pgRouting Extension';
 
 
 --
@@ -394,7 +409,7 @@ COMMENT ON FUNCTION auth.uid() IS 'Deprecated. Use auth.jwt() -> ''sub'' instead
 -- Name: grant_pg_cron_access(); Type: FUNCTION; Schema: extensions; Owner: -
 --
 
-CREATE FUNCTION grant_pg_cron_access() RETURNS event_trigger
+CREATE FUNCTION extensions.grant_pg_cron_access() RETURNS event_trigger
     LANGUAGE plpgsql
     SET search_path TO ''
     AS $$
@@ -433,14 +448,14 @@ $$;
 -- Name: FUNCTION grant_pg_cron_access(); Type: COMMENT; Schema: extensions; Owner: -
 --
 
-COMMENT ON FUNCTION grant_pg_cron_access() IS 'Grants access to pg_cron';
+COMMENT ON FUNCTION extensions.grant_pg_cron_access() IS 'Grants access to pg_cron';
 
 
 --
 -- Name: grant_pg_graphql_access(); Type: FUNCTION; Schema: extensions; Owner: -
 --
 
-CREATE FUNCTION grant_pg_graphql_access() RETURNS event_trigger
+CREATE FUNCTION extensions.grant_pg_graphql_access() RETURNS event_trigger
     LANGUAGE plpgsql
     SET search_path TO ''
     AS $_$
@@ -488,14 +503,14 @@ $_$;
 -- Name: FUNCTION grant_pg_graphql_access(); Type: COMMENT; Schema: extensions; Owner: -
 --
 
-COMMENT ON FUNCTION grant_pg_graphql_access() IS 'Grants access to pg_graphql';
+COMMENT ON FUNCTION extensions.grant_pg_graphql_access() IS 'Grants access to pg_graphql';
 
 
 --
 -- Name: grant_pg_net_access(); Type: FUNCTION; Schema: extensions; Owner: -
 --
 
-CREATE FUNCTION grant_pg_net_access() RETURNS event_trigger
+CREATE FUNCTION extensions.grant_pg_net_access() RETURNS event_trigger
     LANGUAGE plpgsql
     SET search_path TO ''
     AS $$
@@ -547,14 +562,14 @@ $$;
 -- Name: FUNCTION grant_pg_net_access(); Type: COMMENT; Schema: extensions; Owner: -
 --
 
-COMMENT ON FUNCTION grant_pg_net_access() IS 'Grants access to pg_net';
+COMMENT ON FUNCTION extensions.grant_pg_net_access() IS 'Grants access to pg_net';
 
 
 --
 -- Name: pgrst_ddl_watch(); Type: FUNCTION; Schema: extensions; Owner: -
 --
 
-CREATE FUNCTION pgrst_ddl_watch() RETURNS event_trigger
+CREATE FUNCTION extensions.pgrst_ddl_watch() RETURNS event_trigger
     LANGUAGE plpgsql
     SET search_path TO ''
     AS $$
@@ -588,7 +603,7 @@ END; $$;
 -- Name: pgrst_drop_watch(); Type: FUNCTION; Schema: extensions; Owner: -
 --
 
-CREATE FUNCTION pgrst_drop_watch() RETURNS event_trigger
+CREATE FUNCTION extensions.pgrst_drop_watch() RETURNS event_trigger
     LANGUAGE plpgsql
     SET search_path TO ''
     AS $$
@@ -620,7 +635,7 @@ END; $$;
 -- Name: set_graphql_placeholder(); Type: FUNCTION; Schema: extensions; Owner: -
 --
 
-CREATE FUNCTION set_graphql_placeholder() RETURNS event_trigger
+CREATE FUNCTION extensions.set_graphql_placeholder() RETURNS event_trigger
     LANGUAGE plpgsql
     SET search_path TO ''
     AS $_$
@@ -679,7 +694,7 @@ $_$;
 -- Name: FUNCTION set_graphql_placeholder(); Type: COMMENT; Schema: extensions; Owner: -
 --
 
-COMMENT ON FUNCTION set_graphql_placeholder() IS 'Reintroduces placeholder function for graphql_public.graphql';
+COMMENT ON FUNCTION extensions.set_graphql_placeholder() IS 'Reintroduces placeholder function for graphql_public.graphql';
 
 
 --
@@ -737,6 +752,30 @@ CREATE FUNCTION pgbouncer.get_auth(p_usename text) RETURNS TABLE(username text, 
       WHERE rolname=$1 and rolcanlogin;
   END;
   $_$;
+
+
+--
+-- Name: check_non_registered_group(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.check_non_registered_group() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+    DECLARE code UUID; heads INTEGER; places INTEGER; operations INTEGER;
+    BEGIN
+        FOR code IN SELECT DISTINCT v FROM unnest(ARRAY[
+            CASE WHEN TG_OP <> 'DELETE' THEN NEW.group_code END,
+            CASE WHEN TG_OP <> 'INSERT' THEN OLD.group_code END]) AS v WHERE v IS NOT NULL
+        LOOP
+            SELECT count(*) FILTER (WHERE is_group_head), count(DISTINCT center_id), count(DISTINCT operation_id)
+              INTO heads, places, operations FROM non_registered_evacuees WHERE group_code=code;
+            IF EXISTS(SELECT 1 FROM non_registered_evacuees WHERE group_code=code)
+               AND (heads <> 1 OR places <> 1 OR operations <> 1) THEN
+                RAISE EXCEPTION 'A group requires exactly one head, one shelter and one operation' USING ERRCODE='23514';
+            END IF;
+        END LOOP;
+        RETURN NULL;
+    END $$;
 
 
 --
@@ -4441,12 +4480,12 @@ CREATE TABLE auth.webauthn_credentials (
 --
 
 CREATE TABLE public.amenities (
-    id integer NOT NULL,
-    code character varying(50) NOT NULL,
-    name character varying(100) NOT NULL,
+    id integer CONSTRAINT accessibility_features_id_not_null NOT NULL,
+    code character varying(50) CONSTRAINT accessibility_features_code_not_null NOT NULL,
+    name character varying(100) CONSTRAINT accessibility_features_name_not_null NOT NULL,
     description text,
-    is_active boolean DEFAULT true NOT NULL,
-    display_order integer DEFAULT 0 NOT NULL,
+    is_active boolean DEFAULT true CONSTRAINT accessibility_features_is_active_not_null NOT NULL,
+    display_order integer DEFAULT 0 CONSTRAINT accessibility_features_display_order_not_null NOT NULL,
     created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
     updated_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP
 );
@@ -4480,7 +4519,7 @@ CREATE TABLE public.barangays (
     id integer NOT NULL,
     name character varying(100) NOT NULL,
     population integer,
-    geom geometry(Polygon,4326)
+    geom extensions.geometry(Polygon,4326)
 );
 
 
@@ -4545,8 +4584,8 @@ ALTER SEQUENCE public.building_materials_id_seq OWNED BY public.building_materia
 --
 
 CREATE TABLE public.center_amenities (
-    center_id integer NOT NULL,
-    amenity_id integer NOT NULL
+    center_id integer CONSTRAINT center_accessibility_features_center_id_not_null NOT NULL,
+    amenity_id integer CONSTRAINT center_accessibility_features_feature_id_not_null NOT NULL
 );
 
 
@@ -4640,16 +4679,17 @@ CREATE TABLE public.evacuation_center_buildings (
     id integer NOT NULL,
     evacuation_center_id integer NOT NULL,
     name character varying(100),
-    geom geometry(Polygon,4326),
+    geom extensions.geometry(Polygon,4326),
     created_at timestamp without time zone,
     updated_at timestamp without time zone,
     max_rooms integer,
     floors integer DEFAULT 1 NOT NULL,
     status character varying(20) DEFAULT 'open'::character varying NOT NULL,
     notes text,
-    CONSTRAINT chk_building_floors CHECK ((floors BETWEEN 1 AND 20)),
+    CONSTRAINT chk_building_floors CHECK (((floors IS NULL) OR (floors >= 1))),
     CONSTRAINT chk_building_max_rooms CHECK (((max_rooms IS NULL) OR (max_rooms >= 1))),
-    CONSTRAINT chk_building_status CHECK (((status)::text = ANY (ARRAY[('open'::character varying)::text, ('closed'::character varying)::text, ('under_repair'::character varying)::text])))
+    CONSTRAINT chk_building_status CHECK (((status)::text = ANY ((ARRAY['open'::character varying, 'closed'::character varying, 'under_repair'::character varying])::text[]))),
+    CONSTRAINT ck_ec_building_floors_range CHECK (((floors >= 1) AND (floors <= 20)))
 );
 
 
@@ -4682,12 +4722,14 @@ CREATE TABLE public.evacuation_center_rooms (
     evacuation_center_id integer NOT NULL,
     room_number character varying(50) NOT NULL,
     capacity integer NOT NULL,
-    family_slots integer NOT NULL DEFAULT 5,
-    people_spaces integer NOT NULL DEFAULT 25,
     created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
     is_active boolean DEFAULT true NOT NULL,
     building_id integer,
-    floor integer CHECK (floor IS NULL OR floor >= 1)
+    floor integer,
+    family_slots integer DEFAULT 5 NOT NULL,
+    people_spaces integer DEFAULT 25 NOT NULL,
+    CONSTRAINT ck_ec_room_floor_positive CHECK (((floor IS NULL) OR (floor >= 1))),
+    CONSTRAINT evacuation_center_rooms_floor_check CHECK (((floor IS NULL) OR (floor >= 1)))
 );
 
 
@@ -4722,8 +4764,8 @@ CREATE TABLE public.evacuation_centers (
     hazard_exposure_score double precision,
     contact_number character varying(20),
     is_active boolean,
-    geom geometry(Polygon,4326),
-    entrance_geom geometry(MultiPoint,4326),
+    geom extensions.geometry(Polygon,4326),
+    entrance_geom extensions.geometry(MultiPoint,4326),
     managed_by integer,
     created_at timestamp without time zone,
     owner_name character varying(150) DEFAULT NULL::character varying,
@@ -4747,7 +4789,7 @@ CREATE TABLE public.evacuation_centers (
 --
 
 CREATE TABLE public.evacuation_centers_accessibility_notes_backup (
-    center_id integer NOT NULL,
+    center_id integer CONSTRAINT evacuation_centers_accessibility_notes_backu_center_id_not_null NOT NULL,
     accessibility_notes text,
     backed_up_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP
 );
@@ -4940,7 +4982,7 @@ CREATE TABLE public.hazard_reports (
     status character varying(20),
     response_notes text,
     validated_by integer,
-    geom geometry(Point,4326) NOT NULL,
+    geom extensions.geometry(Point,4326) NOT NULL,
     submitted_at timestamp without time zone,
     validated_at timestamp without time zone,
     photos jsonb DEFAULT '[]'::jsonb,
@@ -4978,7 +5020,7 @@ CREATE TABLE public.hazard_zones (
     name character varying(100) NOT NULL,
     hazard_type character varying(50) NOT NULL,
     risk_level character varying(20) NOT NULL,
-    geom geometry(MultiPolygon,4326) NOT NULL,
+    geom extensions.geometry(MultiPolygon,4326) NOT NULL,
     created_by integer,
     created_at timestamp without time zone
 );
@@ -5002,6 +5044,62 @@ CREATE SEQUENCE public.hazard_zones_id_seq
 --
 
 ALTER SEQUENCE public.hazard_zones_id_seq OWNED BY public.hazard_zones.id;
+
+
+--
+-- Name: non_registered_evacuees; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.non_registered_evacuees (
+    id integer NOT NULL,
+    first_name character varying(60) NOT NULL,
+    middle_name character varying(60),
+    last_name character varying(60) NOT NULL,
+    sex character varying(6) NOT NULL,
+    age_years integer NOT NULL,
+    birthdate date,
+    contact_number character varying(13),
+    address character varying(200),
+    is_pwd boolean DEFAULT false NOT NULL,
+    is_pregnant boolean DEFAULT false NOT NULL,
+    needs_medical boolean DEFAULT false NOT NULL,
+    notes character varying(200),
+    group_code uuid NOT NULL,
+    is_group_head boolean DEFAULT false NOT NULL,
+    operation_id integer NOT NULL,
+    center_id integer NOT NULL,
+    arrived_at timestamp with time zone NOT NULL,
+    departed_at timestamp with time zone,
+    recorded_by integer NOT NULL,
+    is_lactating boolean DEFAULT false NOT NULL,
+    is_solo_parent boolean DEFAULT false NOT NULL,
+    needs_assistance boolean DEFAULT false NOT NULL,
+    room_id integer,
+    CONSTRAINT ck_nre_age CHECK (((age_years >= 0) AND (age_years <= 120))),
+    CONSTRAINT ck_nre_departure CHECK (((departed_at IS NULL) OR (departed_at >= arrived_at))),
+    CONSTRAINT ck_nre_pregnancy CHECK (((NOT is_pregnant) OR ((sex)::text = 'female'::text))),
+    CONSTRAINT ck_nre_sex CHECK (((sex)::text = ANY ((ARRAY['male'::character varying, 'female'::character varying, 'other'::character varying])::text[])))
+);
+
+
+--
+-- Name: non_registered_evacuees_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.non_registered_evacuees_id_seq
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: non_registered_evacuees_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.non_registered_evacuees_id_seq OWNED BY public.non_registered_evacuees.id;
 
 
 --
@@ -5138,7 +5236,7 @@ CREATE TABLE public.resident_registration_requests (
     reviewed_at timestamp without time zone,
     rejection_reason text,
     created_at timestamp without time zone NOT NULL,
-    CONSTRAINT ck_resident_registration_request_status CHECK (((status)::text = ANY (ARRAY[('pending'::character varying)::text, ('approved'::character varying)::text, ('rejected'::character varying)::text])))
+    CONSTRAINT ck_resident_registration_request_status CHECK (((status)::text = ANY ((ARRAY['pending'::character varying, 'approved'::character varying, 'rejected'::character varying])::text[])))
 );
 
 
@@ -5222,7 +5320,7 @@ CREATE TABLE public.road_segments (
     base_weight double precision,
     is_closed boolean,
     hazard_zone_id integer,
-    geom geometry(LineString,4326) NOT NULL,
+    geom extensions.geometry(LineString,4326) NOT NULL,
     closed_by_report_id integer
 );
 
@@ -5715,6 +5813,13 @@ ALTER TABLE ONLY public.hazard_zones ALTER COLUMN id SET DEFAULT nextval('public
 
 
 --
+-- Name: non_registered_evacuees id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.non_registered_evacuees ALTER COLUMN id SET DEFAULT nextval('public.non_registered_evacuees_id_seq'::regclass);
+
+
+--
 -- Name: push_subscriptions id; Type: DEFAULT; Schema: public; Owner: -
 --
 
@@ -6086,7 +6191,7 @@ COPY auth.webauthn_credentials (id, user_id, credential_id, public_key, attestat
 -- Data for Name: spatial_ref_sys; Type: TABLE DATA; Schema: extensions; Owner: -
 --
 
-COPY spatial_ref_sys (srid, auth_name, auth_srid, srtext, proj4text) FROM stdin;
+COPY extensions.spatial_ref_sys (srid, auth_name, auth_srid, srtext, proj4text) FROM stdin;
 \.
 
 
@@ -6152,6 +6257,12 @@ COPY public.center_amenities (center_id, amenity_id) FROM stdin;
 2	3
 4	1
 4	2
+46	2
+46	1
+46	4
+47	2
+47	1
+47	4
 \.
 
 
@@ -6160,32 +6271,36 @@ COPY public.center_amenities (center_id, amenity_id) FROM stdin;
 --
 
 COPY public.center_barangays (center_id, barangay_id, created_at) FROM stdin;
-2	3	2026-10-16 10:07:26.449748+00
-2	4	2026-10-16 10:07:29.037728+00
-2	5	2026-10-16 10:07:32.337826+00
-2	6	2026-10-16 10:07:33.785198+00
-2	7	2026-10-16 10:07:34.956333+00
-2	8	2026-10-16 10:07:35.975897+00
-3	5	2026-10-16 10:07:36.313468+00
-3	6	2026-10-16 10:07:38.913747+00
-3	3	2026-10-16 10:07:42.056987+00
-3	4	2026-10-16 10:07:50.482968+00
-3	7	2026-10-16 10:07:54.01377+00
-4	9	2026-10-16 10:07:57.204464+00
-4	10	2026-10-16 10:07:57.486533+00
-4	11	2026-10-16 10:07:57.813305+00
-4	12	2026-10-16 10:07:58.041386+00
-36	10	2026-11-13 06:43:43.066827+00
-36	11	2026-11-13 06:43:43.066827+00
-36	6	2026-11-13 06:43:43.066827+00
-36	9	2026-11-13 06:43:43.066827+00
-36	12	2026-11-13 06:43:43.066827+00
-36	5	2026-11-13 06:43:43.066827+00
-36	8	2026-11-13 06:43:43.066827+00
-36	7	2026-11-13 06:43:43.066827+00
-36	4	2026-11-13 06:43:43.066827+00
-36	3	2026-11-13 06:43:43.066827+00
-37	11	2026-11-14 22:39:49.0161+00
+2	3	2026-10-16 18:07:26.449748+08
+2	4	2026-10-16 18:07:29.037728+08
+2	5	2026-10-16 18:07:32.337826+08
+2	6	2026-10-16 18:07:33.785198+08
+2	7	2026-10-16 18:07:34.956333+08
+2	8	2026-10-16 18:07:35.975897+08
+3	5	2026-10-16 18:07:36.313468+08
+3	6	2026-10-16 18:07:38.913747+08
+3	3	2026-10-16 18:07:42.056987+08
+3	4	2026-10-16 18:07:50.482968+08
+3	7	2026-10-16 18:07:54.01377+08
+4	9	2026-10-16 18:07:57.204464+08
+4	10	2026-10-16 18:07:57.486533+08
+4	11	2026-10-16 18:07:57.813305+08
+4	12	2026-10-16 18:07:58.041386+08
+36	10	2026-11-13 14:43:43.066827+08
+36	11	2026-11-13 14:43:43.066827+08
+36	6	2026-11-13 14:43:43.066827+08
+36	9	2026-11-13 14:43:43.066827+08
+36	12	2026-11-13 14:43:43.066827+08
+36	5	2026-11-13 14:43:43.066827+08
+36	8	2026-11-13 14:43:43.066827+08
+36	7	2026-11-13 14:43:43.066827+08
+36	4	2026-11-13 14:43:43.066827+08
+36	3	2026-11-13 14:43:43.066827+08
+37	11	2026-11-15 06:39:49.0161+08
+46	8	2026-11-18 15:17:11.007916+08
+46	3	2026-11-18 15:17:11.007916+08
+47	10	2026-11-18 20:19:16.752429+08
+47	11	2026-11-18 20:19:16.752429+08
 \.
 
 
@@ -6209,12 +6324,12 @@ COPY public.center_types (id, code, name, description, is_active, display_order,
 --
 
 COPY public.evacuation_assignments (id, resident_id, room_id, assigned_at, checked_in_at, evacuation_center_id) FROM stdin;
-135	140	27	2026-10-16 18:07:30.314632	2026-11-16 10:12:25.877582	2
 534	539	107	2026-10-16 18:07:41.784562	2026-11-16 10:13:00.187375	3
 535	540	107	2026-10-16 18:07:41.794286	2026-11-16 10:13:00.187375	3
 741	746	149	2026-10-16 18:07:48.589666	2026-11-16 10:13:39.278286	3
 742	747	149	2026-10-16 18:07:48.598365	2026-11-16 10:13:39.278286	3
 743	748	149	2026-10-16 18:07:48.608122	2026-11-16 10:13:39.278286	3
+135	140	27	2026-10-16 18:07:30.314632	2026-11-18 14:55:08.251385	2
 1316	1560	266	2026-11-09 14:33:55.304138	\N	2
 738	743	148	2026-10-16 18:07:48.423092	\N	3
 737	742	148	2026-10-16 18:07:48.413818	\N	3
@@ -7064,6 +7179,21 @@ COPY public.evacuation_assignments (id, resident_id, room_id, assigned_at, check
 166	171	34	2026-10-16 18:07:31.242783	\N	2
 175	180	35	2026-10-16 18:07:31.433556	\N	2
 174	179	35	2026-10-16 18:07:31.422948	\N	2
+1353	1621	266	2026-11-18 15:42:58.066404	\N	2
+1354	1622	266	2026-11-18 15:42:58.066404	\N	2
+1355	1619	1	2026-11-18 21:01:05.448038	\N	2
+1356	1620	1	2026-11-18 21:01:05.449037	\N	2
+1357	1618	\N	2026-11-18 22:47:04.450346	\N	36
+1358	1004	272	2026-11-18 23:00:05.374067	\N	47
+1359	1001	272	2026-11-18 23:00:05.375059	\N	47
+1360	1002	272	2026-11-18 23:00:05.375059	\N	47
+1361	1003	272	2026-11-18 23:00:05.375059	\N	47
+1362	1005	272	2026-11-18 23:00:05.375059	\N	47
+1363	6	273	2026-11-19 15:15:19.028914	\N	2
+1364	7	273	2026-11-19 15:15:19.028914	\N	2
+1365	8	273	2026-11-19 15:15:19.028914	\N	2
+1366	9	273	2026-11-19 15:15:19.028914	\N	2
+1367	10	273	2026-11-19 15:15:19.028914	\N	2
 761	766	153	2026-10-16 18:07:49.224517	\N	3
 770	775	154	2026-10-16 18:07:49.411659	\N	3
 769	774	154	2026-10-16 18:07:49.402351	\N	3
@@ -7225,11 +7355,6 @@ COPY public.evacuation_assignments (id, resident_id, room_id, assigned_at, check
 133	138	27	2026-10-16 18:07:30.296927	\N	2
 132	137	27	2026-10-16 18:07:30.289591	\N	2
 131	136	27	2026-10-16 18:07:30.281061	\N	2
-5	10	1	2026-10-16 18:07:26.534946	\N	2
-4	9	1	2026-10-16 18:07:26.528863	\N	2
-3	8	1	2026-10-16 18:07:26.518737	\N	2
-2	7	1	2026-10-16 18:07:26.513668	\N	2
-1	6	1	2026-10-16 18:07:26.498259	\N	2
 15	20	3	2026-10-16 18:07:26.861852	\N	2
 14	19	3	2026-10-16 18:07:26.85436	\N	2
 13	18	3	2026-10-16 18:07:26.846363	\N	2
@@ -7255,7 +7380,7 @@ COPY public.evacuation_assignments (id, resident_id, room_id, assigned_at, check
 28	33	6	2026-10-16 18:07:27.310615	\N	2
 27	32	6	2026-10-16 18:07:27.3032	\N	2
 26	31	6	2026-10-16 18:07:27.295778	\N	2
-134	139	27	2026-10-16 18:07:30.307893	2026-11-16 10:12:25.877582	2
+134	139	27	2026-10-16 18:07:30.307893	2026-11-18 14:55:08.251385	2
 1030	1035	206	2026-10-16 18:07:58.344556	2026-11-16 10:12:41.124128	4
 1031	1036	206	2026-10-16 18:07:58.359068	2026-11-16 10:12:41.124128	4
 1019	1024	204	2026-10-16 18:07:58.080617	2026-11-16 10:12:42.867709	4
@@ -7268,12 +7393,24 @@ COPY public.evacuation_assignments (id, resident_id, room_id, assigned_at, check
 --
 
 COPY public.evacuation_center_buildings (id, evacuation_center_id, name, geom, created_at, updated_at, max_rooms, floors, status, notes) FROM stdin;
+9	46	Central Building	\N	2026-11-18 18:57:54.334466	2026-11-18 18:57:54.33546	20	2	open	\N
 2	2	South Wing	\N	2026-10-26 19:36:32.534991	2026-11-09 13:50:16.018203	\N	1	open	\N
 4	2	North Wing	\N	2026-10-26 19:36:32.534991	2026-11-09 13:50:16.018203	\N	1	open	\N
 5	2	East Wing	\N	2026-10-26 19:36:32.534991	2026-11-09 13:50:16.018203	\N	1	open	\N
-7	2	sample	\N	2026-10-30 20:33:20.091099	2026-11-09 14:06:54.026921	5	1	open	Test note
 3	2	Central Building	0103000020E610000001000000050000002087A3E7B43E5F40284B057361C624400487E362BD3E5F4010DABE8F64C624403C87A357BD3E5F4010E9BEBA56C62440148723FEB43E5F40E016124F54C624402087A3E7B43E5F40284B057361C62440	2026-10-26 19:36:32.534991	2026-11-09 14:36:41.17181	\N	1	open	\N
 1	2	West Wing	0103000020E610000001000000050000004C86E317AE3E5F40F0C7B7F678C624402086A309B13E5F40387664627BC624404C86A3DCB03E5F40D814C5D26BC624401C86E344AE3E5F4008BB9EBF69C624404C86E317AE3E5F40F0C7B7F678C62440	2026-10-26 19:36:32.534991	2026-11-09 16:38:46.031463	\N	1	open	\N
+11	3	Building 4	\N	2026-11-18 21:30:25.413444	2026-11-18 21:30:25.413444	\N	1	open	\N
+12	4	Building 2	\N	2026-11-18 21:30:25.413444	2026-11-18 21:30:25.413444	\N	1	open	\N
+13	2	Building 3	\N	2026-11-18 21:30:25.413444	2026-11-18 21:30:25.413444	\N	1	open	\N
+14	4	Building 4	\N	2026-11-18 21:30:25.413444	2026-11-18 21:30:25.413444	\N	1	open	\N
+16	3	Building 2	\N	2026-11-18 21:30:25.413444	2026-11-18 21:30:25.413444	\N	1	open	\N
+17	3	Building 3	\N	2026-11-18 21:30:25.413444	2026-11-18 21:30:25.413444	\N	1	open	\N
+18	4	Building 1	\N	2026-11-18 21:30:25.413444	2026-11-18 21:30:25.413444	\N	1	open	\N
+19	2	Building 4	\N	2026-11-18 21:30:25.413444	2026-11-18 21:30:25.413444	\N	1	open	\N
+20	3	Building 1	\N	2026-11-18 21:30:25.413444	2026-11-18 21:30:25.413444	\N	1	open	\N
+21	4	Building 3	\N	2026-11-18 21:30:25.413444	2026-11-18 21:30:25.413444	\N	1	open	\N
+22	2	Building 2	\N	2026-11-18 21:30:25.413444	2026-11-18 21:30:25.413444	\N	1	open	\N
+15	2	Building 1	\N	2026-11-18 21:30:25.413444	2026-11-19 12:32:42.221002	\N	2	open	\N
 \.
 
 
@@ -7281,220 +7418,223 @@ COPY public.evacuation_center_buildings (id, evacuation_center_id, name, geom, c
 -- Data for Name: evacuation_center_rooms; Type: TABLE DATA; Schema: public; Owner: -
 --
 
-COPY public.evacuation_center_rooms (id, evacuation_center_id, room_number, capacity, created_at, is_active, building_id) FROM stdin;
-30	2	Room 30	5	2026-10-16 18:07:30.656373	t	\N
-31	2	Room 31	5	2026-10-16 18:07:30.800693	t	\N
-32	2	Room 32	5	2026-10-16 18:07:30.904462	t	\N
-33	2	Room 33	5	2026-10-16 18:07:31.059928	t	\N
-34	2	Room 34	5	2026-10-16 18:07:31.236223	t	\N
-35	2	Room 35	5	2026-10-16 18:07:31.390946	t	\N
-36	2	Room 36	5	2026-10-16 18:07:31.55279	t	\N
-37	2	Room 37	5	2026-10-16 18:07:31.687307	t	\N
-38	2	Room 38	5	2026-10-16 18:07:31.870523	t	\N
-39	2	Room 39	5	2026-10-16 18:07:32.015371	t	\N
-40	2	Room 40	5	2026-10-16 18:07:32.215172	t	\N
-41	2	Room 41	5	2026-10-16 18:07:32.340207	t	\N
-42	2	Room 42	5	2026-10-16 18:07:32.484919	t	\N
-43	2	Room 43	5	2026-10-16 18:07:32.629316	t	\N
-44	2	Room 44	5	2026-10-16 18:07:32.788348	t	\N
-45	2	Room 45	5	2026-10-16 18:07:32.935612	t	\N
-46	2	Room 46	5	2026-10-16 18:07:33.08796	t	\N
-47	2	Room 47	5	2026-10-16 18:07:33.265788	t	\N
-48	2	Room 48	5	2026-10-16 18:07:33.393818	t	\N
-49	2	Room 49	5	2026-10-16 18:07:33.52688	t	\N
-50	2	Room 50	5	2026-10-16 18:07:33.666008	t	\N
-51	2	Room 51	5	2026-10-16 18:07:33.788775	t	\N
-52	2	Room 52	5	2026-10-16 18:07:33.903919	t	\N
-53	2	Room 53	5	2026-10-16 18:07:34.078782	t	\N
-54	2	Room 54	5	2026-10-16 18:07:34.213686	t	\N
-55	2	Room 55	5	2026-10-16 18:07:34.326916	t	\N
-56	2	Room 56	5	2026-10-16 18:07:34.461763	t	\N
-57	2	Room 57	5	2026-10-16 18:07:34.626105	t	\N
-58	2	Room 58	5	2026-10-16 18:07:34.776829	t	\N
-59	2	Room 59	5	2026-10-16 18:07:34.958447	t	\N
-60	2	Room 60	5	2026-10-16 18:07:35.130115	t	\N
-61	2	Room 61	5	2026-10-16 18:07:35.273463	t	\N
-62	2	Room 62	5	2026-10-16 18:07:35.423154	t	\N
-63	2	Room 63	5	2026-10-16 18:07:35.561187	t	\N
-64	2	Room 64	5	2026-10-16 18:07:35.679637	t	\N
-65	2	Room 65	5	2026-10-16 18:07:35.829581	t	\N
-66	2	Room 66	5	2026-10-16 18:07:35.980576	t	\N
-67	2	Room 67	5	2026-10-16 18:07:36.134123	t	\N
-68	3	Yellow 1	5	2026-10-16 18:07:36.314959	t	\N
-69	3	Yellow 2	5	2026-10-16 18:07:36.466903	t	\N
-70	3	Yellow 3	5	2026-10-16 18:07:36.608226	t	\N
-71	3	Yellow 4	5	2026-10-16 18:07:36.706641	t	\N
-72	3	Yellow 5	5	2026-10-16 18:07:36.855185	t	\N
-73	3	Yellow 6	5	2026-10-16 18:07:36.984347	t	\N
-74	3	Yellow 7	5	2026-10-16 18:07:37.108979	t	\N
-75	3	Yellow 8	5	2026-10-16 18:07:37.279824	t	\N
-76	3	Yellow 9	5	2026-10-16 18:07:37.433842	t	\N
-77	3	Yellow 10	5	2026-10-16 18:07:37.551461	t	\N
-78	3	Yellow 11	5	2026-10-16 18:07:37.70369	t	\N
-79	3	Yellow 12	5	2026-10-16 18:07:37.834795	t	\N
-80	3	Yellow 13	5	2026-10-16 18:07:38.002893	t	\N
-81	3	Yellow 14	5	2026-10-16 18:07:38.110783	t	\N
-82	3	Yellow 15	5	2026-10-16 18:07:38.214217	t	\N
-83	3	Yellow 16	5	2026-10-16 18:07:38.358554	t	\N
-84	3	Yellow 17	5	2026-10-16 18:07:38.482736	t	\N
-85	3	Yellow 18	5	2026-10-16 18:07:38.627258	t	\N
-86	3	Yellow 19	5	2026-10-16 18:07:38.774798	t	\N
-87	3	Violet 1	5	2026-10-16 18:07:38.915803	t	\N
-88	3	Violet 2	5	2026-10-16 18:07:39.054386	t	\N
-89	3	Violet 3	5	2026-10-16 18:07:39.21775	t	\N
-90	3	Violet 4	5	2026-10-16 18:07:39.380064	t	\N
-91	3	Violet 5	5	2026-10-16 18:07:39.514433	t	\N
-92	3	Violet 6	5	2026-10-16 18:07:39.64676	t	\N
-93	3	Violet 7	5	2026-10-16 18:07:39.767424	t	\N
-94	3	Violet 8	5	2026-10-16 18:07:39.893789	t	\N
-95	3	Violet 9	5	2026-10-16 18:07:40.000094	t	\N
-96	3	Violet 10	5	2026-10-16 18:07:40.147013	t	\N
-97	3	Violet 11	5	2026-10-16 18:07:40.302274	t	\N
-98	3	Violet 12	5	2026-10-16 18:07:40.423246	t	\N
-99	3	Violet 13	5	2026-10-16 18:07:40.578796	t	\N
-100	3	Violet 14	5	2026-10-16 18:07:40.686287	t	\N
-101	3	Violet 15	5	2026-10-16 18:07:40.825858	t	\N
-102	3	Violet 16	5	2026-10-16 18:07:40.984972	t	\N
-103	3	Violet 17	5	2026-10-16 18:07:41.114984	t	\N
-104	3	Violet 18	5	2026-10-16 18:07:41.231005	t	\N
-105	3	Violet 19	5	2026-10-16 18:07:41.425845	t	\N
-106	3	Violet 20	5	2026-10-16 18:07:41.577508	t	\N
-107	3	Violet 21	5	2026-10-16 18:07:41.747905	t	\N
-108	3	Violet 22	5	2026-10-16 18:07:41.898046	t	\N
-109	3	Green 1	5	2026-10-16 18:07:42.061511	t	\N
-110	3	Green 2	5	2026-10-16 18:07:42.261246	t	\N
-111	3	Green 3	5	2026-10-16 18:07:42.426312	t	\N
-112	3	Green 4	5	2026-10-16 18:07:42.585562	t	\N
-113	3	Green 5	5	2026-10-16 18:07:42.671895	t	\N
-114	3	Green 6	5	2026-10-16 18:07:42.812434	t	\N
-115	3	Green 7	5	2026-10-16 18:07:42.959116	t	\N
-116	3	Green 8	5	2026-10-16 18:07:43.062673	t	\N
-117	3	Green 9	5	2026-10-16 18:07:43.291655	t	\N
-118	3	Green 10	5	2026-10-16 18:07:43.551949	t	\N
-119	3	Green 11	5	2026-10-16 18:07:43.743365	t	\N
-120	3	Green 12	5	2026-10-16 18:07:43.917812	t	\N
-18	2	Room 18	5	2026-10-16 18:07:29.040737	t	4
-20	2	Room 20	5	2026-10-16 18:07:29.252955	t	4
-11	2	Room 11	5	2026-10-16 18:07:28.034701	t	2
-12	2	Room 12	5	2026-10-16 18:07:28.184014	t	2
-13	2	Room 13	5	2026-10-16 18:07:28.33356	t	2
-4	2	Room 4	5	2026-10-16 18:07:26.982923	t	3
-5	2	Room 5	5	2026-10-16 18:07:27.161738	t	3
-28	2	Room 28	5	2026-10-16 18:07:30.424165	t	4
-21	2	Room 21	5	2026-10-16 18:07:29.355661	t	5
-14	2	Room 14	5	2026-10-16 18:07:28.476637	t	2
-26	2	Room 26	5	2026-10-16 18:07:30.102928	t	2
-22	2	Room 22	5	2026-10-16 18:07:29.46605	t	5
-24	2	Room 24	5	2026-10-16 18:07:29.773032	t	5
-29	2	Room 29	5	2026-10-16 18:07:30.539684	t	\N
-25	2	Room 25	5	2026-10-16 18:07:29.959041	t	5
-2	2	Room 2	5	2026-10-16 18:07:26.643739	t	5
-7	2	Room 7	5	2026-10-16 18:07:27.423778	t	1
-121	3	Green 13	5	2026-10-16 18:07:44.104885	t	\N
-122	3	Green 14	5	2026-10-16 18:07:44.242766	t	\N
-123	3	Green 15	5	2026-10-16 18:07:44.404073	t	\N
-124	3	Green 16	5	2026-10-16 18:07:44.538067	t	\N
-125	3	Green 17	5	2026-10-16 18:07:44.699406	t	\N
-126	3	Green 18	5	2026-10-16 18:07:44.833181	t	\N
-127	3	Green 19	5	2026-10-16 18:07:45.014441	t	\N
-128	3	Green 20	5	2026-10-16 18:07:45.152839	t	\N
-129	3	Green 21	5	2026-10-16 18:07:45.332126	t	\N
-130	3	Green 22	5	2026-10-16 18:07:45.517827	t	\N
-131	3	Green 23	5	2026-10-16 18:07:45.686037	t	\N
-132	3	Green 24	5	2026-10-16 18:07:45.828979	t	\N
-133	3	Green 25	5	2026-10-16 18:07:45.975022	t	\N
-134	3	Green 26	5	2026-10-16 18:07:46.124472	t	\N
-135	3	Green 27	5	2026-10-16 18:07:46.257969	t	\N
-136	3	Green 28	5	2026-10-16 18:07:46.401012	t	\N
-137	3	Green 29	5	2026-10-16 18:07:46.54148	t	\N
-138	3	Green 30	5	2026-10-16 18:07:46.677928	t	\N
-139	3	Green 31	5	2026-10-16 18:07:46.829979	t	\N
-140	3	Green 32	5	2026-10-16 18:07:47.060696	t	\N
-141	3	Green 33	5	2026-10-16 18:07:47.287465	t	\N
-142	3	Green 34	5	2026-10-16 18:07:47.43937	t	\N
-143	3	Green 35	5	2026-10-16 18:07:47.605942	t	\N
-144	3	Green 36	5	2026-10-16 18:07:47.74119	t	\N
-145	3	Green 37	5	2026-10-16 18:07:47.914488	t	\N
-146	3	Green 38	5	2026-10-16 18:07:48.073485	t	\N
-147	3	Green 39	5	2026-10-16 18:07:48.240253	t	\N
-148	3	Green 40	5	2026-10-16 18:07:48.398406	t	\N
-149	3	Green 41	5	2026-10-16 18:07:48.581784	t	\N
-150	3	Green 42	5	2026-10-16 18:07:48.709479	t	\N
-151	3	Green 43	5	2026-10-16 18:07:48.906505	t	\N
-152	3	Green 44	5	2026-10-16 18:07:49.069921	t	\N
-153	3	Green 45	5	2026-10-16 18:07:49.216662	t	\N
-154	3	Green 46	5	2026-10-16 18:07:49.363335	t	\N
-155	3	Green 47	5	2026-10-16 18:07:49.525663	t	\N
-156	3	Green 48	5	2026-10-16 18:07:49.689221	t	\N
-157	3	Green 49	5	2026-10-16 18:07:49.834498	t	\N
-158	3	Green 50	5	2026-10-16 18:07:49.963421	t	\N
-159	3	Green 51	5	2026-10-16 18:07:50.133809	t	\N
-160	3	Green 52	5	2026-10-16 18:07:50.265397	t	\N
-161	3	Blue 1	5	2026-10-16 18:07:50.486048	t	\N
-162	3	Blue 2	5	2026-10-16 18:07:50.647963	t	\N
-163	3	Blue 3	5	2026-10-16 18:07:50.840324	t	\N
-164	3	Blue 4	5	2026-10-16 18:07:50.976903	t	\N
-165	3	Blue 5	5	2026-10-16 18:07:51.137833	t	\N
-166	3	Blue 6	5	2026-10-16 18:07:51.306777	t	\N
-167	3	Blue 7	5	2026-10-16 18:07:51.454574	t	\N
-168	3	Blue 8	5	2026-10-16 18:07:51.621394	t	\N
-169	3	Blue 9	5	2026-10-16 18:07:51.802068	t	\N
-170	3	Blue 10	5	2026-10-16 18:07:51.975932	t	\N
-171	3	Blue 11	5	2026-10-16 18:07:52.139732	t	\N
-172	3	Blue 12	5	2026-10-16 18:07:52.301717	t	\N
-173	3	Blue 13	5	2026-10-16 18:07:52.477347	t	\N
-174	3	Blue 14	5	2026-10-16 18:07:52.702048	t	\N
-175	3	Blue 15	5	2026-10-16 18:07:52.889766	t	\N
-176	3	Blue 16	5	2026-10-16 18:07:53.045059	t	\N
-177	3	Blue 17	5	2026-10-16 18:07:53.251753	t	\N
-178	3	Blue 18	5	2026-10-16 18:07:53.406306	t	\N
-179	3	Blue 19	5	2026-10-16 18:07:53.653403	t	\N
-180	3	Blue 20	5	2026-10-16 18:07:53.88336	t	\N
-181	3	Red 1	5	2026-10-16 18:07:54.016876	t	\N
-182	3	Red 2	5	2026-10-16 18:07:54.201263	t	\N
-183	3	Red 3	5	2026-10-16 18:07:54.34678	t	\N
-184	3	Red 4	5	2026-10-16 18:07:54.565514	t	\N
-185	3	Red 5	5	2026-10-16 18:07:54.715144	t	\N
-186	3	Red 6	5	2026-10-16 18:07:54.871396	t	\N
-187	3	Red 7	5	2026-10-16 18:07:55.012233	t	\N
-188	3	Red 8	5	2026-10-16 18:07:55.247922	t	\N
-189	3	Red 9	5	2026-10-16 18:07:55.410928	t	\N
-190	3	Red 10	5	2026-10-16 18:07:55.621754	t	\N
-191	3	Red 11	5	2026-10-16 18:07:55.764929	t	\N
-192	3	Red 12	5	2026-10-16 18:07:55.917296	t	\N
-193	3	Red 13	5	2026-10-16 18:07:56.128041	t	\N
-194	3	Red 14	5	2026-10-16 18:07:56.408748	t	\N
-195	3	Red 15	5	2026-10-16 18:07:56.625718	t	\N
-196	3	Red 16	5	2026-10-16 18:07:56.836752	t	\N
-197	3	Red 17	5	2026-10-16 18:07:57.01572	t	\N
-201	4	Room 4	5	2026-10-16 18:07:57.63197	t	\N
-202	4	Room 5	5	2026-10-16 18:07:57.815446	t	\N
-203	4	Room 6	5	2026-10-16 18:07:57.941962	t	\N
-204	4	Room 7	5	2026-10-16 18:07:58.044268	t	\N
-205	4	Room 8	5	2026-10-16 18:07:58.142807	t	\N
-206	4	Tent 1	8	2026-10-16 18:07:58.295611	t	\N
-207	4	Tent 2	8	2026-10-16 18:07:58.558705	t	\N
-258	4	Room-Mapped-1792968815	25	2026-10-26 06:53:35.956954	f	\N
-259	2	Room-Unmapped-1792968815	30	2026-10-26 06:53:35.979561	f	\N
-199	4	Room 2	5	2026-10-16 18:07:57.350725	t	\N
-200	4	Room 3	5	2026-10-16 18:07:57.487539	t	\N
-209	4	Tent 4	7	2026-10-16 18:07:59.037724	t	\N
-198	4	Room 1	5	2026-10-16 18:07:57.206475	t	\N
-208	4	Tent 3	7	2026-10-16 18:07:58.853242	t	\N
-8	2	Room 8	5	2026-10-16 18:07:27.578728	t	1
-9	2	Room 9	5	2026-10-16 18:07:27.703505	t	1
-16	2	Room 16	5	2026-10-16 18:07:28.773948	t	1
-17	2	Room 17	5	2026-10-16 18:07:28.910072	t	1
-15	2	Room 15	5	2026-10-16 18:07:28.650531	t	1
-27	2	Room 27	5	2026-10-16 18:07:30.275848	t	3
-1	2	Room 1	5	2026-10-16 18:07:26.465814	t	3
-3	2	Room 3	5	2026-10-16 18:07:26.827255	t	3
-10	2	Room 10	5	2026-10-16 18:07:27.880324	t	4
-19	2	Room 19	5	2026-10-16 18:07:29.146911	t	4
-23	2	Room 23	5	2026-10-16 18:07:29.63889	t	5
-6	2	Room 6	5	2026-10-16 18:07:27.290138	t	3
-265	2	Test Temp Room 999	10	2026-11-09 14:06:54.203196	f	\N
-266	2	Sample	20	2026-11-09 14:09:52.906148	t	3
+COPY public.evacuation_center_rooms (id, evacuation_center_id, room_number, capacity, created_at, is_active, building_id, floor, family_slots, people_spaces) FROM stdin;
+18	2	Room 18	5	2026-10-16 18:07:29.040737	t	4	1	5	5
+20	2	Room 20	5	2026-10-16 18:07:29.252955	t	4	1	5	5
+11	2	Room 11	5	2026-10-16 18:07:28.034701	t	2	1	5	5
+12	2	Room 12	5	2026-10-16 18:07:28.184014	t	2	1	5	5
+13	2	Room 13	5	2026-10-16 18:07:28.33356	t	2	1	5	5
+4	2	Room 4	5	2026-10-16 18:07:26.982923	t	3	1	5	5
+5	2	Room 5	5	2026-10-16 18:07:27.161738	t	3	1	5	5
+28	2	Room 28	5	2026-10-16 18:07:30.424165	t	4	1	5	5
+21	2	Room 21	5	2026-10-16 18:07:29.355661	t	5	1	5	5
+14	2	Room 14	5	2026-10-16 18:07:28.476637	t	2	1	5	5
+26	2	Room 26	5	2026-10-16 18:07:30.102928	t	2	1	5	5
+22	2	Room 22	5	2026-10-16 18:07:29.46605	t	5	1	5	5
+24	2	Room 24	5	2026-10-16 18:07:29.773032	t	5	1	5	5
+29	2	Room 29	5	2026-10-16 18:07:30.539684	t	1	1	5	5
+30	2	Room 30	5	2026-10-16 18:07:30.656373	t	15	1	5	5
+31	2	Room 31	5	2026-10-16 18:07:30.800693	t	15	1	5	5
+25	2	Room 25	5	2026-10-16 18:07:29.959041	t	5	1	5	5
+2	2	Room 2	5	2026-10-16 18:07:26.643739	t	5	1	5	5
+7	2	Room 7	5	2026-10-16 18:07:27.423778	t	1	1	5	5
+32	2	Room 32	5	2026-10-16 18:07:30.904462	t	15	1	5	5
+33	2	Room 33	5	2026-10-16 18:07:31.059928	t	15	1	5	5
+34	2	Room 34	5	2026-10-16 18:07:31.236223	t	15	1	5	5
+38	2	Room 38	5	2026-10-16 18:07:31.870523	t	15	1	5	5
+39	2	Room 39	5	2026-10-16 18:07:32.015371	t	15	1	5	5
+40	2	Room 40	5	2026-10-16 18:07:32.215172	t	22	1	5	5
+41	2	Room 41	5	2026-10-16 18:07:32.340207	t	22	1	5	5
+42	2	Room 42	5	2026-10-16 18:07:32.484919	t	22	1	5	5
+43	2	Room 43	5	2026-10-16 18:07:32.629316	t	22	1	5	5
+44	2	Room 44	5	2026-10-16 18:07:32.788348	t	22	1	5	5
+45	2	Room 45	5	2026-10-16 18:07:32.935612	t	22	1	5	5
+46	2	Room 46	5	2026-10-16 18:07:33.08796	t	22	1	5	5
+47	2	Room 47	5	2026-10-16 18:07:33.265788	t	22	1	5	5
+48	2	Room 48	5	2026-10-16 18:07:33.393818	t	22	1	5	5
+49	2	Room 49	5	2026-10-16 18:07:33.52688	t	22	1	5	5
+50	2	Room 50	5	2026-10-16 18:07:33.666008	t	13	1	5	5
+51	2	Room 51	5	2026-10-16 18:07:33.788775	t	13	1	5	5
+52	2	Room 52	5	2026-10-16 18:07:33.903919	t	13	1	5	5
+53	2	Room 53	5	2026-10-16 18:07:34.078782	t	13	1	5	5
+54	2	Room 54	5	2026-10-16 18:07:34.213686	t	13	1	5	5
+55	2	Room 55	5	2026-10-16 18:07:34.326916	t	13	1	5	5
+56	2	Room 56	5	2026-10-16 18:07:34.461763	t	13	1	5	5
+57	2	Room 57	5	2026-10-16 18:07:34.626105	t	13	1	5	5
+58	2	Room 58	5	2026-10-16 18:07:34.776829	t	13	1	5	5
+59	2	Room 59	5	2026-10-16 18:07:34.958447	t	13	1	5	5
+60	2	Room 60	5	2026-10-16 18:07:35.130115	t	19	1	5	5
+61	2	Room 61	5	2026-10-16 18:07:35.273463	t	19	1	5	5
+62	2	Room 62	5	2026-10-16 18:07:35.423154	t	19	1	5	5
+63	2	Room 63	5	2026-10-16 18:07:35.561187	t	19	1	5	5
+64	2	Room 64	5	2026-10-16 18:07:35.679637	t	19	1	5	5
+65	2	Room 65	5	2026-10-16 18:07:35.829581	t	19	1	5	5
+66	2	Room 66	5	2026-10-16 18:07:35.980576	t	19	1	5	5
+67	2	Room 67	5	2026-10-16 18:07:36.134123	t	19	1	5	5
+265	2	Test Temp Room 999	10	2026-11-09 14:06:54.203196	f	19	1	5	10
+259	2	Room-Unmapped-1792968815	30	2026-10-26 06:53:35.979561	f	19	1	5	30
+161	3	Blue 1	5	2026-10-16 18:07:50.486048	t	20	1	5	5
+109	3	Green 1	5	2026-10-16 18:07:42.061511	t	20	1	5	5
+181	3	Red 1	5	2026-10-16 18:07:54.016876	t	20	1	5	5
+87	3	Violet 1	5	2026-10-16 18:07:38.915803	t	20	1	5	5
+68	3	Yellow 1	5	2026-10-16 18:07:36.314959	t	20	1	5	5
+162	3	Blue 2	5	2026-10-16 18:07:50.647963	t	20	1	5	5
+110	3	Green 2	5	2026-10-16 18:07:42.261246	t	20	1	5	5
+182	3	Red 2	5	2026-10-16 18:07:54.201263	t	20	1	5	5
+88	3	Violet 2	5	2026-10-16 18:07:39.054386	t	20	1	5	5
+69	3	Yellow 2	5	2026-10-16 18:07:36.466903	t	20	1	5	5
+163	3	Blue 3	5	2026-10-16 18:07:50.840324	t	20	1	5	5
+111	3	Green 3	5	2026-10-16 18:07:42.426312	t	20	1	5	5
+183	3	Red 3	5	2026-10-16 18:07:54.34678	t	20	1	5	5
+89	3	Violet 3	5	2026-10-16 18:07:39.21775	t	20	1	5	5
+70	3	Yellow 3	5	2026-10-16 18:07:36.608226	t	20	1	5	5
+164	3	Blue 4	5	2026-10-16 18:07:50.976903	t	20	1	5	5
+112	3	Green 4	5	2026-10-16 18:07:42.585562	t	20	1	5	5
+184	3	Red 4	5	2026-10-16 18:07:54.565514	t	20	1	5	5
+90	3	Violet 4	5	2026-10-16 18:07:39.380064	t	20	1	5	5
+273	2	Room 999	20	2026-11-19 12:19:20.378302	t	15	2	5	20
+8	2	Room 8	5	2026-10-16 18:07:27.578728	t	1	1	5	5
+9	2	Room 9	5	2026-10-16 18:07:27.703505	t	1	1	5	5
+16	2	Room 16	5	2026-10-16 18:07:28.773948	t	1	1	5	5
+17	2	Room 17	5	2026-10-16 18:07:28.910072	t	1	1	5	5
+15	2	Room 15	5	2026-10-16 18:07:28.650531	t	1	1	5	5
+27	2	Room 27	5	2026-10-16 18:07:30.275848	t	3	1	5	5
+1	2	Room 1	5	2026-10-16 18:07:26.465814	t	3	1	5	5
+3	2	Room 3	5	2026-10-16 18:07:26.827255	t	3	1	5	5
+10	2	Room 10	5	2026-10-16 18:07:27.880324	t	4	1	5	5
+19	2	Room 19	5	2026-10-16 18:07:29.146911	t	4	1	5	5
+23	2	Room 23	5	2026-10-16 18:07:29.63889	t	5	1	5	5
+6	2	Room 6	5	2026-10-16 18:07:27.290138	t	3	1	5	5
+266	2	Sample	20	2026-11-09 14:09:52.906148	t	3	1	5	20
+35	2	Room 35	5	2026-10-16 18:07:31.390946	t	15	1	5	5
+36	2	Room 36	5	2026-10-16 18:07:31.55279	t	15	1	5	5
+37	2	Room 37	5	2026-10-16 18:07:31.687307	t	15	1	5	5
+71	3	Yellow 4	5	2026-10-16 18:07:36.706641	t	20	1	5	5
+165	3	Blue 5	5	2026-10-16 18:07:51.137833	t	20	1	5	5
+113	3	Green 5	5	2026-10-16 18:07:42.671895	t	20	1	5	5
+185	3	Red 5	5	2026-10-16 18:07:54.715144	t	20	1	5	5
+91	3	Violet 5	5	2026-10-16 18:07:39.514433	t	20	1	5	5
+72	3	Yellow 5	5	2026-10-16 18:07:36.855185	t	20	1	5	5
+166	3	Blue 6	5	2026-10-16 18:07:51.306777	t	20	1	5	5
+114	3	Green 6	5	2026-10-16 18:07:42.812434	t	20	1	5	5
+186	3	Red 6	5	2026-10-16 18:07:54.871396	t	20	1	5	5
+92	3	Violet 6	5	2026-10-16 18:07:39.64676	t	20	1	5	5
+73	3	Yellow 6	5	2026-10-16 18:07:36.984347	t	20	1	5	5
+167	3	Blue 7	5	2026-10-16 18:07:51.454574	t	20	1	5	5
+115	3	Green 7	5	2026-10-16 18:07:42.959116	t	20	1	5	5
+187	3	Red 7	5	2026-10-16 18:07:55.012233	t	20	1	5	5
+93	3	Violet 7	5	2026-10-16 18:07:39.767424	t	16	1	5	5
+74	3	Yellow 7	5	2026-10-16 18:07:37.108979	t	16	1	5	5
+168	3	Blue 8	5	2026-10-16 18:07:51.621394	t	16	1	5	5
+116	3	Green 8	5	2026-10-16 18:07:43.062673	t	16	1	5	5
+188	3	Red 8	5	2026-10-16 18:07:55.247922	t	16	1	5	5
+94	3	Violet 8	5	2026-10-16 18:07:39.893789	t	16	1	5	5
+75	3	Yellow 8	5	2026-10-16 18:07:37.279824	t	16	1	5	5
+169	3	Blue 9	5	2026-10-16 18:07:51.802068	t	16	1	5	5
+117	3	Green 9	5	2026-10-16 18:07:43.291655	t	16	1	5	5
+189	3	Red 9	5	2026-10-16 18:07:55.410928	t	16	1	5	5
+95	3	Violet 9	5	2026-10-16 18:07:40.000094	t	16	1	5	5
+76	3	Yellow 9	5	2026-10-16 18:07:37.433842	t	16	1	5	5
+170	3	Blue 10	5	2026-10-16 18:07:51.975932	t	16	1	5	5
+118	3	Green 10	5	2026-10-16 18:07:43.551949	t	16	1	5	5
+190	3	Red 10	5	2026-10-16 18:07:55.621754	t	16	1	5	5
+96	3	Violet 10	5	2026-10-16 18:07:40.147013	t	16	1	5	5
+77	3	Yellow 10	5	2026-10-16 18:07:37.551461	t	16	1	5	5
+171	3	Blue 11	5	2026-10-16 18:07:52.139732	t	16	1	5	5
+119	3	Green 11	5	2026-10-16 18:07:43.743365	t	16	1	5	5
+191	3	Red 11	5	2026-10-16 18:07:55.764929	t	16	1	5	5
+97	3	Violet 11	5	2026-10-16 18:07:40.302274	t	16	1	5	5
+78	3	Yellow 11	5	2026-10-16 18:07:37.70369	t	16	1	5	5
+172	3	Blue 12	5	2026-10-16 18:07:52.301717	t	16	1	5	5
+120	3	Green 12	5	2026-10-16 18:07:43.917812	t	16	1	5	5
+192	3	Red 12	5	2026-10-16 18:07:55.917296	t	16	1	5	5
+98	3	Violet 12	5	2026-10-16 18:07:40.423246	t	16	1	5	5
+79	3	Yellow 12	5	2026-10-16 18:07:37.834795	t	16	1	5	5
+173	3	Blue 13	5	2026-10-16 18:07:52.477347	t	16	1	5	5
+121	3	Green 13	5	2026-10-16 18:07:44.104885	t	16	1	5	5
+193	3	Red 13	5	2026-10-16 18:07:56.128041	t	16	1	5	5
+99	3	Violet 13	5	2026-10-16 18:07:40.578796	t	16	1	5	5
+80	3	Yellow 13	5	2026-10-16 18:07:38.002893	t	16	1	5	5
+174	3	Blue 14	5	2026-10-16 18:07:52.702048	t	17	1	5	5
+122	3	Green 14	5	2026-10-16 18:07:44.242766	t	17	1	5	5
+194	3	Red 14	5	2026-10-16 18:07:56.408748	t	17	1	5	5
+100	3	Violet 14	5	2026-10-16 18:07:40.686287	t	17	1	5	5
+81	3	Yellow 14	5	2026-10-16 18:07:38.110783	t	17	1	5	5
+175	3	Blue 15	5	2026-10-16 18:07:52.889766	t	17	1	5	5
+123	3	Green 15	5	2026-10-16 18:07:44.404073	t	17	1	5	5
+195	3	Red 15	5	2026-10-16 18:07:56.625718	t	17	1	5	5
+101	3	Violet 15	5	2026-10-16 18:07:40.825858	t	17	1	5	5
+82	3	Yellow 15	5	2026-10-16 18:07:38.214217	t	17	1	5	5
+141	3	Green 33	5	2026-10-16 18:07:47.287465	t	11	1	5	5
+142	3	Green 34	5	2026-10-16 18:07:47.43937	t	11	1	5	5
+143	3	Green 35	5	2026-10-16 18:07:47.605942	t	11	1	5	5
+271	46	Room 1	20	2026-11-18 15:19:58.33985	f	\N	\N	5	20
+272	47	adad	20	2026-11-18 20:19:50.154303	t	\N	\N	5	20
+176	3	Blue 16	5	2026-10-16 18:07:53.045059	t	17	1	5	5
+124	3	Green 16	5	2026-10-16 18:07:44.538067	t	17	1	5	5
+196	3	Red 16	5	2026-10-16 18:07:56.836752	t	17	1	5	5
+102	3	Violet 16	5	2026-10-16 18:07:40.984972	t	17	1	5	5
+83	3	Yellow 16	5	2026-10-16 18:07:38.358554	t	17	1	5	5
+177	3	Blue 17	5	2026-10-16 18:07:53.251753	t	17	1	5	5
+125	3	Green 17	5	2026-10-16 18:07:44.699406	t	17	1	5	5
+197	3	Red 17	5	2026-10-16 18:07:57.01572	t	17	1	5	5
+103	3	Violet 17	5	2026-10-16 18:07:41.114984	t	17	1	5	5
+84	3	Yellow 17	5	2026-10-16 18:07:38.482736	t	17	1	5	5
+178	3	Blue 18	5	2026-10-16 18:07:53.406306	t	17	1	5	5
+126	3	Green 18	5	2026-10-16 18:07:44.833181	t	17	1	5	5
+104	3	Violet 18	5	2026-10-16 18:07:41.231005	t	17	1	5	5
+85	3	Yellow 18	5	2026-10-16 18:07:38.627258	t	17	1	5	5
+179	3	Blue 19	5	2026-10-16 18:07:53.653403	t	17	1	5	5
+127	3	Green 19	5	2026-10-16 18:07:45.014441	t	17	1	5	5
+105	3	Violet 19	5	2026-10-16 18:07:41.425845	t	17	1	5	5
+86	3	Yellow 19	5	2026-10-16 18:07:38.774798	t	17	1	5	5
+180	3	Blue 20	5	2026-10-16 18:07:53.88336	t	17	1	5	5
+128	3	Green 20	5	2026-10-16 18:07:45.152839	t	17	1	5	5
+106	3	Violet 20	5	2026-10-16 18:07:41.577508	t	17	1	5	5
+129	3	Green 21	5	2026-10-16 18:07:45.332126	t	17	1	5	5
+107	3	Violet 21	5	2026-10-16 18:07:41.747905	t	17	1	5	5
+130	3	Green 22	5	2026-10-16 18:07:45.517827	t	11	1	5	5
+108	3	Violet 22	5	2026-10-16 18:07:41.898046	t	11	1	5	5
+131	3	Green 23	5	2026-10-16 18:07:45.686037	t	11	1	5	5
+132	3	Green 24	5	2026-10-16 18:07:45.828979	t	11	1	5	5
+133	3	Green 25	5	2026-10-16 18:07:45.975022	t	11	1	5	5
+134	3	Green 26	5	2026-10-16 18:07:46.124472	t	11	1	5	5
+135	3	Green 27	5	2026-10-16 18:07:46.257969	t	11	1	5	5
+136	3	Green 28	5	2026-10-16 18:07:46.401012	t	11	1	5	5
+137	3	Green 29	5	2026-10-16 18:07:46.54148	t	11	1	5	5
+138	3	Green 30	5	2026-10-16 18:07:46.677928	t	11	1	5	5
+139	3	Green 31	5	2026-10-16 18:07:46.829979	t	11	1	5	5
+140	3	Green 32	5	2026-10-16 18:07:47.060696	t	11	1	5	5
+144	3	Green 36	5	2026-10-16 18:07:47.74119	t	11	1	5	5
+145	3	Green 37	5	2026-10-16 18:07:47.914488	t	11	1	5	5
+146	3	Green 38	5	2026-10-16 18:07:48.073485	t	11	1	5	5
+147	3	Green 39	5	2026-10-16 18:07:48.240253	t	11	1	5	5
+148	3	Green 40	5	2026-10-16 18:07:48.398406	t	11	1	5	5
+149	3	Green 41	5	2026-10-16 18:07:48.581784	t	11	1	5	5
+150	3	Green 42	5	2026-10-16 18:07:48.709479	t	11	1	5	5
+151	3	Green 43	5	2026-10-16 18:07:48.906505	t	11	1	5	5
+152	3	Green 44	5	2026-10-16 18:07:49.069921	t	11	1	5	5
+153	3	Green 45	5	2026-10-16 18:07:49.216662	t	11	1	5	5
+154	3	Green 46	5	2026-10-16 18:07:49.363335	t	11	1	5	5
+155	3	Green 47	5	2026-10-16 18:07:49.525663	t	11	1	5	5
+156	3	Green 48	5	2026-10-16 18:07:49.689221	t	11	1	5	5
+157	3	Green 49	5	2026-10-16 18:07:49.834498	t	11	1	5	5
+158	3	Green 50	5	2026-10-16 18:07:49.963421	t	11	1	5	5
+159	3	Green 51	5	2026-10-16 18:07:50.133809	t	11	1	5	5
+160	3	Green 52	5	2026-10-16 18:07:50.265397	t	11	1	5	5
+198	4	Room 1	5	2026-10-16 18:07:57.206475	t	18	1	5	5
+206	4	Tent 1	8	2026-10-16 18:07:58.295611	t	18	1	5	8
+199	4	Room 2	5	2026-10-16 18:07:57.350725	t	18	1	5	5
+207	4	Tent 2	8	2026-10-16 18:07:58.558705	t	18	1	5	8
+200	4	Room 3	5	2026-10-16 18:07:57.487539	t	12	1	5	5
+208	4	Tent 3	7	2026-10-16 18:07:58.853242	t	12	1	5	7
+201	4	Room 4	5	2026-10-16 18:07:57.63197	t	12	1	5	5
+209	4	Tent 4	7	2026-10-16 18:07:59.037724	t	21	1	5	7
+202	4	Room 5	5	2026-10-16 18:07:57.815446	t	21	1	5	5
+203	4	Room 6	5	2026-10-16 18:07:57.941962	t	21	1	5	5
+204	4	Room 7	5	2026-10-16 18:07:58.044268	t	14	1	5	5
+205	4	Room 8	5	2026-10-16 18:07:58.142807	t	14	1	5	5
+258	4	Room-Mapped-1792968815	25	2026-10-26 06:53:35.956954	f	14	1	5	25
 \.
 
 
@@ -7502,14 +7642,14 @@ COPY public.evacuation_center_rooms (id, evacuation_center_id, room_number, capa
 -- Data for Name: evacuation_centers; Type: TABLE DATA; Schema: public; Owner: -
 --
 
-UPDATE public.evacuation_center_rooms SET people_spaces = capacity;
-
 COPY public.evacuation_centers (id, name, capacity, hazard_exposure_score, contact_number, is_active, geom, entrance_geom, managed_by, created_at, owner_name, max_rooms, center_type_id, building_material_id, evacuation_open_date, evacuation_status, evacuation_event_name, evacuation_open_time, evacuation_cutoff_date, evacuation_cutoff_time, evacuation_extension_count, evacuation_extended_until) FROM stdin;
-2	Sogod Central School	355	\N	09000000011	t	0103000020E610000001000000070000000CDB1F39AC3E5F4068326573B6C62440649BE92AAC3E5F40D0B9386B25C624404871DDECC73E5F40909EE86D1EC62440F8B78850C73E5F40A8D925BC9FC62440B0CA67A8B93E5F400046F8CAA2C6244080CC358EAD3E5F40804419D7ACC624400CDB1F39AC3E5F4068326573B6C62440	0104000020E610000003000000010100000025A68ABDC73E5F40A6DE659245C624400101000000E993D9B8AE3E5F40C7D42ADFABC6244001010000001D290713BA3E5F408D79C4EA21C62440	\N	2026-10-16 18:07:26.414503	\N	\N	1	1	2026-11-25	open	Typhoon Baboy	08:00	2026-11-26	18:00	0	\N
-3	Sogod National High School	650	\N	09000000012	t	0103000020E61000000100000006000000F0FABBF7993E5F40F05D3CAADFC6244070F85920A93E5F40C8395A3BF0C624408037D048AC3E5F40B0267E13B7C62440B8E76320AC3E5F40782B8E4925C62440282B1B3B9A3E5F40285068B631C62440F0FABBF7993E5F40F05D3CAADFC62440	0104000020E6100000030000000101000000B7C4A063A73E5F408209989328C624400101000000746E86749E3E5F404D0990C72EC624400101000000B92882A1AB3E5F405EB771E7C2C62440	\N	2026-10-16 18:07:36.31136	\N	\N	1	1	2026-11-25	open	Typhoon Baboy	08:00	2026-11-26	18:00	0	\N
-4	Hibod-Hibod Evacuation Center	70	\N	0912-345-6789	t	0103000020E610000001000000050000000030A57F1F405F409825B8E303D824402430A57C22405F40D816DF5807D824401430652523405F40101ACE24EFD724404030E5E41F405F40F062421BEED724400030A57F1F405F409825B8E303D82440	0104000020E6100000020000000101000000C7A9AB4D21405F402654568EEED7244001010000009E3C73DD22405F409E0D7276F9D72440	\N	2026-10-16 18:07:57.201628	LGU Sogod	\N	1	\N	2026-11-25	open	Typhoon Baboy	08:00	2026-11-26	18:00	0	\N
-36	PNHS	250	\N	0917-111-2222	t	0103000020E6100000010000000500000000A1766BD63E5F40C019203ADDC82440B42FB0B6D93E5F40789E87FBDCC8244020B8BBAED93E5F40203021BCD1C82440905E1AABD63E5F40283ABFC1D0C8244000A1766BD63E5F40C019203ADDC82440	0104000020E6100000010000000101000000248EC388D63E5F402052507CD7C82440	1	2026-11-13 14:43:43.042434	LGU	\N	2	1	2026-11-25	open	Typhoon Baboy	08:00	2026-11-26	18:00	0	\N
-37	asdadad	23	\N	\N	t	\N	\N	1	2026-11-15 06:39:48.98602	\N	\N	2	2	2026-11-25	open	Typhoon Baboy	08:00	2026-11-26	18:00	0	\N
+3	Sogod National High School	650	\N	09000000012	t	0103000020E61000000100000006000000F0FABBF7993E5F40F05D3CAADFC6244070F85920A93E5F40C8395A3BF0C624408037D048AC3E5F40B0267E13B7C62440B8E76320AC3E5F40782B8E4925C62440282B1B3B9A3E5F40285068B631C62440F0FABBF7993E5F40F05D3CAADFC62440	0104000020E6100000030000000101000000B7C4A063A73E5F408209989328C624400101000000746E86749E3E5F404D0990C72EC624400101000000B92882A1AB3E5F405EB771E7C2C62440	\N	2026-10-16 18:07:36.31136	\N	\N	1	1	2026-11-25	open	Yoyo	08:00	2026-11-26	18:00	0	\N
+36	PNHS	250	\N	0917-111-2222	t	0103000020E610000001000000050000006C66D32CDE3E5F40106BAB45A7C82440086613ABE33E5F4008A96ED0A3C824403466D39FE33E5F40C8B1C4DE92C824405066130BDE3E5F40681F639994C824406C66D32CDE3E5F40106BAB45A7C82440	0104000020E61000000200000001010000008E99461BDE3E5F40E749EC8F9DC8244001010000001DE097A9E23E5F407DC00C2B93C82440	1	2026-11-13 14:43:43.042434	LGU	\N	2	1	2026-11-25	open	Yoyo	08:00	2026-11-26	18:00	0	\N
+37	asdadad	23	\N	\N	t	\N	\N	1	2026-11-15 06:39:48.98602	\N	\N	2	2	2026-11-25	open	Yoyo	08:00	2026-11-26	18:00	0	\N
+46	SLSU	0	\N	09000000013	t	0103000020E61000000100000007000000908EC9E8AA3E5F40A8D73A5606CA2440149A1F10C83E5F4060DAA4F3D4C92440D4C32DA2C53E5F400851064C15C824401846CC14B93E5F4040FB0C30A4C724403055284AA93E5F403098FE6BCAC7244034AB7ECCA13E5F40F09110BA50C92440908EC9E8AA3E5F40A8D73A5606CA2440	0104000020E6100000030000000101000000D8EB84CCA63E5F401106AA334CC824400101000000F7921DD5C43E5F40CE7E30140EC8244001010000007E6C955AC73E5F40BBF83A4952C92440	1	2026-11-18 15:17:10.972811	LGU	\N	1	2	\N	standby	\N	08:00	\N	18:00	0	\N
+47	BitolYwakaBitol	20	\N	09000000013	t	0103000020E61000000100000005000000E0FBF15F8F3E5F40187A168C9EC72440A4D831F5913E5F40C8A98DB1A7C72440D4C3F181933E5F40983FD4388AC7244054E5C10D913E5F40A05F861782C72440E0FBF15F8F3E5F40187A168C9EC72440	0104000020E610000001000000010100000098098DD6923E5F40DDE61AF496C72440	1	2026-11-18 20:19:16.705781	dunno	\N	3	3	\N	standby	\N	08:00	\N	18:00	0	\N
+4	Hibod-Hibod Evacuation Center	70	\N	0912-345-6789	t	0103000020E610000001000000050000000030A57F1F405F409825B8E303D824402430A57C22405F40D816DF5807D824401430652523405F40101ACE24EFD72440302FC5E71E405F4080C79AF1E4D724400030A57F1F405F409825B8E303D82440	0104000020E6100000020000000101000000EDDCA37021405F4033A64C0AEBD7244001010000009E3C73DD22405F409E0D7276F9D72440	\N	2026-10-16 18:07:57.201628	LGU Sogod	\N	1	\N	2026-11-25	open	Yoyo	08:00	2026-11-26	18:00	0	\N
+2	Sogod Central School	375	\N	09000000011	t	0103000020E610000001000000070000000CDB1F39AC3E5F4068326573B6C62440649BE92AAC3E5F40D0B9386B25C624404871DDECC73E5F40909EE86D1EC62440F8B78850C73E5F40A8D925BC9FC62440B0CA67A8B93E5F400046F8CAA2C6244080CC358EAD3E5F40804419D7ACC624400CDB1F39AC3E5F4068326573B6C62440	0104000020E610000003000000010100000025A68ABDC73E5F40A6DE659245C624400101000000E993D9B8AE3E5F40C7D42ADFABC6244001010000001D290713BA3E5F408D79C4EA21C62440	\N	2026-10-16 18:07:26.414503	\N	\N	1	1	2026-11-25	open	Yoyo	08:00	2026-11-26	18:00	0	\N
 \.
 
 
@@ -7518,7 +7658,7 @@ COPY public.evacuation_centers (id, name, capacity, hazard_exposure_score, conta
 --
 
 COPY public.evacuation_centers_accessibility_notes_backup (center_id, accessibility_notes, backed_up_at) FROM stdin;
-4	Wheelchair accessible, PWD restrooms	2026-11-14 23:39:48.241895+00
+4	Wheelchair accessible, PWD restrooms	2026-11-15 07:39:48.241895+08
 \.
 
 
@@ -7582,6 +7722,7 @@ COPY public.evacuation_check_in_records (id, operation_id, resident_id, family_i
 27	1	1037	342	4	206	2026-11-13 15:54:47.960522	1	manual	checked_in	\N
 28	1	1036	342	4	206	2026-11-13 15:54:47.960522	1	manual	checked_in	\N
 29	1	1035	342	4	206	2026-11-13 15:54:47.960522	1	manual	checked_in	\N
+31	3	140	42	2	27	2026-11-18 14:55:08.251385	1	manual	checked_in	\N
 26	1	861	280	3	172	2026-11-13 15:54:39.792699	1	manual	checked_out	2026-11-13 15:59:49.802761
 25	1	862	280	3	172	2026-11-13 15:54:39.792699	1	manual	checked_out	2026-11-13 15:59:49.802761
 24	1	863	280	3	172	2026-11-13 15:54:39.792699	1	manual	checked_out	2026-11-13 15:59:49.802761
@@ -7589,10 +7730,9 @@ COPY public.evacuation_check_in_records (id, operation_id, resident_id, family_i
 22	1	865	280	3	172	2026-11-13 15:54:39.792699	1	manual	checked_out	2026-11-13 15:59:49.802761
 20	1	140	42	2	27	2026-11-13 16:00:39.567879	1	manual	checked_in	\N
 21	1	139	42	2	27	2026-11-13 14:28:48.510957	1	manual	checked_out	2026-11-13 16:00:39.567879
-30	3	139	42	2	27	2026-11-16 10:12:25.877582	1	manual	checked_in	\N
-31	3	140	42	2	27	2026-11-16 10:12:25.877582	1	manual	checked_in	\N
 32	3	861	280	3	172	2026-11-16 10:12:39.700291	1	manual	checked_in	\N
 33	3	862	280	3	172	2026-11-16 10:12:39.700291	1	manual	checked_in	\N
+30	3	139	42	2	27	2026-11-18 14:55:08.251385	1	manual	checked_in	\N
 \.
 
 
@@ -7603,7 +7743,7 @@ COPY public.evacuation_check_in_records (id, operation_id, resident_id, family_i
 COPY public.evacuation_operations (id, center_id, event_name, open_date, open_time, cutoff_date, cutoff_time, status, extension_count, extended_until, created_by_user_id, created_at, concluded_at) FROM stdin;
 2	\N	Typhoon Kristine Evacuation Operation	2026-10-24	07:00	2026-10-25	20:00	concluded	1	\N	\N	2026-11-09 12:06:01.984875	2026-10-25 12:06:01.983811
 1	\N	Pre-emptive Evacuation for Tropical Storm	2026-11-09	08:00	2026-11-09	18:00	concluded	0	\N	\N	2026-11-09 12:06:01.974179	2026-11-16 01:44:25.500984
-3	\N	Typhoon Baboy	2026-11-25	08:00	2026-11-26	18:00	active	0	\N	1	2026-11-16 01:44:25.527528	\N
+3	\N	Yoyo	2026-11-25	08:00	2026-11-26	18:00	active	0	\N	1	2026-11-16 01:44:25.527528	\N
 \.
 
 
@@ -7712,8 +7852,9 @@ COPY public.families (id, barangay_id, family_code, head_name, member_count, con
 50	4	ZONEIII-ELIZABETHLABRADORALCALA	Elizabeth Labrador Alcala	5	09031987709	Assigned	2026-10-16 18:07:31.064079	2026-10-16 18:08:00.510483	1	Purok 3, Zone III	0	\N	1
 51	4	ZONEIII-JANETCABRERAABAD	Janet Cabrera Abad	3	09671532924	Assigned	2026-10-16 18:07:31.240671	2026-10-16 18:08:00.514921	1	Purok 3, Zone III	0	\N	1
 53	4	ZONEIII-HELENMENDOZACAMACHO	Helen Mendoza Camacho	4	09141149371	Assigned	2026-10-16 18:07:31.394534	2026-10-16 18:08:00.519714	1	Purok 6, Zone III	2	Senior; PWD	1
-42	4	ZONEIII-AIDAABELLASALAZAR	Aida Abella Salazar	2	09185399550	Evacuated	2026-10-16 18:07:30.304481	2026-11-16 10:12:25.887851	1	Purok 1, Zone III	2	Senior; PWD	1
 49	4	ZONEIII-ALLANVALDEZDACORO	Allan Valdez Dacoro	5	09265821502	Evacuated	2026-10-16 18:07:30.906767	2026-11-16 10:14:01.500664	1	Purok 7, Zone III	0	\N	1
+42	4	ZONEIII-AIDAABELLASALAZAR	Aida Abella Salazar	2	09185399550	Evacuated	2026-10-16 18:07:30.304481	2026-11-18 14:55:08.253626	1	Purok 1, Zone III	2	Senior; PWD	1
+534	8	FAM-8-88BA771F	Haa LETRERO GESULGA	2	09485748574	Assigned	2026-11-18 15:41:28.374306	2026-11-18 15:42:58.078176	1	iasdli	\N	\N	1
 511	6	FAM-6-3C221A15	JESTER LETRERO GESULGA	1	09120486893	Assigned	2026-11-06 13:09:31.739897	2026-11-09 14:33:55.313301	1	San Jose	\N	\N	1
 120	5	TAMPOONG-CESARCAMACHOROSALES	Cesar Camacho Rosales	4	09337607781	Assigned	2026-10-16 18:07:37.554218	2026-10-16 18:08:00.665294	1	Purok 5, Tampoong	2	Infant; PWD	1
 123	5	TAMPOONG-CESARCALIPAYANABELLA	Cesar Calipayan Abella	5	09369656574	Assigned	2026-10-16 18:07:37.838	2026-10-16 18:08:00.668537	1	Purok 4, Tampoong	0	\N	1
@@ -7727,6 +7868,7 @@ COPY public.families (id, barangay_id, family_code, head_name, member_count, con
 137	6	SANJOSE-DAISYDACOROABELLA	Daisy Dacoro Abella	4	09422175136	Assigned	2026-10-16 18:07:39.058791	2026-10-16 18:08:00.704708	1	Purok 5, San Jose	0	\N	1
 94	7	ZONEII-SALVADORDACOROPACATANG	Salvador Dacoro Pacatang	4	09772018664	Assigned	2026-10-16 18:07:35.136162	2026-11-09 16:34:01.949655	1	Purok 5, Zone II	0	\N	1
 512	10	sasasaasaasasa	Michael Mama Yotay Jr.	1	sfdsfsdfsdfd	Unassigned	2026-11-13 15:30:14.117619	2026-11-13 15:30:14.117619	1	fsdfsdfsdfsdfdsf	\N	baho	1
+535	10	FAM-10-D1E3E5DC	Zack Madik	1	09122334543	Unassigned	2026-11-18 20:32:22.990852	2026-11-18 20:32:22.990852	1	Iyot	\N	\N	1
 192	3	ZONEV-JOSEABELLAJAUDIAN	Jose Abella Jaudian	3	09508788675	Assigned	2026-10-16 18:07:44.113925	2026-10-16 18:08:00.849229	1	Purok 3, Zone V	0	\N	1
 194	3	ZONEV-RODOLFOTUMULAKCASAS	Rodolfo Tumulak Casas	3	09978607823	Assigned	2026-10-16 18:07:44.245987	2026-10-16 18:08:00.853769	1	Purok 6, Zone V	0	\N	1
 196	3	ZONEV-BENJAMINARAGONBANTILAN	Benjamin Aragon Bantilan	3	09266955875	Assigned	2026-10-16 18:07:44.40823	2026-10-16 18:08:00.858819	1	Purok 7, Zone V	0	\N	1
@@ -7738,7 +7880,7 @@ COPY public.families (id, barangay_id, family_code, head_name, member_count, con
 210	3	ZONEV-HELENMANIWANGMANIWANG	Helen Maniwang Maniwang	4	09468204293	Assigned	2026-10-16 18:07:45.833583	2026-10-16 18:08:00.882445	1	Purok 7, Zone V	0	\N	1
 212	3	ZONEV-JOSEQUIJANOGONZAGA	Jose Quijano Gonzaga	4	09647588172	Assigned	2026-10-16 18:07:45.979104	2026-10-16 18:08:00.886794	1	Purok 3, Zone V	0	\N	1
 214	3	ZONEV-LIZAZAMORADACORO	Liza Zamora Dacoro	3	09165118020	Assigned	2026-10-16 18:07:46.127499	2026-10-16 18:08:00.891651	1	Purok 6, Zone V	2	Infant; Pregnant	1
-532	10	FAM-10-BCB46567	Addd LETRERO GESULGA	1	09120486893	Unassigned	2026-11-15 17:08:48.552444	2026-11-16 07:49:32.367294	1	asdadad	\N	\N	1
+532	10	FAM-10-BCB46567	Addd LETRERO GESULGA	1	09120486893	Assigned	2026-11-15 17:08:48.552444	2026-11-18 22:47:04.479697	1	asdadad	\N	\N	1
 70	5	TAMPOONG-AIDAVILLANUEVABANDALAN	Aida Villanueva Bandalan	2	09987203901	Evacuated	2026-10-16 18:07:32.974144	2026-11-16 10:12:45.382309	1	Purok 6, Tampoong	2	Pregnant; PWD	1
 291	4	ZONEIII-ALLANSABALONESGABUTAN	Allan Sabalones Gabutan	4	09349975516	Evacuated	2026-10-16 18:07:53.411787	2026-11-16 10:13:52.622063	1	Purok 3, Zone III	0	\N	1
 267	4	ZONEIII-FLORENCIOARAGONBANDALAN	Florencio Aragon Bandalan	4	09240776345	Assigned	2026-10-16 18:07:51.140436	2026-10-16 18:08:01.00652	1	Purok 1, Zone III	0	\N	1
@@ -7806,8 +7948,8 @@ COPY public.families (id, barangay_id, family_code, head_name, member_count, con
 38	4	ZONEIII-ROGELIOPABILONADACORO	Rogelio Pabilona Dacoro	5	09200752257	Assigned	2026-10-16 18:07:29.776792	2026-10-16 18:08:01.293352	1	Purok 2, Zone III	0	\N	1
 39	4	ZONEIII-ROGELIOUBASEMBALSADO	Rogelio Ubas Embalsado	5	09469449668	Assigned	2026-10-16 18:07:29.961167	2026-10-16 18:08:01.297885	1	Purok 7, Zone III	1	PWD	1
 40	4	ZONEIII-EDGARBANDALANESCALANTE	Edgar Bandalan Escalante	5	09734634529	Assigned	2026-10-16 18:07:30.10855	2026-10-16 18:08:01.30356	1	Purok 1, Zone III	1	PWD	1
-330	10	HIBODHIBOD-RENEBAUTISTAROSALES	Dave Canillas Rosales	5	09868881139	Unassigned	2026-10-16 18:07:57.492911	2026-11-13 15:19:14.715131	1	Purok 4, Hibod-Hibod	0	\N	1
 342	12	SUBA-AIDARAMIREZGAVIOLA	Aida Ramirez Gaviola	3	09229257650	Evacuated	2026-10-16 18:07:58.340225	2026-11-13 15:54:47.960522	1	Purok 7, Suba	0	\N	1
+330	10	HIBODHIBOD-RENEBAUTISTAROSALES	Dave Canillas Rosales	5	09868881139	Assigned	2026-10-16 18:07:57.492911	2026-11-18 23:00:05.404963	1	Purok 4, Hibod-Hibod	0	\N	1
 44	4	ZONEIII-DANILONACIONCABANES	Danilo Nacion Cabanes	2	09081754304	Assigned	2026-10-16 18:07:30.455734	2026-10-16 18:08:01.312263	1	Purok 4, Zone III	0	\N	1
 47	4	ZONEIII-MARILOUBANDALANCABRERA	Marilou Bandalan Cabrera	2	09790522414	Assigned	2026-10-16 18:07:30.688652	2026-10-16 18:08:01.316386	1	Purok 4, Zone III	0	\N	1
 48	4	ZONEIII-GERARDOCANILLASBANDALAN	Gerardo Canillas Bandalan	5	09440456734	Assigned	2026-10-16 18:07:30.803731	2026-10-16 18:08:01.323088	1	Purok 4, Zone III	0	\N	1
@@ -7910,7 +8052,6 @@ COPY public.families (id, barangay_id, family_code, head_name, member_count, con
 262	4	ZONEIII-MAURICIOEMBALSADOMONTALBAN	Mauricio Embalsado Montalban	5	09735736438	Assigned	2026-10-16 18:07:50.652435	2026-10-16 18:08:01.791015	1	Purok 3, Zone III	0	\N	1
 264	4	ZONEIII-PEDROCAMACHODUMAGUIT	Pedro Camacho Dumaguit	2	09922184372	Assigned	2026-10-16 18:07:50.873606	2026-10-16 18:08:01.79437	1	Purok 1, Zone III	0	\N	1
 266	4	ZONEIII-VIRGILIOABADEMBALSADO	Virgilio Abad Embalsado	3	09454162683	Assigned	2026-10-16 18:07:51.004211	2026-10-16 18:08:01.797805	1	Purok 2, Zone III	0	\N	1
-4	3	ZONEV-ELENANAVARROESCALANTE	Elena Navarro Escalante	5	09391039813	Assigned	2026-10-16 18:07:26.487102	2026-10-16 18:08:00.41416	1	Purok 5, Zone V	0	\N	1
 8	3	ZONEV-THELMACASASZAMORA	Thelma Casas Zamora	4	09187336769	Assigned	2026-10-16 18:07:27.166327	2026-10-16 18:08:00.418341	1	Purok 7, Zone V	1	PWD	1
 11	3	ZONEV-LORENZOVILLANUEVAPABILONA	Lorenzo Villanueva Pabilona	5	09776588099	Assigned	2026-10-16 18:07:27.427582	2026-10-16 18:08:00.424371	1	Purok 7, Zone V	0	\N	1
 12	3	ZONEV-RODOLFOCASASDACORO	Rodolfo Casas Dacoro	3	09497969805	Assigned	2026-10-16 18:07:27.581308	2026-10-16 18:08:00.428756	1	Purok 3, Zone V	0	\N	1
@@ -7938,6 +8079,7 @@ COPY public.families (id, barangay_id, family_code, head_name, member_count, con
 350	12	SUBA-CORAZONLABRADORDEASIS	Corazon Labrador De Asis	1	09220841202	Assigned	2026-10-16 18:07:59.098034	2026-10-16 18:08:01.946567	1	Purok 7, Suba	1	Pregnant	1
 339	12	SUBA-ALFREDODACOROSALAZAR	Alfredo Dacoro Salazar	2	09582184252	Evacuated	2026-10-16 18:07:58.077511	2026-11-16 10:12:42.870896	1	Purok 4, Suba	0	\N	1
 183	3	ZONEV-ALFREDOGONZAGADACORO	Alfredo Gonzaga Dacoro	2	09616930419	Evacuated	2026-10-16 18:07:42.991963	2026-11-16 10:12:47.854388	1	Purok 2, Zone V	0	\N	1
+4	3	ZONEV-ELENANAVARROESCALANTE	Elena Navarro Escalante	5	09391039813	Assigned	2026-10-16 18:07:26.487102	2026-11-19 15:15:19.059543	1	Purok 5, Zone V	0	\N	1
 240	3	ZONEV-ALLANROSALESCAYETANO	Allan Rosales Cayetano	3	09038792709	Evacuated	2026-10-16 18:07:48.587224	2026-11-16 10:13:39.282617	1	Purok 1, Zone V	0	\N	1
 268	4	ZONEIII-ANTONIOCADIZPABILONA	Antonio Cadiz Pabilona	1	09524076145	Assigned	2026-10-16 18:07:51.182511	2026-10-16 18:08:01.803153	1	Purok 1, Zone III	2	Senior; PWD	1
 271	4	ZONEIII-BERNARDOTALISICDUMAGUIT	Bernardo Talisic Dumaguit	1	09995172132	Assigned	2026-10-16 18:07:51.354438	2026-10-16 18:08:01.807343	1	Purok 1, Zone III	0	\N	1
@@ -7952,6 +8094,7 @@ COPY public.families (id, barangay_id, family_code, head_name, member_count, con
 295	4	ZONEIII-PABLOPADILLAMONTALBAN	Pablo Padilla Montalban	3	09011787072	Assigned	2026-10-16 18:07:53.907316	2026-10-16 18:08:01.847878	1	Purok 3, Zone III	0	\N	1
 299	7	ZONEII-OSCARGONZAGAMANIWANG	Oscar Gonzaga Maniwang	1	09827809262	Assigned	2026-10-16 18:07:54.408368	2026-10-16 18:08:01.852501	1	Purok 6, Zone II	0	\N	1
 280	4	ZONEIII-AIDACADIZMAGLASANG	Aida Cadiz Maglasang	5	09298045926	Evacuated	2026-10-16 18:07:52.306951	2026-11-16 10:12:39.705971	1	Purok 3, Zone III	0	\N	1
+533	8	FAM-8-214A798E	John LETRERO GESULGA	2	09120657484	Assigned	2026-11-18 15:24:21.449484	2026-11-18 21:01:05.48126	1	purok1	\N	\N	1
 301	7	ZONEII-SHEILACABANESHERMOSA	Sheila Cabanes Hermosa	1	09726724576	Assigned	2026-10-16 18:07:54.606341	2026-10-16 18:08:01.8571	1	Purok 5, Zone II	1	Pregnant	1
 303	7	ZONEII-MANUELCABANESTALISIC	Manuel Cabanes Talisic	4	09019586661	Assigned	2026-10-16 18:07:54.731014	2026-10-16 18:08:01.861487	1	Purok 7, Zone II	0	\N	1
 305	7	ZONEII-LIZASABALONESVALDEZ	Liza Sabalones Valdez	1	09088087127	Assigned	2026-10-16 18:07:54.91615	2026-10-16 18:08:01.864479	1	Purok 2, Zone II	0	\N	1
@@ -7970,6 +8113,13 @@ COPY public.families (id, barangay_id, family_code, head_name, member_count, con
 --
 
 COPY public.hazard_report_photos (id, hazard_report_id, photo_path, sort_order, created_at) FROM stdin;
+16	30	/static/uploads/hazard/JESTER_LETRERO_GESULGA/907adbbec12d4dc49e70683fae1c72da.jpg	0	2026-11-18 07:57:45.880039
+17	31	/static/uploads/hazard/JESTER_LETRERO_GESULGA/ed55b4f8880c4bb79c7ef23d497f3582.jpg	0	2026-11-18 08:07:11.45818
+18	32	/static/uploads/hazard/JESTER_LETRERO_GESULGA/130c71c793bd4c07a27e5412e87f2630.png	0	2026-11-18 08:29:44.251223
+19	33	/static/uploads/hazard/JESTER_LETRERO_GESULGA/ee08a797183244f1847bc706a9eb73dd.png	0	2026-11-18 10:06:54.783226
+20	34	/static/uploads/hazard/JESTER_LETRERO_GESULGA/948cf2ef98864e9b9d8dc30fb3705873.png	0	2026-11-18 10:25:31.589402
+21	35	/static/uploads/hazard/JESTER_LETRERO_GESULGA/25b5dc973e2d4f62bbbea1226986f257.png	0	2026-11-18 10:28:33.450532
+22	36	/static/uploads/hazard/JESTER_LETRERO_GESULGA/ab3483a6ef4e474dbc5d8669844f5c04.png	0	2026-11-18 10:30:30.906298
 \.
 
 
@@ -7978,6 +8128,13 @@ COPY public.hazard_report_photos (id, hazard_report_id, photo_path, sort_order, 
 --
 
 COPY public.hazard_reports (id, description, photo_url, report_type, status, response_notes, validated_by, geom, submitted_at, validated_at, photos, reported_by_user_id, reported_by_resident_account_id) FROM stdin;
+36	dds rally	/static/uploads/hazard/JESTER_LETRERO_GESULGA/ab3483a6ef4e474dbc5d8669844f5c04.png	road blockage	resolved		1	0101000020E610000015FE0C6FD63E5F40EC6CC83F33C82440	2026-11-18 10:30:30.897403	2026-11-18 02:31:01.887781	[]	\N	1
+35	sadakdhasjkd	/static/uploads/hazard/JESTER_LETRERO_GESULGA/25b5dc973e2d4f62bbbea1226986f257.png	landslide	validated		1	0101000020E610000035B6D782DE3E5F40AA9A20EA3EC82440	2026-11-18 10:28:33.442296	2026-11-18 02:34:08.46011	[]	\N	1
+34	sjkdaj	/static/uploads/hazard/JESTER_LETRERO_GESULGA/948cf2ef98864e9b9d8dc30fb3705873.png	flood	validated		1	0101000020E610000001A60C1CD03E5F400344C18C29C82440	2026-11-18 10:25:31.576062	2026-11-18 02:35:12.497029	[]	\N	1
+33	dghhfh	/static/uploads/hazard/JESTER_LETRERO_GESULGA/ee08a797183244f1847bc706a9eb73dd.png	road blockage	resolved		1	0101000020E610000079245E9ECE3E5F406971C63027C82440	2026-11-18 10:06:54.771487	2026-11-18 02:08:25.980344	[]	\N	1
+30	adadadad	/static/uploads/hazard/JESTER_LETRERO_GESULGA/907adbbec12d4dc49e70683fae1c72da.jpg	flood	validated		1	0101000020E6100000C8EF6DFAB33E5F4037FB03E5B6C52440	2026-11-18 07:57:45.837839	2026-11-17 23:58:20.961535	[]	\N	1
+31	adada	/static/uploads/hazard/JESTER_LETRERO_GESULGA/ed55b4f8880c4bb79c7ef23d497f3582.jpg	flood	validated		1	0101000020E61000003E096CCEC13E5F40F9F884ECBCC52440	2026-11-18 08:07:11.42046	2026-11-18 00:07:24.20017	[]	\N	1
+32	adada	/static/uploads/hazard/JESTER_LETRERO_GESULGA/130c71c793bd4c07a27e5412e87f2630.png	flood	validated		1	0101000020E61000001D1D5723BB3E5F400BB77C2425C52440	2026-11-18 08:29:44.184177	2026-11-18 00:30:01.208601	[]	\N	1
 \.
 
 
@@ -7990,17 +8147,27 @@ COPY public.hazard_zones (id, name, hazard_type, risk_level, geom, created_by, c
 
 
 --
+-- Data for Name: non_registered_evacuees; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+COPY public.non_registered_evacuees (id, first_name, middle_name, last_name, sex, age_years, birthdate, contact_number, address, is_pwd, is_pregnant, needs_medical, notes, group_code, is_group_head, operation_id, center_id, arrived_at, departed_at, recorded_by, is_lactating, is_solo_parent, needs_assistance, room_id) FROM stdin;
+1	dadada	LETRERO	GESULGA	male	22	2008-01-11	+639120486893	Near Chapel, Court, Purok 7, Binabag	f	f	f	\N	b9a2959a-b51f-479f-ac5a-435136a51353	t	3	46	2026-11-19 00:55:41.174166+08	\N	1	f	f	f	\N
+\.
+
+
+--
 -- Data for Name: push_subscriptions; Type: TABLE DATA; Schema: public; Owner: -
 --
 
 COPY public.push_subscriptions (id, user_id, endpoint, p256dh, auth, created_at) FROM stdin;
 315	1	https://fcm.googleapis.com/fcm/send/clMmNwPvJGk:APA91bEZcegdLml5k0QgOcyriHSEAVvDEmSc5IVmKuVdWZ5So7QtLyM1nUtqbv33yHFppOyMLuGLnlj0HbOHdE3QLfbLRla6BMkZ_Zmw2e30XVQAKBNqM4tyHO3xjHUjP1R8dIqjNMO2	BBj0W0aCPayJO6-14m15v5UGorkp1rEmwmWofq7c5vR7-tjMTxD9tYyeO4t5VmLbH6xvrnWaUasjGdcsRIWMPMU	iNkiVMZApKcb1XnajNoCEw	2026-11-16 20:48:22.658891
-316	1	https://fcm.googleapis.com/fcm/send/ch5K2dUW5Vw:APA91bGvwnbZJBF_dApX1FkK_G9YKq8aVqCayzJ2MYzXRiv0RA2oajGAnKx-iul-PUTXKsIhHAC-UW018k7Kd0Fp-EGrqYK-NM7y72Hm9V_CyXPDm1aeG-U_edjKVqWT8Uucg37yQA9S	BJaZrDbKrUNIcGOlcbmm_qoQnkLidc_-78-XV55wnJZ7hxZm6jqprcHFmuMsi6aoeaa4bdlyvk0RM__jxYSqh5U	GcD8ROyItGGF-hSSoGLlAQ	2026-11-16 21:02:34.901277
 317	1	https://fcm.googleapis.com/fcm/send/eWuf_-akuwQ:APA91bEp8-hN-1D6j6AcG6Dhbwbk7hD2B6g4CPfPdTeqNo9WAvssIIt5iYO91LUsVdy6cX9DnEAcC_K7mcuicF6HxpLTaR-pZEeR5BByBcTxE5xC5hpMFuE8fI4J38a0V-5n5NC7FNc2	BJfMlb8bXdj_vwf4cGkeKwd0KA8WkreUxOljJwnIlfQMOvCRJrICxXX7tLTC41UDonxATF7x8LXFrhkqEwGo-wk	hTRIDrZEZbCew8OKIcQE0g	2026-11-16 21:02:35.526518
 314	1	https://fcm.googleapis.com/fcm/send/fFnsfD_nbko:APA91bF_l6C77DKbDCkRIF1ge_Mv-CeNGfdgY2pRT78HLYYDAvd7kFO9oZqgZ9yXLLyAGwnsvYfaS5sIBSys9oC5IwNu-SeHQ9VybDrcEIKcWlHZXLOLT2jAzGaVsq-Hfs2q8NM2nFH1	BG_VnX0zSf246lSTqyvM_-YH4cjxelPPhrD2_FRF5ETZqoLc1vTOwjQ_IXItvNcHzvr32jNIb8hYFEIN8N1JX84	76vnV19pjIiJB0K8piAnOQ	2026-11-13 08:36:01.853001
-318	1	https://fcm.googleapis.com/fcm/send/d6b_Yflmb94:APA91bGlDm6o0nINJJD3j5hOHWdd6ds51a1Cr7iMiCNewHJ9XuyG0zjJiewodY5qkURKQnIMi4zz_pw5rxJEa40k1tNpXndPqF1zurbbcTL7N7Jkl4VqNJEcr8zD6Thb1ask6-Xw_7ep	BHJuLYQ1Qu7jUI7eWGm6GCLZyZru5LED0PYjT9QTdf38PSNbNu-5e1y3CBeyixLHoTk_1ZRz9-RmqNv4ihqBTiM	pTN8c8MyDh1etONia2xPEQ	2026-11-16 21:36:22.132018
-319	1	https://fcm.googleapis.com/fcm/send/fBTnVcdFN7c:APA91bE2C-nBjNIdJH6ds-EC9nVTgtNNpSi9KsrZmeI_OunFoA22VR5UfkhD87Zk2QlO4o-nToo461JWfB6wusSfkBMVob8Kvz9V8mCJf1EFDZjAIbBDkkvEQ5bOFk3PWF4a57W_lhYg	BJ2LB68c8qzp_fvgkzDWdgoF1IJrOGqtCmeiZwcA-sgO4tbFHnY06LmKfQW2nQ9zIlcINYwz0yURjHGl9rUlp-0	hGALB3NDNNdcuN0xKuNYWA	2026-11-17 08:57:59.460586
 320	1	https://wns2-bl2p.notify.windows.com/w/?token=BQYAAAAO1Ueuoe%2fPXIw4JrH2oMi2tiRas6CFlCdUuKsICBJcWs1mD01VSh1SFhpDYvuOXWLuXb3prffwYatTGiNCqjUJqxrQYjmM2eolvJrQwJjMRM%2fWxjlP2yqI%2fG7P%2fCAkHXuxk3tnYrJcv3Ou1CLr4%2bvbc6mTd4Cmk%2bixjaG71OOXeXwDR7mZnHwbLkwtdy7EGg3YwMLKv%2fOVXD%2bzPJ7gkpdMx6xQJ3r95XNf961KraCdL%2fbM9Z90NZ2WiAFOcNpRMo5cYQpgO%2fkjX7d0Ov%2bhcJ%2b2655IAN3qvGywyfhad%2fCE8lpP5GrVpPRIFvS8LCKHHjJsTX%2b%2bLC34tC%2f7dBDr%2bnOEHdptYYowmP3LIsfAGr6TNw%3d%3d	BHnpxWOigAdN3kx4WQFZyeUvEvlOmt1celyXeRggA8ZjdQLY-7G_UQ1R-M3O_zFkEsNFqq3ZkK059GveSal8lSs	48vYkkh-rbbpJYJuqis18Q	2026-11-17 09:10:08.540452
+322	1	https://fcm.googleapis.com/fcm/send/c3yLLu7hu2M:APA91bGDYU_FEHw_2-l8OyjMoX_i1M2h8Xx8pCnqc3QKqeUsSgzVR-PipCGWRYFWVsnhBYfLOrFrvLDWzXavWxxYgWOeClOwB3MbafJQc5X1sY9FWm0Bj3v9VKTuQPresGbfqpB1SxkZ	BLSIk75IMptwGYphiKH2J1YEAL1MH6YxgkAqudaKzPsJujjSPVMFXMzRUAell5JWbro-3EU2VUVVgc_ylvWJYuI	xMbng45GpIK9Ch2qFhi_uA	2026-11-18 22:26:08.176018
+323	1	https://fcm.googleapis.com/fcm/send/f1SwNAIjwBQ:APA91bHVmDGnjjZu0mkAAwNytL-g0qbzQ1ARwSg8JChdj_47YBXaXJPGMnQnaJuauEp-I-4mqwYACaVhCHRBRI5FegED8aBMGWDJZlPxiRKNQSlzgnNTFZ0OTpw7Z7Dvoydcu6eZa-BS	BCiHlmscjkeuTE4oWws2Uv-OFKP5eDFbzWBMN_CT_eNlp7oEtDTrhNNoXMKjqW9twoCWhzIpbjhTWPpjbC9duS4	Rjn3aED7zUbFMKq-sNtlGg	2026-11-18 22:26:08.683046
+324	1	https://fcm.googleapis.com/fcm/send/fhxRgS67aD8:APA91bHQB_THomjzJhCfIT1b2C-nUoN9RUgywdvpUWutSOCX91VWIQ0Hqu1Qwp3qAKLy45HyKLq9wxcg2sy53L28HIEZ9Jd9Ohy5LuD-WUgB2eHvj8R1M-2QVb1UuCtp98g8PhmHticv	BMZLpXX4wckSMqaxT5FXcuk7xMi-UOlJKk0l2rl_E_CrSBYRDKR5hvXyHI3KnufvxHppkDO3kw1ojonCGXr0opM	hMgBSSYI-W0CFrcnviKVxg	2026-11-18 22:26:08.827902
+325	1	https://fcm.googleapis.com/fcm/send/fejP-Cjdfpo:APA91bGqj37VbDH7nFjaVkMbmblBNZctHH6p8uBJBcSzsf3b_4gtl0hNwIuDPfKG6vXEGzgoyTz_GPCwBBzCLI93B8tSF2QzJp6ov2z7dbROXcsjFn4Lp__gcqsLxJUZuLoXKDndv2Kg	BNLAonFg_Ubmpw569v1McbbKBP1kAxMqJmadP58nN7CovplMQ8RFV663ADlE5Wmqe-eHov1idgBAPMIMW4CuvjM	E14d3Nrl_ifjAohAIzi6Kw	2026-11-18 22:26:08.920635
 \.
 
 
@@ -8010,11 +8177,12 @@ COPY public.push_subscriptions (id, user_id, endpoint, p256dh, auth, created_at)
 
 COPY public.rescue_requests (id, description, location_description, latitude, longitude, status, status_updated_by, created_at, updated_at, requester_name, requester_contact, proof_images, accuracy, is_manual_pin, location_source) FROM stdin;
 10	DASDSDAS	\N	10.39083876877924	124.98055405257652	resolved	1	2026-11-16 10:38:24.219215	2026-11-16 14:04:19.657896	JESTER LETRERO GESULGA	1211121121212DADS	["/static/uploads/rescue/JESTER_LETRERO_GESULGA/c42be14a315948f6a1341593aebec295.png"]	\N	f	gps
+11	Emergency: No roads available to reach Sogod Central School. All routes are blocked. Requesting immediate rescue assistance.	Stuck en route to Sogod Central School (GPS: 10.39236, 124.98142)	10.392361214773082	124.98142096075668	acknowledged	1	2026-11-16 13:12:38.457583	2026-11-18 12:07:48.691268	JESTER LETRERO GESULGA	Not provided	\N	\N	f	gps
 7	dfgfdfgd	hghjgh	\N	\N	resolved	1	2026-11-09 16:11:41.484783	2026-11-09 16:18:23.560921	JESTER LETRERO GESULGA	9120486893	["/static/uploads/rescue/JESTER_LETRERO_GESULGA/ce58fb1103d142978585b1121ce35aae.png"]	\N	f	gps
 6	sdadadada	\N	10.397405086217091	124.98564275256507	responding	1	2026-11-09 14:59:31.532045	2026-11-10 20:49:09.692913	JESTER LETRERO GESULGA	09120486893	["/static/uploads/rescue/JESTER_LETRERO_GESULGA/533da4c7eafc47a6a4a679c30b49de54.png"]	\N	f	gps
 9	BAHO TABANG	\N	10.39083876877924	124.98055405257652	resolved	1	2026-11-16 10:37:49.465123	2026-11-16 10:53:16.375727	JESTER LETRERO GESULGA	09691339602	["/static/uploads/rescue/JESTER_LETRERO_GESULGA/ba9a150afab945eda1dca5a8dd4daf09.png"]	\N	f	gps
 8	Emergency: No roads available to reach Sogod Central School. All routes are blocked. Requesting immediate rescue assistance.	Stuck en route to Sogod Central School (GPS: 10.33809, 124.95695)	10.3380935	124.95694866666666	resolved	1	2026-11-11 03:11:04.264733	2026-11-16 11:40:54.432491	JESTER LETRERO GESULGA	Not provided	\N	\N	f	gps
-11	Emergency: No roads available to reach Sogod Central School. All routes are blocked. Requesting immediate rescue assistance.	Stuck en route to Sogod Central School (GPS: 10.39236, 124.98142)	10.392361214773082	124.98142096075668	pending	\N	2026-11-16 13:12:38.457583	2026-11-16 13:12:38.457583	JESTER LETRERO GESULGA	Not provided	\N	\N	f	gps
+12	tabang	ahdsjahdjas	10.391046657501164	124.97996858901658	acknowledged	1	2026-11-18 15:47:05.34101	2026-11-18 15:48:08.377313	JESTER LETRERO GESULGA	09120486893	["/static/uploads/rescue/JESTER_LETRERO_GESULGA/e28b4f55708d42da9642d2be5d5d0beb.png"]	132	f	approximate
 \.
 
 
@@ -8023,7 +8191,8 @@ COPY public.rescue_requests (id, description, location_description, latitude, lo
 --
 
 COPY public.resident_accounts (id, resident_id, email, password_hash, is_active, created_at, updated_at, last_login_at) FROM stdin;
-1	1560	gesulga63@gmail.com	scrypt:32768:8:1$nXL1nXLZTNuGM7cp$fc57c6ab712af95b7247692d4b341e208a69e64d3618bd1ff4fd9a56a600beb3a83900cda4f3af08a5e7eda6eb32255a6697bbbe34a485909a05ae7ba7ca6139	t	2026-11-09 14:35:43.086178	2026-11-17 09:16:09.610961	2026-11-17 09:16:09.602746
+2	466	junnelceniza09511@gmail.com	scrypt:32768:8:1$UW5gvZtf0ADHP9kF$2de968664539992011130460eea21e0233a2c8a5b5c79f7c42d0696e35c44ccc3730a5891b199c40ab694cf17da8dcf2a6501bc4ca9bb04cdd2914fdcb3b098b	t	2026-11-17 12:57:39.783292	2026-11-17 13:00:31.242506	2026-11-17 13:00:31.242506
+1	1560	gesulga63@gmail.com	scrypt:32768:8:1$nXL1nXLZTNuGM7cp$fc57c6ab712af95b7247692d4b341e208a69e64d3618bd1ff4fd9a56a600beb3a83900cda4f3af08a5e7eda6eb32255a6697bbbe34a485909a05ae7ba7ca6139	t	2026-11-09 14:35:43.086178	2026-11-19 13:37:59.76322	2026-11-19 13:37:59.758518
 \.
 
 
@@ -8034,6 +8203,7 @@ COPY public.resident_accounts (id, resident_id, email, password_hash, is_active,
 COPY public.resident_registration_requests (id, first_name, middle_name, last_name, birthdate, barangay, address, contact_number, email, password_hash, status, matched_resident_id, reviewed_by, reviewed_at, rejection_reason, created_at) FROM stdin;
 7	JESTER	LETRERO	GESULGA	2000-02-01	San Jose	San Jose	09120486893	gesulga63@gmail.com	scrypt:32768:8:1$nXL1nXLZTNuGM7cp$fc57c6ab712af95b7247692d4b341e208a69e64d3618bd1ff4fd9a56a600beb3a83900cda4f3af08a5e7eda6eb32255a6697bbbe34a485909a05ae7ba7ca6139	approved	1560	1	2026-11-09 14:35:43.095819	\N	2026-11-09 14:35:43.096826
 8	Junnel	Paulo	Ceniza	2026-11-16	Zone I	Dagohoy Street	09691339602	junnel@pornhub.com	scrypt:32768:8:1$yF7pI0tHJuzaOjzd$ba36ed8f6d0f8cc6c817bb838651af01996a64e9b314c1de1504294ef23ab90b634d31244f3e4d9de90a2ce286bc91e8bfc263c26ee10c9f74441cc2abec1748	rejected	\N	1	2026-11-16 11:48:00.108996	\N	2026-11-16 10:29:47.532894
+9	Ako	Ako	Ako	2026-11-17	Zone I	Oh purok	09111111111	junnelceniza09511@gmail.com	scrypt:32768:8:1$UW5gvZtf0ADHP9kF$2de968664539992011130460eea21e0233a2c8a5b5c79f7c42d0696e35c44ccc3730a5891b199c40ab694cf17da8dcf2a6501bc4ca9bb04cdd2914fdcb3b098b	approved	466	1	2026-11-17 12:57:39.780309	\N	2026-11-17 12:56:53.045624
 \.
 
 
@@ -8287,6 +8457,8 @@ COPY public.residents (id, created_at, family_id, first_name, middle_name, last_
 444	2026-10-16 18:07:39.09273	137	Danica	Dacoro	Abella	\N	2000-09-06	Female	\N	Child	f	f	\N	\N	f	f	f	f	\N	\N
 446	2026-10-16 18:07:39.222743	139	Ernesto	Dacoro	Del Rosario	\N	1982-09-01	Male	\N	Household Head	t	f	\N	\N	f	f	f	f	\N	\N
 447	2026-10-16 18:07:39.232122	139	Thelma	Acebedo	Del Rosario	\N	1998-12-09	Female	\N	Spouse	f	f	\N	\N	t	f	f	t	Prenatal check-ups ongoing	\N
+1619	2026-11-18 15:24:21.464176	533	John	LETRERO	GESULGA	\N	2000-02-01	Male	\N	Household Head	t	f	\N	\N	f	f	f	f	\N	\N
+1620	2026-11-18 15:24:21.464176	533	Felix	\N	Pahamotang	\N	2006-06-07	Male	\N	Son	f	t	Visual	\N	f	f	f	f	\N	\N
 448	2026-10-16 18:07:39.240631	139	Mae	Acebedo	Del Rosario	\N	2005-12-12	Female	\N	Child	f	t	Visual	Low vision; needs a guide	f	f	f	t	\N	\N
 449	2026-10-16 18:07:39.249857	139	Rico	Acebedo	Del Rosario	\N	2006-11-19	Male	\N	Child	f	f	\N	\N	f	f	f	f	\N	\N
 450	2026-10-16 18:07:39.259244	139	Darwin	Acebedo	Del Rosario	\N	2024-04-05	Male	\N	Child	f	f	\N	\N	f	f	f	f	\N	\N
@@ -8302,6 +8474,8 @@ COPY public.residents (id, created_at, family_id, first_name, middle_name, last_
 466	2026-10-16 18:07:39.772476	145	Florencio	Gaviola	Calipayan	\N	1959-05-06	Male	\N	Household Head	t	f	\N	\N	f	f	f	f	Hypertension - maintenance meds	\N
 467	2026-10-16 18:07:39.783535	146	Mario	Aragon	Cadiz	\N	1978-02-26	Male	09567625318	Household Head	t	f	\N	\N	f	f	f	f	\N	\N
 468	2026-10-16 18:07:39.792463	146	Remedios	Valdez	Cadiz	\N	1977-05-16	Female	\N	Spouse	f	f	\N	\N	f	f	f	f	\N	\N
+1621	2026-11-18 15:41:28.380832	534	Haa	LETRERO	GESULGA	\N	1997-02-13	Female	\N	Household Head	t	f	\N	\N	f	f	f	f	\N	\N
+1622	2026-11-18 15:41:28.380832	534	Jae	LETRERO	GESULGA	\N	2021-02-19	Male	\N	Child	f	f	\N	\N	f	f	f	f	\N	\N
 469	2026-10-16 18:07:39.801694	146	Aldrin	Valdez	Cadiz	Jr.	2012-05-09	Male	\N	Child	f	f	\N	\N	f	f	f	f	\N	\N
 470	2026-10-16 18:07:39.809879	146	Yna	Valdez	Cadiz	\N	2018-03-08	Female	\N	Child	f	f	\N	\N	f	f	f	f	\N	\N
 471	2026-10-16 18:07:39.899072	147	Fernando	Tabada	Canillas	\N	1994-08-24	Male	\N	Household Head	t	f	\N	\N	f	f	f	f	\N	\N
@@ -8316,6 +8490,7 @@ COPY public.residents (id, created_at, family_id, first_name, middle_name, last_
 486	2026-10-16 18:07:40.305955	151	Marilou	Lapinig	Maniwang	\N	1984-05-04	Female	\N	Household Head	t	f	\N	\N	f	f	f	f	\N	\N
 487	2026-10-16 18:07:40.315564	151	Hazel	Lapinig	Maniwang	\N	2003-03-04	Female	\N	Child	f	f	\N	\N	f	f	f	f	\N	\N
 488	2026-10-16 18:07:40.325699	152	Elena	De Asis	Tumulak	\N	1981-10-30	Female	\N	Household Head	t	f	\N	\N	f	f	t	f	\N	\N
+1623	2026-11-18 20:32:23.018711	535	Zack	\N	Madik	\N	2003-02-18	Male	\N	Household Head	t	f	\N	\N	f	f	t	f	\N	\N
 489	2026-10-16 18:07:40.3346	152	Hannah	De Asis	Tumulak	\N	2022-03-31	Female	\N	Child	f	f	\N	\N	f	f	f	f	\N	\N
 490	2026-10-16 18:07:40.345458	152	Princess	De Asis	Tumulak	\N	2014-01-07	Female	\N	Child	f	f	\N	\N	f	f	f	f	\N	\N
 491	2026-10-16 18:07:40.42924	153	Lorenzo	Cabrera	Bacalso	\N	1982-02-24	Male	\N	Household Head	t	f	\N	\N	f	f	f	f	\N	\N
@@ -9108,13 +9283,20 @@ COPY public.residents (id, created_at, family_id, first_name, middle_name, last_
 --
 
 COPY public.road_segments (id, road_name, road_type, base_weight, is_closed, hazard_zone_id, geom, closed_by_report_id) FROM stdin;
-921	Unnamed residential	residential	1	f	\N	0102000020E6100000020000008AAC3594DA3E5F40D951E630A9C7244097A542E1D83E5F40236D3E09C7C72440	\N
+885	Concepcion Street	tertiary	1	f	\N	0102000020E610000003000000CED5A079CA3E5F40850838842AC5244057772CB6C93E5F4008C4904193C52440106CA68CC93E5F403E3DB665C0C52440	\N
+971	Flores Street	tertiary	1	f	\N	0102000020E61000000B000000E6DA615DA63E5F40F2608BDD3EC72440D61FBCD1A23E5F408DF6D3DA8FC724401EBBB0DAA13E5F402C257090B5C7244048C73082A13E5F40CEBE9767CAC72440DD2AE33AA13E5F40E1270EA0DFC72440961F5D11A13E5F40146C6D2B07C824409C830C89A03E5F40CCF67C282CC82440A3BC45169F3E5F4067182DF64DC82440C811C6AA9C3E5F408D857C2B6DC82440BE721827993E5F401C9D4E0D8FC8244094522BA7983E5F40CCD3B9A294C82440	\N
+1263	Unnamed residential	residential	1	f	\N	0102000020E610000002000000E6DA615DA63E5F40F2608BDD3EC72440813A8A189B3E5F408A5B60EA42C72440	\N
+1309	Unnamed residential	residential	1	f	\N	0102000020E610000007000000BDC5C37B8E3E5F408510EBE813C82440DF7BC910913E5F402AAFF089D0C724408BB9B596933E5F400126BA7889C72440C00EF7EC943E5F405DBF60376CC72440952DED2F963E5F408BC0FD254EC72440242A5437973E5F408DB800344AC72440813A8A189B3E5F408A5B60EA42C72440	\N
 922	Unnamed residential	residential	1	f	\N	0102000020E61000000600000097A542E1D83E5F40236D3E09C7C72440C79FA86CD83E5F40BA6F1008CFC72440B6F5D37FD63E5F404477FF0EFBC724403F7DBA70D63E5F404C91D7DE02C82440AA61BF27D63E5F40AAD0E57228C8244069FC6772D63E5F40C84E2E7C33C82440	\N
+921	Unnamed residential	residential	1	f	\N	0102000020E6100000020000008AAC3594DA3E5F40D951E630A9C7244097A542E1D83E5F40236D3E09C7C72440	\N
+886	Concepcion Street	tertiary	1	f	\N	0102000020E610000002000000106CA68CC93E5F403E3DB665C0C52440ABA63517C93E5F409968EB3B1AC62440	\N
+958	Concepcion Street	residential	1	f	\N	0102000020E610000003000000534DFF48C73E5F4019C2D6112CC724407C9E9A26C73E5F40065D67E844C724405FF30CA4C63E5F40BDDB98B2A3C72440	\N
+1190	Veloso Street	residential	1	f	\N	0102000020E6100000030000005A7B44F1CF3E5F40B037312427C7244062307F85CC3E5F40742DB53929C72440534DFF48C73E5F4019C2D6112CC72440	\N
+1191	Veloso Street	residential	1	f	\N	0102000020E610000003000000534DFF48C73E5F4019C2D6112CC72440BBE8D08EC03E5F40FAD005F52DC72440A41CCC26C03E5F40E8C138132EC72440	\N
 968	Unnamed residential	residential	1	f	\N	0102000020E61000000200000024B55032B93E5F40B661B94A1CC62440E80C3103BA3E5F40519C48D51BC62440	\N
 969	Unnamed service	service	1	f	\N	0102000020E610000003000000AC70CB47D23E5F4045CA60D6D5C62440C799CBB2CC3E5F406E855561D8C6244070630EDDC73E5F40D2020F67D9C62440	\N
 972	Flores Street	tertiary	1	f	\N	0102000020E61000000500000094522BA7983E5F40CCD3B9A294C82440D86D066E933E5F40B3EBDE8AC4C8244070E6FCB98D3E5F40EF91CD55F3C8244006F4C29D8B3E5F40A652A2DB01C924403873FEDC863E5F40D20C987620C92440	\N
 604	T. Dagohoy Street	residential	1	f	\N	0102000020E6100000020000004FB5711F943E5F4081BBA24A83C52440CCBF4CCA933E5F408B620333F0C52440	\N
-923	Unnamed residential	residential	1	f	\N	0102000020E61000000300000069FC6772D63E5F40C84E2E7C33C82440BC708C09D63E5F404BDEA5796CC82440AAEE91CDD53E5F40E45AFE8D87C82440	\N
 924	Unnamed residential	residential	1	f	\N	0102000020E610000002000000AAEE91CDD53E5F40E45AFE8D87C82440DA722EC5D53E5F409F28BFFB99C82440	\N
 925	Unnamed residential	residential	1	f	\N	0102000020E610000006000000DA722EC5D53E5F409F28BFFB99C82440C8354FBFD53E5F406AF06371A4C824408D90CBC9D53E5F409B0DE83BAEC8244033A48AE2D53E5F40B5824B6CE3C82440FE1D9B2ED53E5F40CD0AA07312C924403582E8A4D23E5F40855FEAE74DC92440	\N
 926	Unnamed residential	residential	1	f	\N	0102000020E6100000020000003582E8A4D23E5F40855FEAE74DC92440E801E264D13E5F40476F5DD669C92440	\N
@@ -9132,9 +9314,9 @@ COPY public.road_segments (id, road_name, road_type, base_weight, is_closed, haz
 938	Unnamed residential	residential	1	f	\N	0102000020E610000002000000290417D0303E5F40D4F8E01005C2244011D951E6303E5F409FEB562A03C22440	\N
 939	Unnamed residential	residential	1	f	\N	0102000020E610000003000000C0A1A64C203E5F40E3FDB8FDF2C124403C1977DE213E5F40844B2256DAC1244083C2A04C233E5F4031838CDBC3C12440	\N
 940	Unnamed residential	residential	1	f	\N	0102000020E610000003000000E2146756003E5F40BA32A83638C12440683F5244063E5F40D02280400CC12440736E6EA7083E5F4058642AB3F7C02440	\N
-941	Maasin ??? Macrohon ??? Sogod Road	primary	1	f	\N	0102000020E610000003000000E8C1DD593B3E5F401E6915A2E8C22440BCEE08023F3E5F40EEF8E582E9C2244040DF71E5473E5F400DDFC2BAF1C22440	\N
-942	Maasin ??? Macrohon ??? Sogod Road	primary	1	f	\N	0102000020E61000000200000040DF71E5473E5F400DDFC2BAF1C2244002B27C024D3E5F4094821376F6C22440	\N
-943	Maasin ??? Macrohon ??? Sogod Road	primary	1	f	\N	0102000020E61000000300000002B27C024D3E5F4094821376F6C22440979CC9ED4D3E5F40BD152E50F7C2244082C06FE8523E5F40856055BDFCC22440	\N
+941	Maasin ΓÇô Macrohon ΓÇô Sogod Road	primary	1	f	\N	0102000020E610000003000000E8C1DD593B3E5F401E6915A2E8C22440BCEE08023F3E5F40EEF8E582E9C2244040DF71E5473E5F400DDFC2BAF1C22440	\N
+942	Maasin ΓÇô Macrohon ΓÇô Sogod Road	primary	1	f	\N	0102000020E61000000200000040DF71E5473E5F400DDFC2BAF1C2244002B27C024D3E5F4094821376F6C22440	\N
+943	Maasin ΓÇô Macrohon ΓÇô Sogod Road	primary	1	f	\N	0102000020E61000000300000002B27C024D3E5F4094821376F6C22440979CC9ED4D3E5F40BD152E50F7C2244082C06FE8523E5F40856055BDFCC22440	\N
 944	Unnamed path	path	1	f	\N	0102000020E610000004000000CC9FCAC4083F5F4097097547B5CA244019822DC0083F5F40D3D62DA7A9CA2440ACB992D30D3F5F4072B90BDEA1CA244056A98F76123F5F405645B8C9A8CA2440	\N
 945	Unnamed path	path	1	f	\N	0102000020E61000000200000056A98F76123F5F405645B8C9A8CA24407EF156A7143F5F405152BBBABECA2440	\N
 946	Unnamed unclassified	unclassified	1	f	\N	0102000020E610000027000000398485EEED3E5F40C05F27501FD024402203D42FEC3E5F4026EFD23C36D024405EF3AACEEA3E5F40F58D9E115BD0244000AF2A56E83E5F4087AF65E88ED024400D7A257FE63E5F400428FC08B2D02440B5DE6FB4E33E5F40B84082E2C7D02440861854C0E23E5F40D4C6C7DDD6D024408D542987E03E5F40CB564DC6E7D0244023BE13B3DE3E5F409306126FF8D02440A7BC0CB5DC3E5F40AD4C9DEC0BD124404E1B1F77DB3E5F4053CBD6FA22D12440318F464FDB3E5F40246D99C239D124400DB6C7C1DB3E5F40EEC1B52451D12440AD1D20F3DC3E5F40212EEF607AD124402AB2310ADD3E5F402AEA27F796D124408F352383DC3E5F403A13E4B1B0D12440A21FB2EDD93E5F40D758784DFED124406DDB4136DA3E5F40BD21E8C30ED22440961238C8DA3E5F40515491651CD2244001F1040CDC3E5F40E988320A38D22440A76384A6DB3E5F4039190BF956D224400122B369DB3E5F400BD0B69A75D22440A26131EADA3E5F40B900344A97D2244044030C26D93E5F401166248CB0D2244016BF29ACD43E5F4078279F1EDBD22440C9529044D43E5F409CAAD61DE6D224400540CBA9D33E5F409ACFB9DBF5D224404D0F0A4AD13E5F40530A157717D32440FC613A63CE3E5F4061808EA042D3244027913303CB3E5F40DEB06D5166D32440C3EB9F4CC83E5F40266431FB86D32440CFC76B14C83E5F4082E1010A9AD324403B504C83C73E5F40F88A6EBDA6D32440C44DFC07C73E5F40BD4D243DB1D32440D040D1E1C63E5F408C6A6C0ABFD324404A33CCBFCC3E5F40742909E46DD42440CD6D0C4BCD3E5F401B2AC6F99BD42440F7EF5586CC3E5F40A3A94313CDD424403A36A737C83E5F40326B73AD07D52440	\N
@@ -9155,7 +9337,12 @@ COPY public.road_segments (id, road_name, road_type, base_weight, is_closed, haz
 964	Bagares Street	residential	1	f	\N	0102000020E6100000020000005B54D515FD3E5F40CC6C46BC2BC52440E12B15AF0D3F5F40AFF1F4A512C52440	\N
 965	Bagares Street	residential	1	f	\N	0102000020E610000002000000E12B15AF0D3F5F40AFF1F4A512C52440EC408CC6103F5F401717FD570CC52440	\N
 967	Unnamed residential	residential	1	f	\N	0102000020E610000003000000F2E1A30FA73E5F4077CFCB7223C6244017B02EB8B03E5F400EFD6E151FC6244024B55032B93E5F40B661B94A1CC62440	\N
-1455	Zamora Street	residential	1	f	\N	0102000020E6100000020000003BD7416FBB3E5F402A5F86B5E7C42440DC44D213BB3E5F4011BC6B1A25C52440	\N
+966	Unnamed residential	residential	1	f	\N	0102000020E610000003000000A4F6C7209C3E5F406C921FF12BC624407E50BC6FA13E5F4093F0733227C62440F2E1A30FA73E5F4077CFCB7223C62440	\N
+955	Concepcion Street	residential	1	f	\N	0102000020E610000002000000C3D4963AC83E5F40BD022C4DA5C624401D7CBCEBC73E5F40A7125443D1C62440	\N
+1455	Zamora Street	residential	1	t	\N	0102000020E6100000020000003BD7416FBB3E5F402A5F86B5E7C42440DC44D213BB3E5F4011BC6B1A25C52440	32
+923	Unnamed residential	residential	1	f	\N	0102000020E61000000300000069FC6772D63E5F40C84E2E7C33C82440BC708C09D63E5F404BDEA5796CC82440AAEE91CDD53E5F40E45AFE8D87C82440	\N
+1380	Unnamed tertiary	tertiary	1	f	\N	0102000020E61000000A01000047A9296E813A5F400CD4186316F42440B1283630833A5F40D23F1C7FFDF32440289EB305843A5F4089F1F510E8F3244004C53478843A5F404D2036A2C5F32440B686AD34843A5F4094C8F43A98F32440043BFE0B843A5F405D2FF2576DF32440AA4885B1853A5F40E1F31EC253F32440B6245179853A5F4031A0CD6042F324402876D954823A5F405829F34531F32440FAF774D0803A5F40FDBD141E34F324400D9A4CCB7E3A5F4079944A7842F3244043FE99417C3A5F40235635F746F3244050E09D7C7A3A5F408D9B1A683EF3244016197849773A5F4088C4F30824F324409A9E0B7E763A5F401586127706F32440E0E5D830793A5F40C80D1A55E1F22440F1EE6D9F7A3A5F40A2630795B8F224400817974F7B3A5F408BB3D8DC87F22440F660527C7C3A5F400C433FAE68F224404EFC07477F3A5F40DF03CF1841F224408FEB95687F3A5F4008324CB736F22440D1C6B6B17E3A5F40A564DE4F32F224402056C9117C3A5F40D324C2D034F224405686CCF07A3A5F40C073942820F224400FC3FD367A3A5F4015AEA29AEDF124404477FF0E7B3A5F40719AF4ADC5F12440D936D60F7B3A5F40DF9513A39DF12440C198E3CB7A3A5F404B7C49BE6DF124406E13EE95793A5F400542FC0D24F12440EB5CAC037B3A5F4027C929F004F124403D974E907D3A5F40EC342D0CECF02440A0504F1F813A5F409E5F94A0BFF02440E7A0F07E813A5F40B8E9CF7EA4F024408E869D73813A5F405602733E86F024407689EAAD813A5F4026AB22DC64F024407DC5BF747F3A5F40A5A31CCC26F02440F0E8352C7C3A5F401A0CBFE5FBEF24401DC5DE30763A5F40D9470268EFEF2440F65D11FC6F3A5F405FA39BB3F4EF2440EECAD35E693A5F40C9224DBC03F02440AA36EE83623A5F406D2700B507F02440328111EA583A5F403F4A3668F9EF244058AEB7CD543A5F40D0F0660DDEEF244084CCDFCE4F3A5F40E4F32FEEABEF24404A05BA9B4C3A5F404EC9833EA2EF2440B0EDA3094A3A5F40C8D2872EA8EF2440A08B868C473A5F4024456458C5EF24400523E5DD473A5F404EA2B9A9DCEF2440B7F52E39493A5F403F92EDD7F8EF2440E6BEE666493A5F40AF3374A213F02440F3CEFCC5473A5F405F1734E323F02440A1078893453A5F4010B633A726F0244044C93F8E413A5F40A8565F5D15F02440CA07F30D3B3A5F4089905FE40AF02440A9FE9CDD353A5F404D4C1762F5EF24408F311C742E3A5F40D0C59569EAEF24405D3C725A263A5F408F49905BDDEF244015DA835A1D3A5F40D955ED3FD7EF2440A4ED4E2D113A5F40E3D7593EDCEF2440366156830B3A5F408AAC3594DAEF24401513E51C063A5F40C7B6B17ED8EF2440E7CE02A3013A5F40A99D06B1D8EF244048C9062DFF395F40886C7B16DFEF2440854CE8E4FB395F40B96C1915DDEF2440B2E375B3F5395F401660692AD5EF24406214048FEF395F4049DA8D3EE6EF244075B977C3EC395F4045EA8722EEEF244076AB425EEA395F409415C3D501F02440A80D3D18E7395F4080E3214212F0244026C86361E3395F408505F7031EF024403BE9D89CDE395F40ADAEF9A70AF024400DB6C7C1DB395F403F2D509CEDEF244015151681D6395F40A87D29F2DAEF244088669E5CD3395F404CEE66FCB1EF244041BAD8B4D2395F407418DD8B79EF244012F4BCC0D1395F409F91088D60EF2440309DD66DD0395F4050F63BB94BEF24403763E2A0CE395F4007CCE8EC09EF2440D2414DE3CD395F40DEE11BAFE5EE24409C700A86CE395F408B9AF91FAAEE244056C7E017CD395F40254113BC7CEE244092E86514CB395F40EC67565B56EE2440D9075916CC395F401994C4ED2BEE24401975ADBDCF395F406E217EB4EEED24408EF85FF8D2395F406A7528F9C7ED2440BD8DCD8ED4395F403341C351A8ED2440FEA7D19AD5395F404C8E3BA583ED2440394D5590D5395F4042507F0750ED2440E58DDD4FD7395F40E6DDA2DD32ED2440FD70EBC9D7395F404DFCAC8D0CED2440C8D68E3DD6395F40E0D0A5C9D6EC2440806C4892D6395F40E6E37F97BEEC2440AD3A6178DB395F403C139A2496EC244024963902DD395F40C694FE147DEC24409BE3DC26DC395F40EE3D01B969EC2440906C0954DA395F402A7E422C51EC24401BD5E940D6395F405650076811EC244012F4BCC0D1395F40993E856DD5EB2440EA245B5DCE395F4054CE7234A2EB244056C7E017CD395F40E0F42EDE8FEB24404C8A8F4FC8395F402145532C6DEB2440F553D279C3395F40934D5E0949EB2440EC8C4A45BE395F40A17609980AEB24408E76DCF0BB395F40B5311B09D9EA2440774EB340BB395F40C4978922A4EA244064F72EEFBB395F401684F23E8EEA24403A419B1CBE395F40E1D4079277EA24402B84D558C2395F40D8D30E7F4DEA24402A4A534EC5395F4007F5882C2DEA2440B8FB66ACC7395F40C1BE428B11EA2440C2E567D9C9395F40320C0EE5FAE924400370FD05CC395F400A99D0C9F7E924406C00DB66CF395F40556F682508EA2440C4F41840D3395F403229F4B006EA2440CEAACFD5D6395F40DFC5FB71FBE92440DE510889D9395F408AEF7A1FFDE92440D9FFA5B1E2395F40D5438F73F6E9244019B2158FE6395F4082E09634EBE9244058EEBBD8EA395F402AC35D62D1E92440045ABA82ED395F40BE9E54A0BBE92440DFC5562BEE395F405ADCDA1DADE9244092E3F32FEE395F401A0D2ABBAAE9244080BD1D3CEE395F40B817E2A2A4E924409287CFE7ED395F4028AA6D799BE92440529E7939EC395F40C8844EBE8FE9244041B22550E9395F40AAE91FE978E9244071AF2715E8395F405CDEC1F462E9244009FA0B3DE2395F402918DF6124E9244004FEF0F3DF395F40E12E562F1AE92440D2CEC4CFDA395F40304B96EE09E9244026EDFC91D8395F402909E46D00E924406CFD3E2DD0395F40C9DCC6B0D4E82440CF4E0647C9395F40333E82D19BE82440943F29A4C6395F407CE24A8798E82440381B86EAC1395F405BB1BFEC9EE82440DB69108BBD395F408F39CFD897E824404E06EC0FB9395F400DA661F888E8244037CDF1C0B6395F40B29B19FD68E82440A57BE761B2395F4004F0051CF8E72440D07CCEDDAE395F4075FFFDCE9BE7244042DC8B1EAE395F405C21078085E72440D07CCEDDAE395F4048C08D3974E72440E16E5A3AB0395F408A22A46E67E72440A1BF2BDDB8395F400ED8D5E429E7244012BAF028BA395F409F9BEC551AE7244071C22918BA395F40F694415A08E724400835E8F0B5395F40889FFF1EBCE62440D39A8B64B4395F40A087DA368CE624401B649291B3395F40A2CE818A4FE62440868DB27EB3395F40F6F69D1507E624402D2E443DB3395F402CCD5257E3E524405E45EB4DB1395F400BD28C45D3E52440CA04B28DAE395F405E8830D9D3E52440485AE0E1AC395F401669E21DE0E52440AEC6C848AC395F4086ED821CEFE52440E8C13813AE395F40441FE2D528E62440485744A8AD395F4001028C1D43E6244008CDAE7BAB395F40A8380EBC5AE62440B0BECB56A8395F40474AC4A574E624407B832F4CA6395F40CDCD37A27BE62440418EF7F4A2395F40E601D13879E62440244D7276A1395F40421DFBFE72E6244037A4F6C7A0395F4098F6724463E624403D7E6FD39F395F40AC53E57B46E624409803F3469C395F40A281B3EFE5E524401D925A2899395F40960E31B9ACE5244071B092EA96395F403849980E42E52440E98A08B595395F40389F3A5629E5244061B0D12893395F40B521B53F06E5244052CAB5B28E395F4088E244AADEE424401424B6BB87395F40414F5EBFBBE4244009ADE2E885395F40E7C990BEA4E424404586B07584395F4008CC43A67CE424404C8E3BA583395F409F07D22060E42440B276251381395F40C2137AFD49E42440E62FE35C79395F40CA46318A2FE424401CA89DAB77395F4067A494C61EE42440ED0F94DB76395F40D0F46D1C0CE42440E794DB5177395F40278925E5EEE32440869AD7C779395F40F4F11A05D2E32440B984E8B57E395F4090CA0347B8E3244058E36C3A82395F400305DEC9A7E32440D4B3C5DA84395F404B123A9E85E324407A0CA02985395F40EA4ABA1C65E32440527C218983395F4019C2D6112CE32440F34B0EE981395F401491065CFCE22440AD60657E7F395F40B3FF4B63C5E2244007955DD57E395F409AF27C618DE2244054D3E4187F395F40972831BE1EE224405A34F8567F395F40840772F508E22440C440D7BE80395F40313FDC7AF2E124401BBCAFCA85395F404D5F741EBAE12440744694F686395F402642D94A9EE124401A9F6E4587395F409CE73EEF7CE1244056EB692C86395F407C0C569C6AE124406AC18BBE82395F4090D959F44EE124402F25DC7580395F402FBC372B47E12440D9EE1EA07B395F40930A197E26E124407E946CD072395F401D7D827AE9E02440EADD697C70395F40D0910145D1E024406482D0306B395F40A5FED53E78E02440033A387D62395F40DCC8867F22E02440455D103661395F40F7FF160912E024408102942B61395F40CB62073AFFDF24404AA1E2EE62395F40E525FF93BFDF2440982721A262395F407332CC6493DF2440E0F027CF61395F40E11EF06547DF244093E34EE960395F40B655FFD604DF244087F0790F61395F409ED89EB4CBDE2440AA1FE57162395F4027A9A7EA79DE2440CEB348C961395F406AB702AF3BDE24407CECD3965F395F4067FCB1FFF0DD24406A81E26C5F395F402E31E076B2DD244064062AE35F395F401FC65A327DDD2440C3537E0860395F406904769032DD24402E7A02BC60395F402AA73D25E7DC24408C344CC862395F40D00B772E8CDC2440E4BB94BA64395F402B9E1FEB4EDC24409EE4582863395F40A65E5C4F19DC244098DF693263395F40B5464E70FBDB24403E35A84764395F40EEB25F77BADB2440083653C664395F408AC10D428ADB2440FCE659A464395F40F487669E5CDB2440200890A163395F40DDF016A309DB2440387870C163395F4072A43330F2DA2440A8E5626765395F40E0826C59BEDA2440D838510166395F40734C71B092DA2440E4BB94BA64395F404A4CAB7C2ADA2440A3A190AE63395F409159075108DA244033373A4261395F401844FF5FD0D924409AACF6555E395F402123FB7B84D92440BFA552A25B395F40F8CF89F326D92440BF3225485B395F408B21EF0B9ED82440B99DC7725C395F40735CD77965D82440C5AA41985B395F40E8DD585018D82440F42B42565C395F4060240F9FCFD72440833FB26F5D395F405BBD7960B6D72440F261516C60395F408688409A56D72440DBAC551660395F404DA088450CD72440CF32E6095F395F40E8C715CDB9D624408417D8BE5B395F40CAC342AD69D62440B4BB517559395F40247EC51A2ED62440BD8DCD8E54395F409AE55718C7D52440002DA74E51395F406E7A06C36FD524404897EDF950395F40853309281ED52440B9DC05EF50395F40FF6ECB91DFD424404763A36252395F40335B689DA7D424406E15C44057395F40C7D1C19F86D424400EEDAD9259395F402E1B9DF353D42440E79F2AF05F395F40969D34C3FCD3244043F2DFCD64395F40115E7127C7D324405245F12A6B395F402C6920F186D324402A06A3ED73395F40E7BE41203CD324402357A0CC75395F4075F6DF9403D324403FD7080E79395F40BDC85FB58DD22440E5A210B779395F40C651B9895AD22440E794DB5177395F402EE23B31EBD12440AD9FA3FA73395F4051BF0B5BB3D1244014ED855D6F395F40346B84D95FD12440B05B5F7F6D395F40ADEB06C02ED12440271C30FE6C395F40B41EBE4C14D1244010F16A146D395F40D04D51E4FFD024401B9C887E6D395F403716B94CF2D024402D32F0926E395F4096B95400E7D024407F58254770395F40F5143944DCD02440C540327873395F404AEEB089CCD02440	\N
+1522	Unnamed residential	residential	1	t	\N	0102000020E610000002000000942243D8BA3E5F407D87ECCDB9C52440106CA68CC93E5F403E3DB665C0C52440	31
 1541	Unnamed service	service	1	f	\N	0102000020E61000000200000003B00111623E5F400EAE6F16E5C424401C0F1192603E5F40532C6D2700C52440	\N
 1557	Unnamed tertiary	tertiary	1	f	\N	0102000020E610000003000000CCBF4CCA933E5F408B620333F0C524404E1C8A4C8A3E5F4013D38558FDC5244088DDD2C5813E5F405A9C31CC09C62440	\N
 973	Unnamed unclassified	unclassified	1	f	\N	0102000020E61000001900000054EBB3B9A0455F4021A2E2491C0B25408AFE7513A1455F408EECA584BB0A2540B5728AE99D455F407CF2B0506B0A2540B5E5B7439E455F40321015F4280A2540B5E5B7439E455F4073147BC3D8092540F4F0AF2FA3455F407F1244824E09254085083884AA455F40EAC9A1EAFC082540F01D90DFB6455F403621AD31E80825408FB05EFBB8455F407288B839950825408FB05EFBB8455F408BE31B65580825404E1DF521B9455F40C8A0C9B4EC0725408121AB5BBD455F40D4A6A091BE0725406E3480B7C0455F4098C3EE3B8607254078465B95C4455F403677F4BF5C072540772CB649C5455F402729554733072540ADB2A5FDC5455F408B485EE7F0062540C41CA963BA455F401AAEC4F29D062540869E831DB5455F40E5A727E263062540729472ADAC455F40FEF38F19030625409D7BB4DDA9455F40A317FF8870052540D38E7637AA455F404DBAD2D798042540DC86ACC9AE455F402D544843D7032540DC137F6FAE455F408977256EBA02254093F6ABA5A5455F40CA6C90494602254080796DDB9C455F401ABF95911F022540	\N
@@ -9164,7 +9351,6 @@ COPY public.road_segments (id, road_name, road_type, base_weight, is_closed, haz
 976	Unnamed residential	residential	1	f	\N	0102000020E610000002000000EC87D86061445F4055890D71070D2540E9899DDF66445F40E199D024B10C2540	\N
 977	Unnamed unclassified	unclassified	1	f	\N	0102000020E61000000B000000317260834F455F404147AB5AD20D2540DA6F928B56455F40B851AE3ABC0D254018EEB7D15B455F40D62B76453A0D2540ED79A3FB5E455F4052B5DD04DF0C2540A089B0E169455F40856BA45B650C25404A2E5ADB6F455F40E88AADFB220C2540BE326FD575455F40C6600F37F10B25409C29BEEB7D455F40F38876BA980B2540B0C0A10186455F40E53AD7416F0B254082F22D628E455F40EBBD4230580B254054EBB3B9A0455F4021A2E2491C0B2540	\N
 978	Unnamed unclassified	unclassified	1	f	\N	0102000020E61000000D00000054EBB3B9A0455F4021A2E2491C0B25401B92A4B5B3455F40E61CE159270B254078B988EFC4455F40BE73DEB53A0B2540FF5481FFD2455F40A5187B8A770B2540A8DF85ADD9455F4021B1DD3D400B254065749BCBE8455F406F21D96D610B25404D0A9865F4455F406A93799A820B25407EBD67C908465F4097CADB114E0B2540F2C17CC30E465F401A417452A90B25406753646314465F403D6B1217DB0B25408455AB6521465F40B80375CAA30B2540CCE5AB892A465F40B80375CAA30B2540ED1C14DE2F465F4025654117C30B2540	\N
-955	Concepcion Street	residential	1	f	\N	0102000020E610000002000000C3D4963AC83E5F40BD022C4DA5C624401D7CBCEBC73E5F40A7125443D1C62440	\N
 979	Unnamed unclassified	unclassified	1	f	\N	0102000020E610000009000000298128F36A445F40AA1BDE62340D2540A5822FF16C445F40B54D96FF350D2540E6E4EA6C6D445F407963F7D3350D2540332372B06D445F40AA6395D2330D2540EB6DD85B6F445F4072BCA717210D2540EA2521EC6F445F400A7AB9991B0D2540207EFE7B70445F407377E79A130D2540B482F0B270445F4052712DA40D0D25406B990CC773445F401F2DCE18E60C2540	\N
 980	Unnamed residential	residential	1	f	\N	0102000020E610000004000000FC0E8F0E59445F40533F6F2A520D2540EE68D25C5D445F40DD5B36DF2D0D2540DBAC551660445F409ACA47F7180D2540EC87D86061445F4055890D71070D2540	\N
 981	Maharlika Highway	trunk	1	f	\N	0102000020E610000003000000795FF0C487405F40515BD9F456D7244020459DB987405F403C0C52955BD7244050B5CCD886405F4088EAF70EC8D72440	\N
@@ -9194,10 +9380,6 @@ COPY public.road_segments (id, road_name, road_type, base_weight, is_closed, haz
 1094	Unnamed residential	residential	1	f	\N	0102000020E610000003000000260D7F97E33D5F40CEF11B70A7B624402772778CE13D5F408EA0E7058EB6244053735E08DE3D5F40D8953BD807B62440	\N
 1095	Unnamed footway	footway	1	f	\N	0102000020E610000002000000D3DA34B6573C5F405FCE119E75CA2440E7CAFB93533C5F40A6D0798D5DCA2440	\N
 1096	Unnamed bridleway	bridleway	1	f	\N	0102000020E610000002000000CCD1E3F7363C5F40FA1A930F8BCE2440A18BE1453A3C5F4082C1DABD81CE2440	\N
-639	Unnamed service	service	1	f	\N	0102000020E610000003000000D20D5E05C23E5F40518B1C7D27C52440C631923DC23E5F40AAB5300BEDC42440E3587270C43E5F40E69FCF36EDC42440	\N
-919	Unnamed residential	residential	1	f	\N	0102000020E6100000040000007B455CA5E03E5F40C162C3899EC624409902E32AE03E5F40A665FF97C6C62440BDDB61B8DF3E5F40562DE92807C72440BD68345EDF3E5F40B3075A8121C72440	\N
-1283	Zamora Street	residential	1	f	\N	0102000020E610000003000000942243D8BA3E5F407D87ECCDB9C52440A146C60FBA3E5F40BF7E880D16C62440E80C3103BA3E5F40519C48D51BC62440	\N
-1296	Unnamed footway	footway	1	f	\N	0102000020E610000006000000BE3BE8C8803B5F4072D7B738CFC924408594449B883B5F4034BC5983F7C924406D6C1BEB873B5F40C480801024CA2440FE1E0604843B5F40A3C38DA559CA24407613211A823B5F4029D082AB97CA2440020C70E67C3B5F40C4F24295F5CA2440	\N
 1097	Unnamed tertiary	tertiary	1	f	\N	0102000020E610000074000000C19206126F3C5F4022D3EB600EB02440923C7C3E6F3C5F40087F750B13B02440F7D3DA8F6F3C5F40AD1397E315B02440DF1B4300703C5F40ACF3B92418B02440B3BB9B02743C5F4060E4654D2CB0244057618E79783C5F409938A8B349B02440D3799E897A3C5F40EF40F8AB5BB02440F047F6AD7B3C5F40996780666BB02440AEF36F977D3C5F4063E4767984B02440D0EE9062803C5F40851C00169EB02440C7A01342873C5F406777ED77CDB02440DAAA24B28F3C5F40714518F5FFB02440EB820BC3913C5F40C74D68ED11B124403E95D39E923C5F40ABB9371A1BB12440731BC352933C5F4021D335EE28B12440BA6B64B2933C5F405B02959636B12440B47D7ECE933C5F4067E1A1DE42B1244049264CBD933C5F4060692AD54FB12440E42F2DEA933C5F4042B51C435BB12440F6DF394A943C5F40CD6559E663B1244001FE840E953C5F40AB14F18C6CB12440A14ED42D963C5F40830651AD74B1244006FA9F57973C5F40667220DA7DB12440407CAA549A3C5F40A6A3778599B12440159568249D3C5F4068A8F68EBFB12440973F3AD09E3C5F402290A6D5EBB1244002F0F4EF9F3C5F4018C7928323B224402461DF4EA23C5F40173147EA98B22440E371512DA23C5F407F901B34AAB2244030CA7DBCA13C5F40924C3DC1B4B22440B4F3ECA8A03C5F40DB55A3B2BCB224403D0B42799F3C5F40C0E14F9EC3B224408CAEC1B19D3C5F402D99BE32CAB22440E6BADF579B3C5F40284124E8D4B22440D6FC9D92983C5F40A794D74AE8B224407D2D9E30973C5F402B68FFA8F2B22440AEB7729B953C5F40BCF55091F9B22440F07E260C943C5F40EA25C632FDB2244086FF194A923C5F40EA25C632FDB2244075273339903C5F409FFC8282F7B22440EDD9CE528D3C5F40E83BAEFCE8B22440E81CF2857F3C5F400F3455E69CB22440FBBEC9807D3C5F40BAB07FE893B2244085D61E517C3C5F402DE8627891B22440C79DD2C17A3C5F40F1FDC34C91B2244098929B97793C5F406D6F5C6B94B22440E6A8482A783C5F400A97FA1E9AB224405234C5D2763C5F4089EAAD81ADB224409A5C8C81753C5F40CCE039A5CDB224404D1E053E753C5F406E4F90D8EEB22440CFE27B35763C5F40775380DE0AB324402825A9F1773C5F404135142D2FB32440CE7D8340783C5F40F118D46D3FB3244081B22957783C5F408623A35E4BB32440996AC1E6773C5F40D4C9631756B32440ED3DA6FF763C5F40F43FAF2E5DB32440DBBE47FD753C5F4051C0763062B32440306A5265733C5F40CB11329067B3244087DF4DB76C3C5F402095078E70B32440B36D07D9683C5F40337106DA78B32440B32B88DC673C5F4007C60B337EB324402B792B01673C5F406226F67585B3244025A5EA68663C5F40BD6603FA8EB324402B20A3F2653C5F40D5DF5C0D9AB32440A4D23E0C633C5F40B67F0AECD6B32440E60C20D7613C5F4053510658F5B324403AF70D02613C5F40359DF8C500B424408DCAF21A603C5F40C62A4AAE07B42440E955AE015B3C5F403B8908FF22B42440040C8112553C5F40158266214BB424408740E4E3493C5F40AC36A4F6C7B4244005094092483C5F4036E7E099D0B42440CAAE0F46473C5F40FE79BF76D5B424402414B6FA453C5F402030C50BD8B4244042D4D8B9443C5F404F80176CD9B4244091042B98423C5F40D3EEA18ED8B42440B00FA100403C5F407D4BEFD1D1B42440CECFC3BF3E3C5F40A9F6E978CCB42440042ED9C23D3C5F4030C50BD8C4B4244081DC8F253D3C5F40A05797AEBBB42440E1719BBA3C3C5F40040B163DA6B42440E1719BBA3C3C5F40680355489EB4244005A73E903C3C5F4061C1A2C794B424401771F03B3C3C5F4088CF42A78CB42440B8E11C1A3B3C5F40AB20AB0084B42440000AE4C8393C5F403C495FAD7FB42440FB0DC97F373C5F409067976F7DB424404450357A353C5F407DF0355F80B42440F7E9D385333C5F40D85020A287B424403ACB2C42313C5F40AA656B7D91B424407235B22B2D3C5F40AB6C697FB1B424404402A1502A3C5F4000BA79F4D0B42440D307DC04293C5F40CC118D49DAB42440B6C65686273C5F406FF66283E0B42440F32CF7B8253C5F401AB84D02E5B424404D1F7013243C5F4026529ACDE3B42440D2544FE61F3C5F406E71E888D7B42440762277C7183C5F4000F03E7DBAB42440377007EA143C5F40D61F6118B0B4244015A6947C113C5F40EAB69FE7AAB42440FF44C07C0D3C5F40B4893842ABB42440E501767F063C5F40CC029255B6B42440542F0961FF3B5F405573147BC3B42440F07508D2FB3B5F40D4A9E111CBB42440925F9A7DF93B5F408E829664D3B42440F23FF9BBF73B5F4033ECE698E2B4244006FC7502F53B5F40CF02A3810EB524409C3AEA43F23B5F408D87AD8F3DB5244023090CA3EA3B5F40A38F9EC7CDB524408824C4A6DF3B5F40F892212290B62440615E36F0D93B5F40C3E050AEDFB62440D0A56E1DD23B5F407CD7FBE82FB72440FDC9CE91CB3B5F400C546B065DB724402DC7D056CA3B5F402CCAB61D64B724409FB3603DC93B5F405AFA2BBF67B7244076960FF7C73B5F4094C4ED2B6AB72440	\N
 1098	Unnamed tertiary	tertiary	1	f	\N	0102000020E61000001C00000076960FF7C73B5F4094C4ED2B6AB72440B26FDD83C63B5F405FB7634568B7244030C50BD8C43B5F4008F4D3C963B724403EF89A2FC03B5F405FED28CE51B72440F3695F8ABC3B5F40847E4BA544B7244095E0C3DBB93B5F40AB274E4931B7244043A6214FB73B5F40E18A7A771AB72440D9B3E732B53B5F4053F8229001B7244082D6B26BB13B5F4082397AFCDEB6244070E4260FB03B5F40E1945E40D4B62440951F0258AE3B5F4008832161CEB6244043CBBA7FAC3B5F4056E4219DCBB62440EAFBBA1DAB3B5F40C8FB276ECBB6244021014812A93B5F40B9212125D1B6244034D769A4A53B5F406228CC20E3B624403BC20E08993B5F40281E61623DB724402AEA27F7963B5F40AE4E290A4FB7244060BB6A54963B5F40957F2DAF5CB72440CB9F6F0B963B5F40814D8C1B6DB72440F57A4155963B5F401B15939279B724409B2F40EC963B5F40E736E15E99B724403C2707FD963B5F402723788DA7B724405ACD8470963B5F40B6700FF8B2B72440D11A2895953B5F40C92C3185BDB72440A20FF16A943B5F40C3D4963AC8B7244091AA37B4923B5F40D470DB08D5B7244003B16CE6903B5F40D972D30BE3B7244099A48D7E8F3B5F409033A891F1B72440	\N
 1099	Unnamed tertiary	tertiary	1	f	\N	0102000020E61000000A00000099A48D7E8F3B5F409033A891F1B72440222F10A98E3B5F40B7EBA52902B82440F911BF628D3B5F40F32103D42FB82440290FC1278C3B5F40358930348DB8244018AA07718A3B5F40AAB129FCBEB82440491A3790893B5F408E829664D3B824406D5512D9873B5F40AB459FEAEBB82440341E5B85833B5F401A040C8112B924404C63C5BA823B5F40ED38341B1AB92440D5ED47E5813B5F40C9C7EE0225B92440	\N
@@ -9220,14 +9402,13 @@ COPY public.road_segments (id, road_name, road_type, base_weight, is_closed, haz
 1116	Unnamed tertiary	tertiary	1	f	\N	0102000020E610000002000000D9017C5C403C5F40B963FBDA44CB24406E652E15403C5F40B225506969CB2440	\N
 1117	Unnamed footway	footway	1	f	\N	0102000020E610000002000000473E0A325D3B5F40B2C92B2169D924405FDF98AF5C3B5F401B54D10E6ED92440	\N
 640	Unnamed service	service	1	f	\N	0102000020E610000002000000E3587270C43E5F40E69FCF36EDC424402DDED968CA3E5F4085E74AA9F0C42440	\N
-1282	Zamora Street	residential	1	f	\N	0102000020E610000002000000BEA1F0D9BA3E5F406166440EB6C52440942243D8BA3E5F407D87ECCDB9C52440	\N
+622	Flores Street	tertiary	1	f	\N	0102000020E6100000020000007B455CA5E03E5F40C162C3899EC62440C3D4963AC83E5F40BD022C4DA5C62440	\N
 1118	Unnamed residential	residential	1	f	\N	0102000020E610000003000000F8AA9509BF3E5F40B3B794F3C5CA2440F27794EFBE3E5F40DE7C7E73DACA2440CD6D6704C03E5F4078616BB6F2CA2440	\N
 1119	Unnamed unclassified	unclassified	1	f	\N	0102000020E61000000D0000008BC80B44AA3D5F407722D2808BB324400BDFB18E993D5F400CFBE2F7DBB324402B24AA01943D5F4094F8DC09F6B32440AA9619DB903D5F40AB6E3F2A0FB42440FE55911B8F3D5F40DC55FE6B2FB4244025CE8AA8893D5F4065F789A82EB52440BF4A992F8A3D5F40E06D39F29BB52440C4D3861E8C3D5F40F96B0D00B0B52440E69DF98B8F3D5F40399D64ABCBB5244086A3F501923D5F404BBE2374E1B524403D618907943D5F406B990CC7F3B52440D7789F99963D5F40EC585B6732B6244094B1EB28983D5F40C3C36AE2D3B62440	\N
 1120	Unnamed unclassified	unclassified	1	f	\N	0102000020E61000000200000094B1EB28983D5F40C3C36AE2D3B624405E1F8C8E9A3D5F4072EDFABB2DB72440	\N
 1121	Unnamed path	path	1	f	\N	0102000020E6100000030000005ACA43F0093E5F40FD21ECCA1DB824401F84807C093E5F40A9763C1C13B82440A8DD5449093E5F40B7C0D4850EB82440	\N
 1122	Unnamed path	path	1	f	\N	0102000020E61000000200000084D95FD1083E5F40DCC8867F22B824408BE1EA00083E5F40F6B75F9912B82440	\N
 1123	Unnamed unclassified	unclassified	1	f	\N	0102000020E610000003000000D3CE7A4240405F40803628507AFD24405C0EAAC340405F40CBB50D4867FD24401AA9520E41405F40A565A4DE53FD2440	\N
-1297	Unnamed unclassified	unclassified	1	f	\N	0102000020E610000008000000E9A7EE8021415F40B465AF2DF2C5244015AC71361D415F403623DE95B8C52440D5C853FB19415F4063416150A6C524403CE2EBC616415F40767BFFD599C524404831E5E816415F40B998558E7FC5244083A856BA16415F402CC13D2A59C524404890A56A16415F4040AB274E49C524400143A04415415F40F68FCF752BC52440	\N
 1124	Unnamed unclassified	unclassified	1	f	\N	0102000020E61000001E0000001AA9520E41405F40A565A4DE53FD24404442A55B40405F402E37BD303EFD2440157C89673F405F401722F13C02FD24407132BB383B405F4075311702CAFC2440846165D938405F40FDC863BC9CFC244012BD8C6239405F4026F3D94B64FC2440410DDFC23A405F40B4ACFBC742FC2440CA4FAA7D3A405F400E06E8082AFC24405F2926CA39405F408708EEF60FFC244025FD07A238405F404DDC8541F4FB244043A3851538405F404D90C7C2C6FB24400141CA9937405F40D7112CB3ADFB244073B790EC36405F40C396C39382FB24409D22D11536405F402133614557FB2440D837E62B37405F403FBF94264AFB2440540BDB0539405F401C3F541A31FB24401894693439405F400CC3EC0A22FB24401E824F1839405F40346CEFAE0EFB244019F9612937405F40B775DC9502FB2440F8BBC16133405F40A499DD49FAFA24408E14DBEE2F405F40F3B51D09EAFA2440D7E3198F2D405F40D375977ACCFA244097E656082B405F401BEB877DA7FA2440CEC3094C27405F406331A0CD60FA244042EDB77622405F4016084CF102FA24408AA251CB20405F40364FBF55E8F924400F4B5EF81C405F407F7FEFDBB5F92440575C1C951B405F40580FA9B3A4F92440347568A219405F40FC1E50919EF924403C0A21310B405F4008EB5AD658F92440	\N
 1125	Unnamed path	path	1	f	\N	0102000020E61000000400000044F7AC6B343C5F40546694788ACE2440DEB53AEF353C5F4002A5FCFF93CE244055736F34363C5F400FCFB7AA91CE2440CCD1E3F7363C5F40FA1A930F8BCE2440	\N
 1126	Unnamed track	track	1	f	\N	0102000020E61000001B0000007349D576933F5F40F7E6374C3400254019F89B9A953F5F402F2581BC0D00254001570D1D963F5F406842EE7D050025406C0A6476963F5F40996D5D20F7FF24404126BE7F983F5F4095B31C8DE8FF2440AAFBB6169C3F5F40D5CA845FEAFF2440C4550A26A33F5F4002DB1C42F0FF2440CFB238ADA53F5F408A8164F0E6FF2440F254D169A73F5F40D71533C2DBFF2440F70E6DB6A83F5F40C7511443CDFF2440674E4D38AA3F5F407EBB3665B8FF244013BDE71BAC3F5F403DA0C78388FF24404E2B8540AE3F5F404FE559EE71FF2440ED1C14DEAF3F5F404156010869FF24408D0EA37BB13F5F40D091A68B5EFF24403A5563AEB13F5F40186C34CA44FF2440B16EBC3BB23F5F4062AE563728FF244013DD6921B73F5F40FAA12D420CFF24409A9A5F28BB3F5F40D22EF02609FF24403425A314BE3F5F40814875F002FF2440E0ADE243BF3F5F40E17B7F83F6FE2440B59B2A29C13F5F402BBEA1F0D9FE2440E447A1D1C23F5F40EB419CE2CCFE244059B44AFAC53F5F404A58C0A9B4FE2440F7D84C74CC3F5F40C05FCC96ACFE24400CC457E0D03F5F401FB0BCF5ABFE2440EEEC2B0FD23F5F403DC967C3ABFE2440	\N
@@ -9258,6 +9439,9 @@ COPY public.road_segments (id, road_name, road_type, base_weight, is_closed, haz
 1151	Immaculada Concepcion Barangay Road	primary	1	f	\N	0102000020E610000003000000C91D3691993F5F4057E1E01CBFCD24405E0AB4E06A3F5F40E881340818CE2440472A42A0693F5F4070D5D06119CE2440	\N
 1152	Immaculada Concepcion Barangay Road	primary	1	f	\N	0102000020E610000002000000472A42A0693F5F4070D5D06119CE244072288DE2663F5F405D5E6F511CCE2440	\N
 1153	Maharlika Highway	trunk	1	f	\N	0102000020E610000002000000CBE9FC25F3405F40C0D600005BC5244038674469EF405F407C5F01F15FC52440	\N
+1282	Zamora Street	residential	1	t	\N	0102000020E610000002000000BEA1F0D9BA3E5F406166440EB6C52440942243D8BA3E5F407D87ECCDB9C52440	32
+1425	Don Vicente Street	residential	1	t	\N	0102000020E6100000050000005CB68C8AEE3E5F4001B562C966C824402F41FCB2EA3E5F406010470D5CC824403EAB71DBE33E5F4034BBEEAD48C824408852D6CADF3E5F403EB0E3BF40C8244069FC6772D63E5F40C84E2E7C33C82440	35
+1426	Don Vicente Street	residential	1	t	\N	0102000020E61000000300000069FC6772D63E5F40C84E2E7C33C82440900A0852CE3E5F405DAF9FB426C82440BED87BF1C53E5F408FFAEB1516C82440	34
 1543	Unnamed path	path	1	f	\N	0102000020E6100000020000000E0D3098643B5F40EEDA94E12ED92440C7BC8E38643B5F40344A97FE25D92440	\N
 1547	Unnamed tertiary	tertiary	1	f	\N	0102000020E610000003000000864666E4623C5F40982B28B110CA2440CA0281295E3C5F40E85A6A7352CA2440C579933A5C3C5F404E0AF31E67CA2440	\N
 1154	Unnamed unclassified	unclassified	1	f	\N	0102000020E61000001A0000008DF1BCAFA5415F4079E51F22DAC3244000DB0B1698415F404E4B0746B9C3244061C7DA3A93415F40978A32C0AAC324400397C79A91415F409048803FA1C32440ECD0FAA58F415F40497FD4CB94C32440E1E6F9788D415F4035A3D57F8CC3244042E1FD028B415F40435DFF0989C32440A24E2FE788415F408C01C8BF85C324408B8862F286415F407248B42E7FC32440FFB1101D82415F40A7ABE05C68C324406627CD307F415F4060E234E95BC32440EAB534127C415F40BCFD5EAF55C32440F195E59079415F4053E34AE251C3244093F2A49677415F4095AAFE5250C32440FA6761AA74415F40C495B37746C324401AF274536F415F4098DBBDDC27C32440A6D3BA0D6A415F40ACA8C1340CC32440CBE6BBA566415F40189EF24300C3244021F7BE0262415F4052031775F7C2244013C1EE2A5A415F4026AEBE15E4C22440855FEAE74D415F40A9B7ABFCD7C22440D46762154A415F4082D4DCC0D3C22440BDA1952048415F40D8A26021CEC22440315816F142415F407720A11CBBC224405A13663538415F4057659588A6C224405DC9E94633415F40202345099FC22440	\N
@@ -9267,7 +9451,6 @@ COPY public.road_segments (id, road_name, road_type, base_weight, is_closed, haz
 1326	Unnamed path	path	1	f	\N	0102000020E61000000C00000000BA79F4D0405F407E13549E8AC5244054313AC5CF405F40BE0DD6A480C524405BE03CE6CD405F40BD40A43A78C52440B0462C18CB405F404F19A48570C52440B8CD5488C7405F40181F0B7668C52440B319F1AEC4405F409F7D9BB45FC52440E36CDF48C5405F40494A7A185AC5244095174FF3C4405F40F8263C574AC524405AFF9DA3C4405F405F3A52222EC52440EF1D3526C4405F400E87A5811FC52440018CC289C3405F40E1A1DE420DC52440C9D98530C8405F403C0B8C063AC42440	\N
 1327	Unnamed residential	residential	1	f	\N	0102000020E6100000020000003D974E90FD3D5F404E113BAEA1B72440B7D49C17023E5F40870ECBB09BB72440	\N
 1328	Unnamed residential	residential	1	f	\N	0102000020E610000003000000B7D49C17023E5F40870ECBB09BB72440626B11AC053E5F40006B7AF596B72440D9F4FB59073E5F409103C0C293B72440	\N
-1298	Unnamed footway	footway	1	f	\N	0102000020E610000003000000470EC7A98C405F40E490C31671DC2440DBDE6E498E405F403AA7FEE66ADC2440D9A4EC3E91405F404CB6CBC86ADC2440	\N
 1329	Unnamed unclassified	unclassified	1	f	\N	0102000020E6100000420000001AA9520E41405F40A565A4DE53FD2440BFDB172B45405F40F992D79475FD2440AC9800B246405F40E1534A1982FD2440DAB16C414A405F400F4EFA319CFD2440E85A6A7352405F4009AFB893E3FD24405EB642FD53405F40E0803BF5EDFD2440BCCCB05156405F40499B4FC2F1FD2440EA8C94D258405F408A422674F2FD2440A24A28D85A405F40011764CBF2FD24408978EBFC5B405F40FA394F86F4FD24408CAA155C62405F40D2904CE207FE244050D147CF63405F40F42675B80CFE2440555A35BE65405F402277C7180EFE244064682BE56B405F40970B4BF212FE2440036E275B6E405F403653C66416FE24407468ECA66F405F40F48B12F417FE244006A051BA74405F4048AA4AB615FE244045AB49A679405F400703740415FE2440D847A7AE7C405F40C65B9D5214FE244090920D5A7E405F405664744012FE2440424E4EA37F405F401558005306FE244006D4409880405F40562AA8A8FAFD2440D58BEB2983405F40EC504D49D6FD24401B5DEF4886405F407ECFA33DB9FD244067AFE36487405F40B9E4130DADFD24406DB1362188405F405C6F40F09DFD2440497C934B88405F40993FF04284FD24401FFA491089405F408DFB45BF6CFD2440A7A66E788B405F40A53AD33A60FD24405D8CDC2E8F405F4043FDD3B25AFD2440970EE72B92405F409F18FE7854FD244084C5973F95405F409F18FE7854FD2440109CE9149A405F4093E34EE960FD2440E01115AA9B405F40FB42233372FD2440FDDF6CCE9C405F40777EF6C88BFD24401AAEC4F29D405F400E2E1D739EFD244049B9FB1C9F405F404A18BC9E9EFD24406CE8667FA0405F403CF9F4D896FD24402433CD2AA2405F40449149A187FD2440B2463D44A3405F40AD46C03280FD24406416EB65A5405F407FB1AD5571FD2440DA71C3EFA6405F405E3B623E6AFD24409249FC40A8405F40BA36AF4566FD244037B00BF5AA405F404A3F863364FD24406CD102B4AD405F404A3F863364FD24408297CFA8AF405F4030EB0FDE68FD2440464BD4C1B0405F40C735994C70FD24408D81D0D5B1405F40A047D62B76FD24403F6B2343B3405F4049E9E3EB7CFD24406E032D13B4405F40B9E00CFE7EFD24409D0E643DB5405F4030B54A557FFD244073FF475CB6405F4049E9E3EB7CFD24409C1C99A2B7405F40D454601278FD24405A304C01C4405F40648401953BFD244027C2E160CA405F40AC3EB21424FD24403D3D5BACCD405F4024CE2FEF16FD24406BE399E1D0405F40519907550FFD24407701E5A5D1405F40C19B244C07FD24405FED28CED1405F400F6DB6A805FD244053115D06D2405F40E8B4B810F5FC24401E8B6D52D1405F40E96FF893E7FC24404E886F17D0405F409422E81EC8FC2440839B3171D0405F401E09EA4ABAFC2440B9944E7FD1405F409A35C2ECAFFC244023145B41D3405F40807CAE5BA9FC244081B79B3BD5405F40807CAE5BA9FC2440	\N
 1330	Unnamed residential	residential	1	f	\N	0102000020E610000002000000FE3A81FA603F5F404EFE38AB4FD324402FB1E88C5E3F5F40B0E595EB6DD32440	\N
 1331	Unnamed footway	footway	1	f	\N	0102000020E610000006000000BF47FDF58A405F40458A5CCBBFDD2440835AC2908B405F4021A68E9FD7DD2440297F52488D405F406B6E3B2300DE2440B2BE81C98D405F40AC41F39430DE2440A435069D90405F40E49535FB4DDE244008EF062C94405F402EE7525C55DE2440	\N
@@ -9278,11 +9461,15 @@ COPY public.road_segments (id, road_name, road_type, base_weight, is_closed, haz
 1336	Unnamed unclassified	unclassified	1	f	\N	0102000020E61000000200000040CE458DD3415F4058A3C3E85EE02440356BDF92D2415F4082F22D628EE02440	\N
 1337	Unnamed unclassified	unclassified	1	f	\N	0102000020E610000006000000356BDF92D2415F4082F22D628EE024404D7F9B6AD2415F40A120C20996E02440A2139DC0CF415F40AE2EA704C4E02440B52B3E4FCD415F4088B77306EBE0244020555E3CCD415F40A6A9543F25E1244014ECBFCECD415F40E9ADCB3A2DE12440	\N
 1338	Unnamed unclassified	unclassified	1	f	\N	0102000020E61000000A00000014ECBFCECD415F40E9ADCB3A2DE1244036EA7CD3CF415F403AA6385849E124404ECAEE13D1415F40978B9D9559E12440EE6591DCD0415F403BAD365A69E12440A84CD64DCE415F40B67581DC8FE12440478BD8CCC6415F4025EC3603B7E124401E6E8786C5415F40D65F6523C6E12440121F8E64C5415F40379A6DB8D9E1244034CF5B86C9415F40351603DA0CE22440B4E0EAA5CE415F409EDE7B6E57E22440	\N
-632	Bagares Street	residential	1	f	\N	0102000020E6100000040000006E426B8FA83E5F403FCFFAEF1CC52440284696CCB13E5F40368A517C21C52440C11259B5B53E5F40FAC78C0123C52440DC44D213BB3E5F4011BC6B1A25C52440	\N
+887	Concepcion Street	tertiary	1	f	\N	0102000020E610000003000000ABA63517C93E5F409968EB3B1AC62440E1606F62C83E5F40009013268CC62440C3D4963AC83E5F40BD022C4DA5C62440	\N
+632	Bagares Street	residential	1	t	\N	0102000020E6100000040000006E426B8FA83E5F403FCFFAEF1CC52440284696CCB13E5F40368A517C21C52440C11259B5B53E5F40FAC78C0123C52440DC44D213BB3E5F4011BC6B1A25C52440	32
 1339	Unnamed track	track	1	f	\N	0102000020E61000002400000066DCD440733C5F40D070146A97C8244033688DE66D3C5F40E8BA95CA80C8244082E3326E6A3C5F405C2041F163C824406C932F0D683C5F407B02171A3EC824409B73F04C683C5F40A2FEC41220C8244090CB6E1C673C5F40760A03E0E9C72440F5961705663C5F4016F0D709D4C724403EF3284B633C5F40C7FE68EED7C72440A568E55E603C5F40E95ECC3BF3C724401EF00A8E5C3C5F40EEE2474618C82440A93E462F593C5F408FC12F9A3AC8244081728005553C5F40829774EF3CC82440AD5FFAA8503C5F40841FE6DC37C82440D94C744C4C3C5F40342B80CE49C824406ABA432F483C5F4091BD39B764C82440F07F91E1423C5F40613024CC59C824408E8A49C93C3C5F40C1D6B67240C82440AECF413C373C5F401BE8EB4328C824402E76FBAC323C5F40FD9474DE10C824408D221054323C5F40ACA7FBA5EAC72440EB387EA8343C5F4070010DDBBBC72440B5392927353C5F401904B1C79FC724409E9ED21C343C5F40E25CC30C8DC7244034958FEE313C5F40283163658FC724405F37B6E82E3C5F408EE0EB10A4C724405AAEC8F92C3C5F40DCC07861C6C724409CA0F2542C3C5F40D9AC9FA3FAC72440445EC5982A3C5F40FB0C03F115C8244027EF2DF6283C5F40A60BB1FA23C82440E349777C203C5F406DD5647C4EC824408DFCB0941B3C5F40558BE31B65C82440BF08BF79163C5F405E1C4B0E8EC82440C32973F30D3C5F40D0E4AC99C6C82440DE9A2ACE073C5F403D29931ADAC824409FE8BAF0033C5F402BEFF494E6C824408DC58036033C5F407E0A3664F2C82440	\N
 1340	Unnamed track	track	1	f	\N	0102000020E61000000A0000008DC58036033C5F407E0A3664F2C8244041D24C9C013C5F40B80EC4680CC924401D4421B8003C5F401C36DB2626C924402BCD9CE4FD3B5F4003DB77FB62C92440509B8246FA3B5F40428E52AE95C92440825C3D82F63B5F401275D5F2B9C924400103F7F2F13B5F40B54FC76306CA2440C29BDABEEC3B5F408ABAC5B24FCA2440DD0C9299E63B5F40A075E84F76CA2440D4B59B85E23B5F4079DED7929FCA2440	\N
 1006	Unnamed residential	residential	1	f	\N	0102000020E610000005000000D72835C52D475F40A3433B0213B7244049D0A9752C475F40CF0B1C7519B7244008D3E6EE29475F406FE305C71BB72440874556C826475F4062B94A1C1EB72440E873A4E922475F4041D076F123B72440	\N
 1007	Unnamed residential	residential	1	f	\N	0102000020E61000000200000000529B3839475F409A385E262FB7244012BD8C6239475F4022CDB3ED0FB72440	\N
+639	Unnamed service	service	1	f	\N	0102000020E610000003000000D20D5E05C23E5F40518B1C7D27C52440C631923DC23E5F40AAB5300BEDC42440E3587270C43E5F40E69FCF36EDC42440	\N
+919	Unnamed residential	residential	1	f	\N	0102000020E6100000040000007B455CA5E03E5F40C162C3899EC624409902E32AE03E5F40A665FF97C6C62440BDDB61B8DF3E5F40562DE92807C72440BD68345EDF3E5F40B3075A8121C72440	\N
+1556	Unnamed tertiary	tertiary	1	f	\N	0102000020E610000002000000AD9DCD4F963E5F40BCF20F11EDC52440CCBF4CCA933E5F408B620333F0C52440	\N
 1542	Unnamed tertiary	tertiary	1	f	\N	0102000020E6100000AE00000099A48D7E8F3B5F409033A891F1B7244077DA1A118C3B5F40B044566DEDB724406D5512D9873B5F402EF6A809ECB72440FE4C1828843B5F40265E5441FBB72440B2310ADD803B5F4069B97DA026B82440CC0C1B657D3B5F404793E6EA22B8244027929ED8793B5F4052431B800DB824407B6BBB64773B5F40CD1253D8FBB72440ABE97AA26B3B5F4024287E8CB9B724405D43BAE9603B5F4012C2FE4696B7244046915ACD5F3B5F40E521F88491B72440A1890B9B5C3B5F4069BB534B84B72440A021D225523B5F401CD0D2156CB72440A06010A2463B5F40881BA66C47B7244031E5E896423B5F4096D5CFF643B7244088403F9D3C3B5F402ACAA5F10BB72440FBF6BF6D373B5F4039FA4E82EDB62440C174B570343B5F4033D879C0E1B6244087F2AA73313B5F4043082351C3B62440D4E29D8D263B5F405238CCE1A4B62440356A74BD233B5F402B80CE4994B624400057B263233B5F408279234E82B62440CF59B09E243B5F406A00CA3A77B62440A4E59BC8273B5F40F4E6CB6669B6244044786AE4293B5F40994121A754B62440612C1DBD2B3B5F40CA07F30D3BB6244079E4B44C2B3B5F4054EEF4392DB624400E65A88A293B5F408F73F62922B62440CBD0C2AF223B5F405EFCC80803B624407DD179E8163B5F40D0697121EAB5244013526D26153B5F40D0697121EAB52440CF30B5A50E3B5F4079701C1DFCB5244012EA33B10A3B5F40BA17F3CEFCB5244039EFFFE3043B5F4017331D95F6B524407792BE5AFF3A5F4038C9456BFBB524406984C833F93A5F4071D8C7540BB624405FFFBFFBF43A5F408F73F62922B62440B674BB4DEE3A5F401969F34938B6244094C4ED2BEA3A5F406DECC84741B624409858CFFFE13A5F403318231285B62440D71533C2DB3A5F4017B3CAF1AFB62440CD902A8AD73A5F406C36A0EFB8B62440465D6BEFD33A5F4017B3CAF1AFB624400CC1BBA6D13A5F403704221F4FB624405490FA46CF3A5F40C039C89008B6244002C98514CD3A5F40AED3484BE5B52440D23EB1A9CE3A5F40773A4668BAB52440D73ACCF2D03A5F40A2DE420D95B52440508FC8D2E23A5F404D5766005EB52440FC709010E53A5F4061EEA4CF58B5244038C368B1EF3A5F404FEACBD24EB5244034322317F73A5F400007488F3AB524402761F07AFA3A5F409B6CA8BD2DB52440B4B6DF90FC3A5F40E728514024B5244064496F6E023B5F40FC20263CFCB42440F0F1AE1F073B5F40CA367007EAB4244072AD516A0A3B5F401A2BD615D8B42440ED6069850E3B5F4001C864CCB8B424408C35B79D113B5F407BC26DC89AB42440C6E5D3BE143B5F4015C039C890B42440701D88D1183B5F401728CEF68DB424409FF474641B3B5F4067391AD187B42440B9F2A32B223B5F4048FC8A355CB42440BE05C886243B5F40976B764941B424402E73BA2C263B5F40C6562B6E37B424403FD873E3273B5F40ED44EE8E31B42440D18206512D3B5F40AB9D17DD30B424402F26474B2F3B5F408B975DE62AB42440B25DEB9C303B5F405068FE3D1DB42440EDEB6580303B5F40054AAF720DB42440D6085806303B5F407A0904F005B42440AC753D2C2F3B5F40778C86E700B4244008B6A5692B3B5F404AC4A574FAB32440C10F1835293B5F4069E04735ECB32440772BF0BA233B5F408B10C3B3A9B324402A3520E7223B5F4029FE94CF97B32440FACA283B223B5F405F8C92A174B324403731C96D203B5F406FBC3B3256B3244026CFABF01D3B5F406CB2463D44B3244029CA4A38193B5F409703988D29B32440A708707A173B5F4090A4FF4014B32440E3E13D07163B5F406E6C76A4FAB224402AEDC330163B5F40B54E01D5E4B22440BF92F5E5163B5F403780C86CDAB22440B23A2817193B5F4067D311C0CDB224408CA3CDCC273B5F40EDC506C199B22440188854072F3B5F40B8C260A351B22440E7FD7F9C303B5F409E094D124BB224405AB741ED373B5F4030ED404239B22440EEC6CC4F3B3B5F40736F34362AB22440A4AC3A063F3B5F402D61C84510B22440FCD4C276413B5F407E384888F2B124408514F2F7413B5F4077F69507E9B124402B6DCC46423B5F401794B3C1D3B1244097DEA3A3413B5F403539C65FA4B12440101E12633E3B5F403423CD6960B12440D41C6A253E3B5F408A1C226E4EB124400A302C7F3E3B5F409871AEBC3FB12440AA0D4E443F3B5F40C75C63E135B1244068469AD3403B5F40EACDA8F92AB12440D1ED8046443B5F40E38BF67821B12440E2218C9F463B5F408A6BC6B315B1244076204663483B5F40BFF9C385F2B024407BDAE1AF493B5F408AF72D84E6B02440454B1E4F4B3B5F40BE5763BFDDB024402B2856574F3B5F40778EB74BD1B0244018721184503B5F408CB564FACAB02440E8740FBF513B5F40245690B0B9B02440DC9843F7513B5F407C9A931799B0244088F37002533B5F40039F7AFF7AB02440CED8E1F9563B5F40BDE6B05648B02440B59377C4573B5F40B3EDB43522B02440EAB46E835A3B5F403F1F65C405B024402AB2310A5D3B5F40AB425E6ADFAF24407D23BA675D3B5F40440E5BC4C1AF2440D0DCF9345D3B5F404ACE893DB4AF2440AD93E9865C3B5F4028B3E66CA6AF24401FCBCC165A3B5F40503F034587AF2440202A8D98593B5F4027028BB26DAF2440C60C9E535A3B5F402755360763AF2440B910F5CC5C3B5F400CEFCDCA51AF2440DBE09FAD5E3B5F40E5C63E1240AF2440DA780B7F613B5F40D053D3E418AF2440E0F027CF613B5F40063C7A0D0BAF2440A490BF0F623B5F40A79EBB13A2AE244074C46BA8623B5F40DFEEF66A91AE24406150A6D1643B5F401CBFA6BD77AE2440A9A04731653B5F402B172AFF5AAE2440A9FF07B3643B5F40C467A15346AE2440FDD58805633B5F40A22424D236AE24400DE7751F5B3B5F4014C48A64D9AD2440FC9B61B4583B5F40E74E5546C8AD24403BCCF2D0523B5F40093B2064B4AD24404E6ECACB503B5F40F77EFED6A9AD24406CA11AE54F3B5F4006AFA7678BAD2440954B3ED1503B5F40F9FE61A648AD244000581D39523B5F403C1CB85E2EAD2440745C3233583B5F409EFEFD73E2AC2440D4A4CAE6603B5F40B5C6FBCCB4AC2440601624C7673B5F40069E7B0F97AC2440B83EAC376A3B5F40A51BBC0A84AC24400BDE46B96A3B5F405F72ED5575AC244046DFEEF66A3B5F404292FE0351AC2440457AF6016D3B5F40D6EB713A24AC2440391158946D3B5F407EDC2340F2AB24408DA2BDB06B3B5F407A30CE84CBAB2440A0F941026B3B5F404799C3A4AEAB244065123F106A3B5F40CDE26A099EAB24403EBFDEB3643B5F408328A95D5DAB2440FDC11B2D623B5F406C6A8FCD44AB24409BAF928F5D3B5F409CCBC3F81FAB24401FB127CB5A3B5F40BAB59613FEAA2440919DB7B1593B5F406BEFF89BF5AA24408D7FFA2A543B5F40DD34C703DBAA2440DC9BDF30513B5F403AC379DDC7AA244001C0B1674F3B5F400994032CA8AA24400FF340BF4A3B5F4063C8FB8227AA2440EE9E97E5463B5F40A91611C5E4A924407A9A82EB403B5F40283EE367C8A92440D57EC6E03C3B5F40C87663E6A7A924406BFFB91E3B3B5F403AE40BFF8EA92440B8CA13083B3B5F40A62FDF556AA9244022BD4D243D3B5F40C88A2B781BA924400F1B76293F3B5F4042D0D1AA96A82440D57EC6E03C3B5F40D1274DDE5BA82440535E2BA13B3B5F401E1DB2DC2DA82440B3412619393B5F4053D9661998A724400080AD5C393B5F40620910AA79A7244083B751AE3A3B5F40161E8F7461A724403B8F8AFF3B3B5F401F2C634337A72440010D8002393B5F40A7EB89AE0BA72440B3412619393B5F40EA08E066F1A624403579CA6A3A3B5F403C65DAA3DCA62440D00CE2033B3B5F40AFF25F7BC1A62440	\N
 1544	Unnamed track	track	1	f	\N	0102000020E610000006000000D4B59B85E23B5F4079DED7929FCA244013A749DFDA3B5F40A001502047CA244011FFB0A5C73B5F4017B5A09C0DCA244008D3E6EEA93B5F4077572C34C6C92440646C32F4993B5F40A2F20A9F08C92440E38519BF953B5F40783F13060AC92440	\N
 1545	Unnamed track	track	1	f	\N	0102000020E610000005000000E38519BF953B5F40783F13060AC924409F2DD626843B5F40F84D06EC0FC9244013D0E91E7E3B5F404FCDE50643C92440778C86E7803B5F40558440D3B7C92440BE3BE8C8803B5F4072D7B738CFC92440	\N
@@ -9297,6 +9484,9 @@ COPY public.road_segments (id, road_name, road_type, base_weight, is_closed, haz
 1558	Unnamed tertiary	tertiary	1	f	\N	0102000020E61000000300000088DDD2C5813E5F405A9C31CC09C624403A37120D773E5F401F1730DC14C62440C70DBF9B6E3E5F40420AF9FB20C62440	\N
 1559	Unnamed tertiary	tertiary	1	f	\N	0102000020E610000003000000C70DBF9B6E3E5F40420AF9FB20C6244022BEB8F96B3E5F40052857C224C62440E891F58A5D3E5F40C7D22C7535C62440	\N
 1540	Unnamed residential	residential	1	f	\N	0102000020E6100000020000004E8061F9733E5F40D003691030C42440F9C0E9B8753E5F4045285BC933C42440	\N
+957	Concepcion Street	residential	1	f	\N	0102000020E61000000200000070630EDDC73E5F40D2020F67D9C62440534DFF48C73E5F4019C2D6112CC72440	\N
+1283	Zamora Street	residential	1	f	\N	0102000020E610000003000000942243D8BA3E5F407D87ECCDB9C52440A146C60FBA3E5F40BF7E880D16C62440E80C3103BA3E5F40519C48D51BC62440	\N
+1521	Unnamed residential	residential	1	t	\N	0102000020E610000002000000AA32422EA73E5F4088C4984FB1C52440942243D8BA3E5F407D87ECCDB9C52440	30
 1560	Unnamed tertiary	tertiary	1	f	\N	0102000020E61000000E000000E891F58A5D3E5F40C7D22C7535C624405B17C8FD583E5F4015095C0D3FC6244048F31142513E5F4009D4AC7D4BC624407A8F8E064B3E5F40466E974748C624409450FA42483E5F40ED2296DE48C62440DD257156443E5F40509D58F157C6244034283F4E3D3E5F40DE2FB0D870C62440A355D22F363E5F408D5830968EC62440DA77A0A9323E5F40DF5394A69CC624409BDFD5172E3E5F40DEDD14A0B7C624405C61B0D1283E5F4009336DFFCAC62440350E5075233E5F4093286A1FE1C624400327DBC01D3E5F4025C8ADEEFDC62440F91400E3193E5F4052A280481AC72440	\N
 1561	Unnamed tertiary	tertiary	1	f	\N	0102000020E610000006000000F91400E3193E5F4052A280481AC724403505D781183E5F400CC3EC0A22C724408F39CFD8173E5F409B1084752DC72440000CBA73173E5F40770FD07D39C72440F401DC87173E5F405F888B9246C72440A708707A173E5F401B7629BF56C72440	\N
 1562	Unnamed tertiary	tertiary	1	f	\N	0102000020E610000002000000A708707A173E5F401B7629BF56C72440A64D8BB0173E5F40D5DB55FE6BC72440	\N
@@ -9317,11 +9507,11 @@ COPY public.road_segments (id, road_name, road_type, base_weight, is_closed, haz
 637	Unnamed unclassified	unclassified	1	f	\N	0102000020E6100000020000006E426B8FA83E5F403FCFFAEF1CC5244080AAC07FA93E5F401C40BFEFDFC42440	\N
 638	Unnamed unclassified	unclassified	1	f	\N	0102000020E61000000200000080AAC07FA93E5F401C40BFEFDFC4244025CF5037AB3E5F400EFC034070C42440	\N
 641	Unnamed residential	residential	1	f	\N	0102000020E61000000200000061CA1BBB9F3E5F40DCF63DEAAFC32440D3156C239E3E5F40F02609D341C42440	\N
-642	Maasin ??? Macrohon ??? Sogod Road	primary	1	f	\N	0102000020E61000000200000082C06FE8523E5F40856055BDFCC224409236FA3D563E5F40D1F12C9CFFC22440	\N
-643	Maasin ??? Macrohon ??? Sogod Road	primary	1	f	\N	0102000020E610000002000000D78DD200393E5F40965D30B8E6C22440E8C1DD593B3E5F401E6915A2E8C22440	\N
+642	Maasin ΓÇô Macrohon ΓÇô Sogod Road	primary	1	f	\N	0102000020E61000000200000082C06FE8523E5F40856055BDFCC224409236FA3D563E5F40D1F12C9CFFC22440	\N
+643	Maasin ΓÇô Macrohon ΓÇô Sogod Road	primary	1	f	\N	0102000020E610000002000000D78DD200393E5F40965D30B8E6C22440E8C1DD593B3E5F401E6915A2E8C22440	\N
 644	Unnamed residential	residential	1	f	\N	0102000020E61000000300000002B27C024D3E5F4094821376F6C2244054A703594F3E5F40D1BD3DBE73C224409C25B7DC4F3E5F40921C55F256C22440	\N
 645	Unnamed residential	residential	1	f	\N	0102000020E610000002000000ACFF73982F3E5F40D2CA187A1FC22440131FE91D383E5F40FE1F71D932C22440	\N
-646	Maasin ??? Macrohon ??? Sogod Road	primary	1	f	\N	0102000020E610000002000000A01111A30C3E5F406F1C678984C12440999020A60E3E5F4045CE0C2C91C12440	\N
+646	Maasin ΓÇô Macrohon ΓÇô Sogod Road	primary	1	f	\N	0102000020E610000002000000A01111A30C3E5F406F1C678984C12440999020A60E3E5F4045CE0C2C91C12440	\N
 647	Unnamed residential	residential	1	f	\N	0102000020E6100000020000009611CDF22B3E5F405C12B1D2EEC12440290417D0303E5F40D4F8E01005C22440	\N
 648	Unnamed service	service	1	f	\N	0102000020E6100000030000005BAA1CA4F13D5F40A9119FE007C024402E724F57F73D5F40858373FC06C024407418DD8BF93D5F402302C41330C02440	\N
 649	Unnamed unclassified	unclassified	1	f	\N	0102000020E6100000060000005A0B5817DC3D5F40FE2C9622F9C22440311C19F5DA3D5F4017D4B7CCE9C22440C696D4BFDA3D5F40F08B4B55DAC22440361E6CB1DB3D5F40150E7338A9C22440DCFDE032DD3D5F401714611E8DC224408944A165DD3D5F40E961687572C22440	\N
@@ -9340,7 +9530,8 @@ COPY public.road_segments (id, road_name, road_type, base_weight, is_closed, haz
 662	Barangay Road	residential	1	f	\N	0102000020E610000003000000002E1224803F5F40FA2BBF677FD3244001344A977E3F5F403E95D39E92D324403602F1BA7E3F5F40B0FC9EFDEDD32440	\N
 663	Barangay Road	residential	1	f	\N	0102000020E6100000060000003602F1BA7E3F5F40B0FC9EFDEDD324408231C797753F5F40DEBC827EF0D32440507B00416F3F5F407EDC2340F2D3244053A74DE6693F5F40EA36F28AF1D32440D71B107C673F5F406F72AE17F9D3244091195EFF643F5F40D30C4EE905D42440	\N
 664	Barangay Road	unclassified	1	f	\N	0102000020E610000003000000F454E2957F3F5F4006D1FF1774D32440A6F919CD803F5F40AEED92DD71D324403909A52F843F5F40B10573AA6BD32440	\N
-633	Bagares Street	residential	1	f	\N	0102000020E610000002000000DC44D213BB3E5F4011BC6B1A25C52440D20D5E05C23E5F40518B1C7D27C52440	\N
+970	Flores Street	tertiary	1	f	\N	0102000020E610000009000000C3D4963AC83E5F40BD022C4DA5C624407BD404F6BD3E5F4098C4B4CAA7C624400CA1945AB93E5F404436EBE7A8C6244092F01879B43E5F403D111F33ABC62440E2CD1ABCAF3E5F400C395BE5AEC62440F56FF2B6AD3E5F40AAF06778B3C62440724F5777AC3E5F4010F39B78BDC624409054956CAB3E5F40CD70A884CCC62440E6DA615DA63E5F40F2608BDD3EC72440	\N
+633	Bagares Street	residential	1	t	\N	0102000020E610000002000000DC44D213BB3E5F4011BC6B1A25C52440D20D5E05C23E5F40518B1C7D27C52440	32
 665	Unnamed unclassified	unclassified	1	f	\N	0102000020E61000001B000000AA8317D83E3C5F40155A31B7D6DE244010ABE4083E3C5F4058CE39D3DFDE24402E686B8E3D3C5F4013375D05E7DE2440AB1386B73D3C5F404299A14CFEDE2440C2C8810D3E3C5F40BE6FD7A60CDF24405DE96B4C3E3C5F4034411E0B1BDF2440D4EBBBC73E3C5F40B24C1AFE2EDF244015C1A49D3F3C5F40BB5BFEE840DF244068ED11C53F3C5F40F882609F4ADF24407A8379D9403C5F406E7484C256DF244008DC0429423C5F4022286D6061DF24402B2515D7423C5F409956540E77DF24405AA3795B443C5F40ADDFA7058ADF2440DCF126BF453C5F40AA543F259DDF244071523D3E463C5F405E280582A5DF2440AC53E57B463C5F40EE9579ABAEDF2440590DD308473C5F40868D57C5C0DF244047D0F302473C5F40DF65D01ACDDF2440CAF6C6B5463C5F40AF5A3E37D9DF2440AC53E57B463C5F40B0DFB831E2DF24405FA230DE453C5F40C978EF03EBDF2440A22A018C423C5F40634FF16E1BE02440C899266C3F3C5F40C793EEF840E0244040BFEFDF3C3C5F40E066F16261E0244011C8258E3C3C5F40357A354069E02440C3B7B06E3C3C5F401ABE2ABC70E024407665BC523B3C5F408EF1176998E02440	\N
 666	Diversion Road	tertiary	1	f	\N	0102000020E610000002000000550152F6713F5F40A7B79AD07FD22440DC099BA6743F5F40B3F0506FA1D22440	\N
 667	Unnamed unclassified	unclassified	1	f	\N	0102000020E61000001B0000004B06802AEE455F407D3AC379DD072540D6355A0EF4455F4084BA48A12C0825409A5C8C81F5455F409FEF0280BE082540B72AE4A5F6455F40C1BC1127410925406A5F8ABCF6455F40654458439809254022AAF067F8455F4046C71F56C909254057A30D76F9455F40A7131AD2F2092540C1221A38FB455F40529F3FC80D0A2540FB31F7DAFD455F405A468F84220A25400544D2B801465F40D615D808690A2540BD8E386403465F40EB854C439E0A2540E454C61A09465F403A7BC26DC80A2540ED4CFCAC0D465F400B3A6B01EB0A25400A8E812B0F465F4012E1BABDFF0A2540C839FB1411465F40F98150830E0B254090E91A7714465F4083CDEFEA0B0B2540F71F990E1D465F40A9F17794EF0A25409D2D20B41E465F40897B2C7DE80A254042075DC221465F402C96C73FD80A25409F45A5C725465F406DD800B6CD0A2540DAE1541028465F404DC752DAD10A25402C1CF79C2A465F40D757B2BEDC0A25400696C8AA2D465F40D7868A71FE0A2540E7E3DA5031465F408F7637AA2E0B25407D64CE8E2F465F4090D4E70F720B25403BEB09012F465F407ED41522960B2540ED1C14DE2F465F4025654117C30B2540	\N
@@ -9359,11 +9550,11 @@ COPY public.road_segments (id, road_name, road_type, base_weight, is_closed, haz
 705	Unnamed service	service	1	f	\N	0102000020E610000002000000BE77E5C4E83E5F40E5DB717962C42440811F7AF7EC3E5F4071FF36305EC42440	\N
 706	Unnamed service	service	1	f	\N	0102000020E610000002000000EE6EAF16E93E5F40A4D3049B84C42440BE77E5C4E83E5F40E5DB717962C42440	\N
 707	Unnamed service	service	1	f	\N	0102000020E6100000020000003EEDF0D7E43E5F4097A949F086C424402621EC6FE43E5F40EFA595E766C42440	\N
-708	Osme??a Street	tertiary	1	f	\N	0102000020E610000002000000DFAE4D19EE3E5F40E2B9ADE3AEC424401B4641F0F83E5F405B046B4194C42440	\N
-709	Osme??a Street	tertiary	1	f	\N	0102000020E6100000030000001B4641F0F83E5F405B046B4194C42440D287D3EEFC3E5F40BB3775D487C42440F40C2B26003F5F4024C511B57EC42440	\N
-710	Osme??a Street	tertiary	1	f	\N	0102000020E610000002000000F40C2B26003F5F4024C511B57EC424409B2963320B3F5F40DD312BCA5BC42440	\N
-711	Osme??a Street	tertiary	1	f	\N	0102000020E610000002000000DFAE4D19EE3E5F40E2B9ADE3AEC42440136BA79CE53E5F40CD672F91C1C42440	\N
-712	Osme??a Street	tertiary	1	f	\N	0102000020E610000003000000E3D7593EDC3E5F40F1321E00CCC424409EE7F461E23E5F4047B9EAF0C6C42440136BA79CE53E5F40CD672F91C1C42440	\N
+708	Osme├▒a Street	tertiary	1	f	\N	0102000020E610000002000000DFAE4D19EE3E5F40E2B9ADE3AEC424401B4641F0F83E5F405B046B4194C42440	\N
+709	Osme├▒a Street	tertiary	1	f	\N	0102000020E6100000030000001B4641F0F83E5F405B046B4194C42440D287D3EEFC3E5F40BB3775D487C42440F40C2B26003F5F4024C511B57EC42440	\N
+710	Osme├▒a Street	tertiary	1	f	\N	0102000020E610000002000000F40C2B26003F5F4024C511B57EC424409B2963320B3F5F40DD312BCA5BC42440	\N
+711	Osme├▒a Street	tertiary	1	f	\N	0102000020E610000002000000DFAE4D19EE3E5F40E2B9ADE3AEC42440136BA79CE53E5F40CD672F91C1C42440	\N
+712	Osme├▒a Street	tertiary	1	f	\N	0102000020E610000003000000E3D7593EDC3E5F40F1321E00CCC424409EE7F461E23E5F4047B9EAF0C6C42440136BA79CE53E5F40CD672F91C1C42440	\N
 713	Unnamed path	path	1	f	\N	0102000020E610000011000000F40C2B26003F5F4024C511B57EC42440B8ACC266003F5F4076CB69AA82C424408EFC6607013F5F40BC74385F91C424404C6661F4013F5F40A66A717CA3C4244004B463D9023F5F40C9A2FA18BDC42440645DDC46033F5F409C1FDA22C4C42440F22ECD63033F5F40E0432EDDC9C4244087365BD4023F5F407EB38300CFC4244005E51137023F5F409BAC510FD1C42440B81FF0C0003F5F40DBEB9392D4C424405AAD5D24FE3E5F4078CB7AD6DAC4244031BE1E02FD3E5F40C3842C66DFC42440FC4E3860FC3E5F40676902A0E5C4244097B7D90EFC3E5F4003290C25EEC424402672C119FC3E5F405DF6909504C5244079B53753FC3E5F409E7296A311C524405B54D515FD3E5F40CC6C46BC2BC52440	\N
 714	Unnamed service	service	1	f	\N	0102000020E610000004000000987043E7103F5F405923714518C524404048BB760E3F5F40107FA88F1BC52440CF6163030E3F5F409B5AB6D617C52440E12B15AF0D3F5F40AFF1F4A512C52440	\N
 715	Unnamed residential	residential	1	f	\N	0102000020E6100000060000003E117AEC1D3F5F4081A4993803C52440E8FDDA55233F5F4076F464A318C524409324BEC9253F5F405FD5B4E622C52440748F11F5273F5F40543074362EC524404402A1502A3F5F40EEF77AAD3AC52440073D409C2C3F5F40B1529CFE47C52440	\N
@@ -9450,24 +9641,23 @@ COPY public.road_segments (id, road_name, road_type, base_weight, is_closed, haz
 892	Unnamed service	service	1	f	\N	0102000020E610000002000000ABA22E081B3F5F40F08398F0F0CB24401CC8C4F70F3F5F4056A3B2BC06CC2440	\N
 893	Rizal Street	residential	1	f	\N	0102000020E6100000030000004E91E80ADB3E5F4060F3604150C42440C0ED0912DB3E5F407C14090154C42440E3D7593EDC3E5F40F1321E00CCC42440	\N
 894	Unnamed residential	residential	1	f	\N	0102000020E610000009000000A6947C91753E5F4060014C1938C424403E2A59A97B3E5F4090C82D9C5AC4244030E0C03F803E5F400FD4298F6EC424405DF3F45B853E5F40C4E4B27680C424401F0EB7E8893E5F406391CB248FC4244058761C9A8D3E5F407AF53B5E92C42440F65503DE933E5F40F9BB77D498C42440E86DC72F973E5F40098B8A389DC424409A0F632D993E5F40D88AEC399FC42440	\N
-895	Osme??a Street	primary	1	f	\N	0102000020E610000003000000E63DCE34613E5F40D02BF93317C3244018DD8B79673E5F407F7C53A236C32440F1FF99F76E3E5F40C367EBE060C32440	\N
-896	Osme??a Street	primary	1	f	\N	0102000020E610000003000000F1FF99F76E3E5F40C367EBE060C3244055A52DAE713E5F406669A7E672C32440893952C7743E5F400F7052E284C32440	\N
-897	Osme??a Street	primary	1	f	\N	0102000020E610000004000000893952C7743E5F400F7052E284C324407CE42032763E5F40F4B3475E8CC324402D21C43A7A3E5F4017C4F649A4C32440B52CA9247C3E5F4023A30392B0C32440	\N
-898	Osme??a Street	primary	1	f	\N	0102000020E610000007000000B52CA9247C3E5F4023A30392B0C32440294B636A813E5F406EDE3829CCC32440A9FA95CE873E5F404A5F0839EFC324406572C5208B3E5F40E97BB207FFC32440756FEAA88F3E5F401A8E42ED12C424408AE42B81943E5F408EAF3DB324C42440C56C6EF1953E5F40B5920CEF28C42440	\N
-899	Osme??a Street	primary	1	f	\N	0102000020E610000002000000C56C6EF1953E5F40B5920CEF28C42440581A9D989A3E5F406D2B07C435C42440	\N
-900	Osme??a Street	primary	1	f	\N	0102000020E610000003000000581A9D989A3E5F406D2B07C435C42440869565E39C3E5F40ED61D45A3DC42440D3156C239E3E5F40F02609D341C42440	\N
-901	Osme??a Street	primary	1	f	\N	0102000020E610000002000000D3156C239E3E5F40F02609D341C42440F8003851A63E5F40ED90AC0D5FC42440	\N
-902	Osme??a Street	primary	1	f	\N	0102000020E610000003000000F8003851A63E5F40ED90AC0D5FC42440F0D53329AA3E5F401CB62DCA6CC4244025CF5037AB3E5F400EFC034070C42440	\N
-903	Osme??a Street	primary	1	f	\N	0102000020E61000000200000025CF5037AB3E5F400EFC034070C424405E09490BBC3E5F408C16FB26A8C42440	\N
-904	Osme??a Street	primary	1	f	\N	0102000020E6100000020000005E09490BBC3E5F408C16FB26A8C4244018B14F00C53E5F40A24F9ABCB7C42440	\N
-905	Osme??a Street	primary	1	f	\N	0102000020E61000000200000018B14F00C53E5F40A24F9ABCB7C42440D436B4B7CA3E5F407DC96BCABAC42440	\N
-906	Osme??a Street	primary	1	f	\N	0102000020E610000003000000D436B4B7CA3E5F407DC96BCABAC424408F9FD7E9D13E5F4087DB46A8BEC42440E3D7593EDC3E5F40F1321E00CCC42440	\N
+895	Osme├▒a Street	primary	1	f	\N	0102000020E610000003000000E63DCE34613E5F40D02BF93317C3244018DD8B79673E5F407F7C53A236C32440F1FF99F76E3E5F40C367EBE060C32440	\N
+896	Osme├▒a Street	primary	1	f	\N	0102000020E610000003000000F1FF99F76E3E5F40C367EBE060C3244055A52DAE713E5F406669A7E672C32440893952C7743E5F400F7052E284C32440	\N
+897	Osme├▒a Street	primary	1	f	\N	0102000020E610000004000000893952C7743E5F400F7052E284C324407CE42032763E5F40F4B3475E8CC324402D21C43A7A3E5F4017C4F649A4C32440B52CA9247C3E5F4023A30392B0C32440	\N
+898	Osme├▒a Street	primary	1	f	\N	0102000020E610000007000000B52CA9247C3E5F4023A30392B0C32440294B636A813E5F406EDE3829CCC32440A9FA95CE873E5F404A5F0839EFC324406572C5208B3E5F40E97BB207FFC32440756FEAA88F3E5F401A8E42ED12C424408AE42B81943E5F408EAF3DB324C42440C56C6EF1953E5F40B5920CEF28C42440	\N
+899	Osme├▒a Street	primary	1	f	\N	0102000020E610000002000000C56C6EF1953E5F40B5920CEF28C42440581A9D989A3E5F406D2B07C435C42440	\N
+900	Osme├▒a Street	primary	1	f	\N	0102000020E610000003000000581A9D989A3E5F406D2B07C435C42440869565E39C3E5F40ED61D45A3DC42440D3156C239E3E5F40F02609D341C42440	\N
+901	Osme├▒a Street	primary	1	f	\N	0102000020E610000002000000D3156C239E3E5F40F02609D341C42440F8003851A63E5F40ED90AC0D5FC42440	\N
+902	Osme├▒a Street	primary	1	f	\N	0102000020E610000003000000F8003851A63E5F40ED90AC0D5FC42440F0D53329AA3E5F401CB62DCA6CC4244025CF5037AB3E5F400EFC034070C42440	\N
+903	Osme├▒a Street	primary	1	f	\N	0102000020E61000000200000025CF5037AB3E5F400EFC034070C424405E09490BBC3E5F408C16FB26A8C42440	\N
+904	Osme├▒a Street	primary	1	f	\N	0102000020E6100000020000005E09490BBC3E5F408C16FB26A8C4244018B14F00C53E5F40A24F9ABCB7C42440	\N
+905	Osme├▒a Street	primary	1	f	\N	0102000020E61000000200000018B14F00C53E5F40A24F9ABCB7C42440D436B4B7CA3E5F407DC96BCABAC42440	\N
+906	Osme├▒a Street	primary	1	f	\N	0102000020E610000003000000D436B4B7CA3E5F407DC96BCABAC424408F9FD7E9D13E5F4087DB46A8BEC42440E3D7593EDC3E5F40F1321E00CCC42440	\N
 907	Rizal Street	primary	1	f	\N	0102000020E610000003000000E3D7593EDC3E5F40F1321E00CCC42440D1C88C5CDC3E5F40F26FE18AD5C424401E0714A0DC3E5F40B4EFE599F2C42440	\N
 908	Rizal Street	primary	1	f	\N	0102000020E6100000020000001E0714A0DC3E5F40B4EFE599F2C4244071BDB733DD3E5F408118326832C52440	\N
 909	Rizal Street	primary	1	f	\N	0102000020E61000000200000071BDB733DD3E5F408118326832C524402995F084DE3E5F40FE8AEBCEC9C52440	\N
 910	Rizal Street	primary	1	f	\N	0102000020E6100000040000002995F084DE3E5F40FE8AEBCEC9C5244052F75C01E03E5F405A5C887A66C624404044B467E03E5F40093D51C884C624403FCB4E9AE13E5F40419C871398C62440	\N
 1012	Unnamed footway	footway	1	f	\N	0102000020E61000000700000053FBBEC980475F40501C40BFEFB7244011340B5982475F4008E00B38F0B7244020CFD32588475F400103F7F2F1B72440F4CA50708C475F406F9D7FBBECB724408D3BEF1090475F40E28FA2CEDCB72440E59189A592475F40413E3267C7B72440EAAAE57393475F407B8670CCB2B72440	\N
-1299	Sogod-Bontoc Road	primary	1	f	\N	0102000020E6100000090000000C95DAE6213E5F404240BE840ABA2440C5A05DCF213E5F40EDAEFDAE19BA244097FA1E9A1E3E5F40B8C777CEBBBA2440FD5536621C3E5F40D683937E0CBB2440B1378CDD193E5F4080666BD84ABB24403C725AA6153E5F405B83ADC89EBB2440E9D2BF24153E5F405D0828C3A7BB2440A29927D7143E5F40305D2D1CADBB2440DA48C8F6103E5F406C150ECEF1BB2440	\N
 598	Unnamed unclassified	unclassified	1	f	\N	0102000020E6100000A8000000ADDADA673A415F409CB11EAD20C8244029102CFD3A415F409DC3109436C82440B7F2EDB83C415F409445ABA45FC8244028D9452C3D415F409ED9098A7AC82440ED05B0123D415F40E597C11891C824409461269B3C415F4028716770A5C8244047E11F5B3B415F4076EC5685BCC82440E34FF97C39415F405490FA46CFC82440B92F0CFD38415F403CC1FEEBDCC824406CDA7BA738415F40C6466AEBF1C82440E9B3A8F438415F40BAE9E0AAFCC82440FA60191B3A415F409A65AABB0DC92440817DCFA33D415F406DACC43C2BC92440F12FDD7F3F415F40EFCFA0FC38C924407392F7BB41415F40ADFDF8A644C92440B3E8425145415F40E197FA7953C92440341477BC49415F405AE6BEE666C92440A4F496BC4B415F409EC25B316DC924401A6A14924C415F405A03A5B272C92440B5A107E34C415F40AB31D75878C92440911040C54C415F4005114EB0A4C924404A4AD5D14C415F40731F6FA8CEC92440EBE5779A4C415F40C90AD9D4D4C9244050DF32A74B415F401861E52BDCC9244009EE51C94A415F40D57954FCDFC924407B3606F849415F40CFBC1C76DFC92440260CB90842415F40B7DE2527C9C92440A90716D140415F40F8CDB348C9C92440621635F33F415F40A3D75537CDC924407A89B14C3F415F4076E4A320D3C92440E61192BB3E415F4029988CBEDDC92440637891AE3E415F40F8F99408F9C9244092CB7F483F415F40AC85A3F501CA244092F6F53240415F40A3F8421207CA2440DF1AD82A41415F40FBDBAF4C09CA2440F6871C1142415F4078FD930909CA2440EF90628044415F40AE72B21E08CA24407DA4D29945415F409B6BE22E0CCA24400FAE25894A415F40894336902ECA24405CFD7D6B4C415F407EDBB86A43CA24405506C4DA4E415F402CC7759D57CA244001193A7650415F40BB3CE7B864CA2440F495F6BC51415F40644392B476CA2440A6DE09AC52415F40A16AF46A80CA2440E70F17CA53415F402079E75086CA2440ECC9B21655415F40497C934B88CA244044AA831758415F40D6FCF84B8BCA24408BDDE3F159415F40A56CEC6D8ECA244007F6F3015C415F40245B029596CA2440701008CF5F415F40D04EBCB9AECA2440BC900E0F61415F40246AFD88BACA2440F2A3D06861415F40CBA3761AC4CA2440FEF2C98A61415F4096236420CFCA2440AAACB71762415F40E96A86AF0ACB2440861BF0F961415F408DC6EB0B32CB24403995B14662415F401B3C5D273FCB24409133034B64415F40342C465D6BCB2440EF2FCC5367415F40BAFB77D89FCB2440FA1C69BA68415F4068E7340BB4CB2440463B133F6B415F4003CC214ECCCB2440E5C40DAE6F415F40A16A4F24F3CB24409047156A72415F4003ED0E2906CC244036412F3773415F4097F7DD1912CC24405AD2F65473415F406277CB1F1DCC24405A03A5B272415F40B3C2E3912ECC244038A9C36570415F407F66B56565CC2440050A06216A415F4039E2DA9ABECC2440DCE918A169415F402C8D4E4CCDCC244029CC7B9C69415F408D0F0E51E0CC244029CC7B9C69415F409A907B5F01CD2440BE18254369415F40F45D00D017CD244083A7EBE467415F40F946191648CD24409BE9B9E067415F4096FB2EB65ACD2440C509A76068415F409AD2551575CD2440122E895869415F402FFA0AD28CCD24402F2AF3A06A415F402762B6099CCD24402CBC26FF6E415F40518946D2C9CD24408560B0766F415F40DB19A6B6D4CD2440324B4C616F415F404716D5C7E8CD2440F7A864A56E415F40CDF0FA2713CE2440E0B1E9526D415F402A58E36C3ACE244042171E4567415F404E44BFB67ECE2440158B845B63415F40983446EBA8CE2440BC7669C361415F40EBFCDB65BFCE244034C7A82160415F4092EBA694D7CE2440A6CDDD535E415F40AD510FD1E8CE24400C6E10525C415F40A01C6041F5CE24408B9B64F558415F40CFD14FDD01CF244098F6CDFD55415F405842D2020FCF2440F3E8465854415F40E1D231E719CF2440C4DD0F2E53415F40FAD005F52DCF2440CACBF51153415F40D8E43AD741CF24400C93A98251415F40957142D774CF24405A8FB1C950415F40D2D5671888CF24405A95E93C4F415F40A6F4A7E8A3CF2440C0BF52A74D415F40633CEF6BC9CF2440D8A5FC5A4D415F4046ED7E15E0CF2440A28C028E4E415F40B7C0D4850ED02440827B54B252415F404DABD7E374D024403A39E8B754415F4082CA53B18CD02440BBF1EEC858415F40807CAE5BA9D02440FB08579B5A415F40157C8967BFD024402BA1606B5B415F40EB92CC45D7D02440F4B578C25C415F40B6943D53F9D024404BA71A6261415F40AB668CC525D12440672783A364415F405B069CA564D124408423EDEB65415F40548B2DA97FD1244055FE107665415F40CEA623809BD12440FCCCB45865415F400E034CCFAAD1244025010FB166415F40F4A3E194B9D12440BE5D407969415F4073672618CED124408E8E50D86A415F406F2475A7E0D124404078A3456C415F40340411F3F6D124401B3DC8FC6D415F405E8C37E801D224402B572E0A71415F40055E1C4B0ED224403C2F151B73415F40454AB3791CD224405FBD40FF73415F405436ACA92CD224409549682673415F400A8FEC003ED22440896D9C5E73415F40A6DB6D7253D22440056FA35C75415F40E14790A56AD22440B62110F978415F4075DFD68283D22440A9818BBA7B415F40C2AD71EC8FD22440D10E6E217E415F40717C485398D224408ABB30887E415F401E2B42FBA2D224402AB3F7987E415F403E062B4EB5D224401E4A592B7F415F40799A2732CED22440D666ADB280415F4085268925E5D224405884ACB882415F401BE1A3B4EDD22440D43DFC4685415F4028C3A7EFEBD22440A326553687415F402571FB8ADAD22440E99ED04689415F401D3A3DEFC6D22440B340BB438A415F4031B19EFFC3D224403C7D4E8B8B415F403AEB538EC9D22440651069658C415F405749BFD8D6D224400BDC700E8D415F40F5D5FAC7E7D224401C412AC58E415F4090227C39FDD22440B5E276C391415F4090F7AA9509D3244033B44B659B415F4038FB5E9E29D32440BACAC97AA0415F407522C15433D324408F56B5A4A3415F403818456A35D32440A5EE6F75A5415F40C41330702FD32440B55EC257AA415F4027333910EDD22440A7316B73AD415F40EB7A585EA8D224408FA449CEAE415F4006A3EDF373D22440D006054AAF415F40F9A303ED69D2244076001F17B0415F40E052848A60D22440BC75FEEDB2415F409BBBA7BC67D22440D3382FA9B5415F40215C01857AD22440CBCBAB84B8415F40D81CD60A89D2244017CD1484BC415F4089BBD5CE8BD224400D96A075C3415F40A9CC83AA87D22440A52E19C7C8415F40BD63C27982D224409C114A04CF415F408B3155D570D22440AB926D85D5415F40C771964858D22440B41776BDD9415F40778B1B1252D22440EC42BD2AE1415F402E162B0F77D22440004DCE9AE9415F4019C4ACBC89D22440746B88E0EE415F40676A6D7594D2244059599187F4415F406A04D149A5D224405D667D6FF8415F40A2B9A9DC9FD22440A9256772FB415F401F4B1FBAA0D22440C532A259FE415F40AA4313CDA8D2244035FCB84700425F403D111F33ABD22440B2D2495B01425F400CD4BDA9A3D22440CF13CFD902425F40C4A574FA8BD22440338B506C05425F4018CFA0A17FD22440964451FB08425F406323B5F578D22440761C9A0D0D425F40F3E3D47377D22440	\N
 599	Unnamed unclassified	unclassified	1	f	\N	0102000020E610000018000000761C9A0D0D425F40F3E3D47377D22440D3F8855712425F40614898B388D22440E973FFA215425F40804B5BB79CD22440B05F668E1B425F408FC4CBD3B9D22440384E0AF31E425F40DCF70379D1D224409516896423425F40C740E8EAD8D22440F842B74D27425F4098BAD001EED22440320ADD802A425F401F7B0789FED22440405DEEDD30425F404F58E20165D324404BA0771934425F407157AF22A3D3244056C15E1734425F40045F8720BDD324400866964E35425F409EFBBCF3D5D32440C45E28603B425F40AB51595E03D42440877F22603E425F4013A342D02CD42440096F0F4240425F40F210210956D424406E90A4FF40425F4000B672E5A2D42440EA3823EF41425F404007A74FBCD424400C3444BA44425F40A9836165D9D424400BB20A4048425F40BFCEF2E1FED42440DFAD878A4C425F40F2CEA10C55D524401EEA2DD450425F403638B64368D524408D4E4CCD54425F409D3DE13664D52440DA136E4356425F408F8EAB915DD52440E5428AA658425F407DE074DC3AD52440	\N
 602	T. Dagohoy Street	residential	1	f	\N	0102000020E610000002000000951348E4963E5F40F80F3345CAC4244007730525963E5F409D09F258D8C42440	\N
@@ -9495,9 +9685,6 @@ COPY public.road_segments (id, road_name, road_type, base_weight, is_closed, haz
 627	Unnamed residential	residential	1	f	\N	0102000020E610000004000000F8003851A63E5F40ED90AC0D5FC424401C615111A73E5F4030664B5645C424407592AD2EA73E5F408ADC1D6338C42440FEEE1D35A63E5F40C1C4C48B2AC42440	\N
 628	Unnamed residential	residential	1	f	\N	0102000020E61000000200000025CF5037AB3E5F400EFC034070C42440C66757C6AB3E5F40003ED3A645C42440	\N
 621	Flores Street	tertiary	1	f	\N	0102000020E6100000020000003FCB4E9AE13E5F40419C871398C624407B455CA5E03E5F40C162C3899EC62440	\N
-1300	Unnamed path	path	1	f	\N	0102000020E6100000060000007AED88F9283C5F40AD8E77A27FCD2440E55828E3293C5F40E3BFE556ADCD24406C335F6F2C3C5F404B2EB594E2CD244037209D152C3C5F404FDA0A5009CE24405E73FD71313C5F405386600B30CE2440A18BE1453A3C5F4082C1DABD81CE2440	\N
-1301	Unnamed residential	residential	1	f	\N	0102000020E6100000020000003EF262BCC13E5F400DD1D7E209CB2440CD6D6704C03E5F4078616BB6F2CA2440	\N
-1302	Unnamed unclassified	unclassified	1	f	\N	0102000020E610000002000000C0A1A64C203E5F40E3FDB8FDF2C12440BA884A7E1F3E5F40C0D42A55FDC12440	\N
 668	Unnamed unclassified	unclassified	1	f	\N	0102000020E61000006D000000ED1C14DE2F465F4025654117C30B254053584EE72F465F40467DEDF4DE0B254034AF343A31465F4042AACDA4F20B2540E48C17C135465F406A1D0BC0F50B25406C674E4D38465F4015DFF53EFA0B254071F03B3C3A465F40E0360994030C25404DCF053F3B465F4056500768110C254065FACA283B465F40A4F6C7201C0C2540E2C226D739465F40D968EF42290C25401FB3FD7538465F409B786231450C2540DDC36F5438465F40F3CF679B760C2540EFA42A1238465F40BD94151E8F0C2540158A198634465F40C84851C2A70C254034AF343A31465F40A6C123E0C60C25402F26474B2F465F4037943545DB0C254048F883262E465F40C76647AAEF0C2540B44181D22B465F40107FA88F1B0D254009ED8B3A29465F40C8C4F70F330D2540F887D28327465F40665133FF430D2540CAE1934E24465F40C336983C540D25404EFDCDD520465F407AF76CC2620D2540973F3AD01E465F40819EBC7E770D25405DA38A871C465F407B8BE2B08F0D2540D5E2F84619465F40F7C6B546A90D25400A8E812B0F465F4033B96290050E25405FACB9ED0C465F4068F5C429290E2540361C3B4D0B465F40A40E3C084B0E2540368F68A70B465F40429B77F75B0E25408F368E580B465F4035AB88E4750E2540249DDC4A0A465F407DF9AE528B0E2540075C57CC08465F40F4972721A20E254061037D7D08465F408479347ADA0E2540194EE3280A465F40E6C52EF6030F25404E4700370B465F40CE250B4E330F254077F123230C465F40A80183A44F0F2540E8DDB3090B465F40A2B8E34D7E0F2540A77BF88D0A465F40C25D0718A70F254096896C3109465F40C9491751C90F2540094E226706465F40755AB741ED0F25404B2F7B2304465F400C0ADEEBFF0F2540BEF3305901465F40A9763C1C131025400C97B091FF455F4026D2EC702A102540EF552B13FE455F409727C6E86F102540B5464E70FB455F409059AC979510254057BDB2C1F8455F40E62B3707BE10254005F63D8FF6455F404AB8EB00E310254030DD7FBFF3455F409F05FC75021125406C4320F2F1455F40717FE48C1711254026E5492DEF455F40E140481630112540717E79B7E8455F40CE3D7F3562112540B278FBBDDE455F40A8AD6C7AAB1125402FB484C6DD455F40B57691F8CB112540D69931BBDD455F4067DFCB33E5112540FABA67B8DC455F40D7A02FBDFD112540FABA67B8DC455F407C0A80F10C122540ADEF0DCFDC455F40D834A5AB2A1225404F4CCDD4DA455F40979CC9ED4D12254043FDD3B2DA455F40CCD82B87711225400DEA1159DA455F40FA3779DB96122540019B1837DA455F40A06B0487BC122540F5317AC9DA455F4002733E86D812254054628D69DC455F4044E44FAFEF1225403CAAF5D9DC455F40307CE9921613254006973380DC455F407F0CC28135132540845F8F2EDB455F4003AA2457561325408BB26D07D9455F401E2D735F7313254021A68E9FD7455F40EAE923F087132540B79FE7AAD4455F4053AE9575A4132540E29A96B3D2455F4095AF157EBA132540E97A4732D0455F40470D5CD4DD1325407F880D16CE455F40897E6DFDF4132540AFF83C35CD455F40270BA9EC0514254097CD774BCD455F4021B30EA210142540D8158E7BCE455F400E7A8038591425403E26529ACD455F4023A534F68014254097CD774BCD455F40B9991B1DA114254008139040CD455F4045CFD2BAB2142540DE03745FCE455F40CA6548BA0B152540C6D8AE75CE455F407A83D492331525409152BFC1CD455F4034BE2F2E551525401A6A1492CC455F400722307B7E15254074FDCC6ACB455F4063DCC3149B152540AB7587B9C9455F405D644C0BA8152540A0EA460EC7455F409793ABB3B5152540AE45B016C4455F408ACE8D44C3152540DE42B2DBC2455F40285BC933D4152540EA91ABFDC2455F40E22593AEF4152540EF1A99ECC4455F4039F81D1E1D1625406C5622F5C3455F40B433F1B3361625400EB3E1FAC1455F40C9946AFA47162540D9B9C4ECC0455F40DD706946501625403927F6D0BE455F402B172AFF5A162540FD8C66C0B4455F4018CFA0A17F162540D6390664AF455F40AAF06778B3162540013BEDDFAB455F401B7C0679E216254069FBFC9CA7455F4070C916EE01172540757E4056A6455F40D8C34DFC071725402FB8301C99455F4049EA4EC12B17254044CB70F291455F40375D05E7421725405ADEB0C88A455F403E1350977B1725401CF0F96184455F40879E39909A17254061E3FA777D455F4074E3271FCC172540F82DDF9F77455F40F3F22A210E1825408EAED2DD75455F4056FA64202A182540A2F721CA72455F409213DCFE4B182540A4C112B46E455F40575815866D18254015AEA29A6D455F40CD71135A7B182540433A3C8471455F407AB18BFDC0182540B43A394371455F40AF0AD462F0182540	\N
 669	Unnamed track	track	1	f	\N	0102000020E610000031000000CD12AE91EE485F4047F8286DBBBA2440A71E0EB7E8485F403261EA9DC0BA244090E51368E6485F403261EA9DC0BA2440DC6D7253DE485F40260F5542C1BA2440152C1F93D6485F404CD246BFC7BA2440C693933FCE485F4007C8E1DDDBBA2440147C2EAECC485F40534EC5D7E8BA2440460C3B8CC9485F40A8195245F1BA2440DC1C9DA9C6485F40E3738291F2BA24408498F0F0C3485F4083F8C08EFFBA24406D5FF6A1C1485F400D4460F6FCBA24408D2551D4BE485F40BDB09014ECBA244059350873BB485F40A0D4A8D1F5BA2440429D4DA2B9485F40463305210FBB24406CAF05BDB7485F40AC2A453C23BB2440F1F5B52EB5485F40B6114F7633BB2440E13A10A3B1485F40BCEB6CC83FBB24406581C014AF485F40BCEB6CC83FBB244055C61A89AB485F405289A18B3CBB24407B0ACA7EA7485F400503BE912FBB24402ED27AAEA5485F40698B6B7C26BB24401E17D522A2485F40A4E59BC827BB2440EA268CC19E485F4081913C7C3EBB2440937A05589A485F404AC67B1F58BB2440888D68F198485F4055F833BC59BB24401899DB1896485F40FDC11B2D62BB244092F2EE2392485F4082B5204A6ABB2440D5EDEC2B8F485F40420356B373BB244071A47DBD8C485F40420356B373BB2440CBB09B638A485F40B8B7B64B76BB24402CC2A8FF87485F40BAA4C5747CBB24401661D4FF83485F400F7052E284BB2440FF27DAB081485F40E167B7F182BB2440E9EEDF617F485F40F5FEF5C07DBB244007DD14457E485F407D5D86FF74BB2440AF58688C7B485F40E6BF513C78BB2440981F6E3D79485F40561C188A85BB244099F7938C77485F40AFF490DF91BB2440C4094CA775485F4086C613419CBB24405415BFCE72485F40F315EEA6A5BB2440C14A4FA26F485F4019D9DF23ACBB24404C0F54D76B485F40281884A8B1BB2440ADF886C267485F40D926158DB5BB2440E6DE0DB361485F40665FC31DB9BB2440B2EEC4515E485F40A1B9F369BABB24406766C11F59485F4058C27F5FC8BB24409091A2844F485F40BCCCB051D6BB24401F74BFF943485F400953944BE3BB2440B65C47663F485F408E469968EBBB2440	\N
 670	Unnamed residential	residential	1	f	\N	0102000020E6100000030000005B5EB9DEB63F5F406EDA8CD310C52440575F5D15A83F5F403F42830310C524408DD71764A63F5F40E08101840FC52440	\N
@@ -9709,8 +9896,6 @@ COPY public.road_segments (id, road_name, road_type, base_weight, is_closed, haz
 1164	Unnamed path	path	1	f	\N	0102000020E610000006000000D4E47338843A5F40E63B9DD090BA24402B1B310E893A5F40262834FF9EBA2440F99BF5CE8D3A5F402CA0AB0892BA244040D2F1E28E3A5F40E2804C2146BA24404A40F108933A5F4002F390291FBA2440ED3E6C8E983A5F40763F5D9324BA2440	\N
 1352	Unnamed unclassified	unclassified	1	f	\N	0102000020E6100000040000008D7C5EF1543C5F4043A38515B8CA24409972CF04543C5F40DEFAFA6BC3CA2440C52BFF10513C5F40C080B971E6CA2440C61DCAAB4E3C5F40974748EEFACA2440	\N
 1165	Unnamed track	track	1	f	\N	0102000020E6100000280000007AFCDEA63F3C5F4077F0B84D5DBE2440709FB01F3D3C5F40C7A64BB505BE2440A054FB743C3C5F40D124B1A4DCBD2440785787ED383C5F4053FFC5D8AEBD2440E5D4CE30353C5F40B024D46762BD24406EEC2301343C5F4002C985144DBD244063FF869A323C5F403A19C16B3CBD2440188BF0402E3C5F406DACC43C2BBD2440F7F763A4283C5F40E326593D16BD24409A1540E7243C5F4094A872350DBD2440975643E21E3C5F40E01C644804BD244099C40F841A3C5F4099897D5DE1BC24400D929966153C5F40D2246717C2BC24404B010E46113C5F4070CA81C3B0BC2440AB51595E033C5F40CFEB996F8EBC244036A094FFFF3B5F4007F41D577EBC2440C153C895FA3B5F400875914259BC24408CB6CFCFF93B5F40E9B985AE44BC24405C2F979EFA3B5F40E73FFF9831BC2440147D9983FB3B5F40BE02870618BC24402778F98CFA3B5F401137A79201BC2440C85EEFFEF83B5F408429CAA5F1BB24405A1AAEC4F23B5F4044D8953BD8BB2440BD68D9A4EC3B5F40D266E613C3BB2440A724462AE73B5F40A7CCCD37A2BB2440B3CF6394E73B5F40D365D6F786BB2440D5230D6EEB3B5F407FF0EBD165BB2440A3E9EC64F03B5F4084A91C4938BB2440EDB36F93F63B5F40FD1EAB4A11BB24400A206BFCF83B5F4032F26899FBBA24407B40EAC0033C5F40C843DFDDCABA244015E5D2F8053C5F408DF79969B1BA24404BE4277A053C5F406C27A5FB94BA24409E3EA7C5053C5F4000732D5A80BA24406D86C036073C5F40375BD48272BA244049900024093C5F40F8109E1A79BA2440DBC4C9FD0E3C5F40877B1B5190BA24401F1ACC15143C5F40390F27309DBA2440997FF44D1A3C5F401A83F34EAABA24408A462D83203C5F40D9BE36D19DBA2440	\N
-1303	Unnamed unclassified	unclassified	1	f	\N	0102000020E6100000260000006FBC3B32D63B5F40CD36DCECB4E22440FF12A749DF3B5F4023A0C211A4E2244075E1AC2DE13B5F40B42D14FAAAE22440D311C0CDE23B5F40A6B8AAECBBE224408B5C2679E43B5F40ACDA7FAEC7E2244067AE1DD6E53B5F4015F5937BCBE224407B7CE7BCEB3B5F4083E5BE8BADE22440F00DCF5CF13B5F40DB9953138EE224406669A7E6F23B5F40E7CE02A381E22440D0E8B3A8F43B5F402AEC585B67E22440ED293927F63B5F402C62D8614CE22440407E80FFF73B5F404D2EC6C03AE22440CCC7FF2EFD3B5F409CC58B8521E22440489E9042FE3B5F4098480E7D1CE22440D1C31A78FF3B5F40BE16F4DE18E2244022B3695B033C5F40D2AD32AE13E22440FD778E12053C5F40AB5AD2510EE224406209B5F0063C5F40E5BFF68205E22440D12B54ED093C5F40ED574B4BF6E12440A114ADDC0B3C5F40584D7C5AEAE12440469561DC0D3C5F402E35E785E0E1244044CB70F2113C5F4010FF55ECD4E124404F9BCCD3143C5F40581EA4A7C8E1244083499638173C5F405E961BB1BBE12440050E0D30183C5F409BA0979BB9E12440ED3BD054193C5F40E204A6D3BAE124404BDF104F1B3C5F40B29476B4BBE1244043273A811F3C5F4099FB3FE2B2E12440E98D4935223C5F40B58F70B5A9E124402F79F29F243C5F40FDAEBE709DE1244022382EE3263C5F40B028DB7690E12440321015F4283C5F4047A9296E81E12440D72BD1FE2C3C5F40E9CEB81567E12440DC0D47FC2F3C5F40B0EA07D04AE12440D41055F8333C5F4016CC4EF51AE12440BA1E3B5E373C5F403EAE0D15E3E02440785787ED383C5F405F155E38C6E024407665BC523B3C5F408EF1176998E02440	\N
-1304	Unnamed unclassified	unclassified	1	f	\N	0102000020E61000000E0000004A65E5F2FA3D5F40B4D59B0766C72440A8EE80A1FD3D5F4094BA0963B0C724405A65A6B4FE3D5F40D5C67D50BCC72440A19BA2C8FF3D5F404DBB9866BAC72440712B73A9003E5F40C42A3982AFC7244010BE41C5023E5F404268F3EE7EC72440B19B638A033E5F407153A81375C72440BC8564B7053E5F4057BA71416CC72440FC0FFAE3073E5F4024CDC41968C72440885979130D3E5F405D77A9C76CC724402C5B90D2113E5F40CD6ED2D96EC7244007D561E0143E5F4023ADE75A6AC72440D15CA791163E5F407A0BDA9A63C72440A708707A173E5F401B7629BF56C72440	\N
 1167	Unnamed path	path	1	f	\N	0102000020E61000005600000044842458413B5F40680B6366FAD4244012C3691C453B5F4040A61023DFD42440E98B738A443B5F4060C2B2E3D0D42440553431B8413B5F40AF963B33C1D42440808EA0423F3B5F4047E4BB94BAD4244009FF7D213F3B5F40D2EA9A7FAAD42440142E9A84413B5F402FE9DE7998D424400EF8FC30423B5F4092C437B984D4244038914F7E413B5F407CFB294476D42440E43098BF423B5F40EA78CC4065D424407801405F443B5F405891D10149D42440D1BF6E22443B5F4081A268D432D424403B3F7BE4453B5F400E1FC7C507D424408FFB56EB443B5F4042AACDA4F2D324408F99FA2F463B5F4042C3AC61D0D32440BF68EAD0443B5F402D1A7CABBFD324407F2370DA423B5F40E6EB32FCA7D324401989754F433B5F406848CB3791D32440296F91C5473B5F405DDC460378D324409FB6FC76483B5F4014B6FA4564D324404113BC7C463B5F40A92160634DD32440E2B1FA7E453B5F40B9FE5D9F39D324400C5FBAA4453B5F40B08ADC781CD324406A02FB9E473B5F40A613645F0DD3244022C08EA4493B5F4096DFB3BFFDD22440401E55A8493B5F40915B38B5D8D22440E2ABC20B473B5F40F099362DC2D2244095174FF3443B5F4036340AEEACD22440AEBB79AA433B5F400C4746BD96D22440B47B4D6A433B5F4067DDF58887D2244081913C7C3E3B5F4053E1197E81D2244047B30D373B3B5F40C46BA86274D22440723B8FE5383B5F40AADD657561D224403D76BC6E363B5F40524DA48F54D224404F54DBF2363B5F400292FAFC41D224401D90847D3B3B5F40E55E605628D22440A9633A19413B5F40B9CC446C0BD22440484CF509453B5F4045AB49A6F9D124403AF18B01483B5F40C6579643E6D124406A02FB9E473B5F40BDE3141DC9D12440E17A14AE473B5F40E6ACF47FB3D124408729DBD1493B5F40FEA3CA8BA7D12440985DE62A4C3B5F405CD4DD2BA9D12440E4C0ABE54E3B5F40FFA6C17E99D124404D0F0A4A513B5F40DAC9E02879D12440D52E5C0C543B5F4014E74DEA70D124409F01F566543B5F400C68D8DE5DD12440807D1931583B5F405748540328D12440CD73E904593B5F40232CCF2802D124407E40FBEC5B3B5F40999B6F44F7D0244030D1C54B5C3B5F40CA445BDFD1D0244068757286623B5F402E686B8EBDD0244036C588E9673B5F40F54DF5BFB7D024401C2CF75D6C3B5F405174136BA7D02440A4D81BC66E3B5F40B9228CFA7FD0244066101FD8713B5F40FCE82F4F42D024408337FF0A743B5F407D4DC57C2FD0244046FCD4C2763B5F40EBE63D29EECF2440FD851E317A3B5F40B430557AB7CF24407429AE2A7B3B5F40C3B3A95F8ECF24402F25DC75803B5F400C8A308F46CF244069BEEF84833B5F408E4B66063BCF2440491DD3C9883B5F404449EDEAFACE244018E9EA338C3B5F40BC3901F2CACE24404E531564953B5F4030AD97F095CE24406A74BD23993B5F40755D537B6CCE2440FCBF8F0F9F3B5F407D3D5FB35CCE2440D664D707A33B5F4062BA10AB3FCE24404BE5ED08A73B5F403F749C363ECE2440D8E95102AC3B5F40BE33DAAA24CE2440D01D0E5CAF3B5F4077C0D07EFFCD2440ABC88DC7B13B5F406F415B73ECCD24401D14DE2FB03B5F408BE07F2BD9CD24406A0AAE03B13B5F40B89965AABBCD24409DC94807B53B5F40244AD63CA2CD2440A87FFF9CB83B5F40C4F5DECE74CD24405F68098DBB3B5F40494A7A185ACD24409F7CD525BE3B5F4008B18E3E41CD2440C27D2E64BF3B5F40938C9C853DCD24402155B9F5BF3B5F40DDDDB9E644CD2440EBCB2D08C03B5F40DD5F3DEE5BCD24402D7CD866BE3B5F4048AC206173CD244028D6A9F2BD3B5F402B35D65988CD2440C224A655BE3B5F40FB511E2796CD24407481261DC03B5F40F594E6A095CD2440B467E091C23B5F407A4E1F2686CD2440	\N
 1168	Unnamed track	track	1	f	\N	0102000020E6100000B1000000B74604E3603C5F4046BD964682CF2440FC2E1114643C5F409D9D0C8E92CF2440A810D951663C5F4030CDBE3CAECF2440F5C42929663C5F40ACB5E67DD2CF2440731A587D643C5F40E749E361EBCF24408B451D67643C5F4040790E1B1BD024400EC57828653C5F402DC1F39C3ED0244095E4CAEA673C5F4043345FCA65D0244035EAC6606A3C5F400639DED38BD02440041BD7BF6B3C5F4062F3716DA8D02440EC1A88C06C3C5F405F68098DBBD024406E0D11DC6D3C5F4068244223D8D024403AA1C6736C3C5F40999B6F44F7D0244087527B116D3C5F40567E198C11D124408CAD56DC6E3C5F4019F329B638D12440F15E5A796E3C5F405A396A3B5CD12440D98C1D9E6F3C5F40C8BA134779D12440C16158B46F3C5F4024E5380197D1244091A97125713C5F4053477D48AED12440F6E74768703C5F409EAA8C90CBD12440879796476D3C5F40BA30D28BDAD124406A8423ED6B3C5F4086E28E37F9D12440B2C68FE7693C5F40021E62CD12D2244018A941E2683C5F40BDEB223B25D22440FA7B293C683C5F4049F6083543D22440434B68DC653C5F40D80DDB1665D2244004B39D4A613C5F407A7C314A86D2244012B81A7E5C3C5F40CB749E67A2D22440F0A88CDA583C5F40E065868DB2D22440CEDE196D553C5F4097265B13C1D2244047F07508523C5F40FE704683CAD224402ADD02AE503C5F40B74604E3E0D2244056DEE9294D3C5F40DEFE017BF1D224401C5CDF2C4A3C5F401371299DFED224401BA1FA624A3C5F4042D36DE415D32440D3EB600E4C3C5F40D982948E28D324402058FA754C3C5F40C645FF1543D324409E93837E4B3C5F401C4E4F0E55D32440B1AEC046483C5F4032B2BF4758D32440A70F13C3443C5F4005E7E7E15FD3244055489E90423C5F40EF94698F72D3244085D272FB403C5F40D5A5907582D324408049850C3F3C5F40165C621BA7D324402EB022FE3C3C5F40AD9BF7A4B8D3244016CA784A3D3C5F40FE9364C2D4D32440E1719BBA3C3C5F4097587446EFD32440940502533C3C5F409AEFE0270ED42440B18E3E413D3C5F40D076F12323D424404C0B4DC83D3C5F40BB2473D135D42440E1719BBA3C3C5F402384471B47D42440F4FF05DD393C5F405C035B2558D4244072C8618B383C5F40D21C59F965D424400D0055DC383C5F406F7EC34483D424408AF32675383C5F408676A96CB3D424406D6D86C0363C5F4011FC146CC8D42440E67EE25B333C5F404F9DFD37E5D424408FE964042F3C5F405DF6909504D524408A3265F12C3C5F40267E7B8D13D5244054DA87612C3C5F40EC0D637726D52440BF2B82FF2D3C5F40803221414CD524408F2E803A2F3C5F404337A04A72D5244011AEDBFB2F3C5F40CDBC0B4A87D524407731CD742F3C5F40646C32F499D52440C46F54B82F3C5F4062F6B2EDB4D52440AC2AEA82303C5F406E3A5D71CCD52440E1B0D936313C5F4005EA831BDFD52440C4279D48303C5F40153B1A87FAD524402EEF607A313C5F400A1B54D10ED62440FEC34C91323C5F402CC36E8E29D62440E1F5F46C313C5F4067576B7242D6244029F345312F3C5F408A027D224FD62440C4279D48303C5F408677144262D62440E182C712313C5F4002B3E7D77BD62440E1F5F46C313C5F40B973BC5D8AD6244016AAF644323C5F40FEB4F6E39BD624407B2DE8BD313C5F4009F9A067B3D624405EEC623F303C5F40CE739F77BED62440A7E617CA2E3C5F40395BE5AECAD6244059D6A2AA2E3C5F4050D147CFE3D6244072A8DF852D3C5F4019E9A0A6F1D62440BAD0A6342C3C5F400DB4F116FED62440BAD0A6342C3C5F40A900738813D72440BAD0A6342C3C5F40F7706EB834D7244089D3A46F2D3C5F4079CE16105AD724400CF7DBE82D3C5F401828846973D724400C6A09432E3C5F409A852CC198D72440BFB854A52D3C5F4078FEFEDEB7D724402422A1D22D3C5F4035E1A826D2D72440DC27EC472F3C5F400F4D8F5CEDD72440C9F841A7313C5F40FB7F8B0409D82440CE397826343C5F403104A50D2CD82440CE397826343C5F40EEE64E5546D824407B7203F4313C5F4058CB9D9960D824407BFFD599313C5F402268716B77D824404B30E6F8323C5F408CDC2E8F90D82440D2F07739363C5F4063AEB1F09AD82440F42D18013A3C5F408544DAC69FD824407C4D6AC33C3C5F40AAE7EE84A8D82440CECFC3BF3E3C5F409088844AB7D82440B642A21A403C5F40FDF4447CCCD824409E17DD30403C5F400839EFFFE3D824407924B957413C5F40D6355A0EF4D82440A5F4F1753E3C5F40D26D2EA3FDD82440D40561133E3C5F402553AAE91FD92440D3B77130403C5F40D943561234D924407361495E423C5F407CB5A33847D9244050D6B9B3403C5F40E3642CE45BD9244021DFEF61403C5F4094D85A046BD9244020ABA5CA413C5F40A78988AC7FD924401F5DB6E7433C5F403037CE5C96D92440737BEEA9413C5F4074E89903A9D9244021F994AD3F3C5F40F45B2A25BAD92440CD284CCE3F3C5F40DCC9F154D1D92440CCDA5CEB413C5F40C537B984E8D924401A02DB1C423C5F40A692A6E617DA2440F099362D423C5F40A855F48766DA24409C95A3B6433C5F4022B6AADB8FDA244049DFFF22433C5F40C980A268D4DA244049F9A46E423C5F40FA6761AAF4DA244043363575433C5F40EF8C5B7116DB2440174C570B473C5F403470F6BD3CDB24400599AE71473C5F400DC7F31950DB2440FA073653463C5F40CAB7883952DB2440CB5BBFAA443C5F400D2C91555BDB2440BAC55796433C5F40B89AD07F6ADB244043082351433C5F40EA8486B47CDB2440136D7D47433C5F4069BB534B84DB244001721D3E443C5F40187F36CD96DB2440481EE3E5443C5F404871E9F3ACDB2440EFEC86C8443C5F403A443756BDDB2440D7DB662A443C5F40DC6DCD0CD1DB2440549E8A65443C5F4056BC9179E4DB2440601E32E5433C5F40433A3C84F1DB244096349078433C5F40A9A10DC006DC2440B44A9F0C443C5F409137AFA01FDC24404E999B6F443C5F400A86730D33DC24402A08D451443C5F40B2FCAF2946DC244096349078433C5F4064B895B954DC2440EAC5F594413C5F40295371885DDC24400941FD1D403C5F40DD065A2668DC244081ED60C43E3C5F400FF10F5B7ADC244015C1A49D3F3C5F406F70D86C9BDC244033D7B331403C5F40D9C7AFC4A8DC24407A8379D9403C5F40501E7123C0DC24409D9E7763413C5F40EB025E66D8DC2440BB2A508B413C5F409E1BE43FEEDC2440A994E876403C5F40FCA2A94313DD2440BC197FEC3F3C5F40AF5692E11DDD2440D419CEEB3E3C5F401E030D912EDD2440E099756B3E3C5F40E2A5E5513BDD244033C6E2923E3C5F408A1C226E4EDD2440A56D57433D3C5F40632074756CDD244064C680913C3C5F40E05E3EFE77DD2440ED7E15E03B3C5F400EF450DB86DD24404D2B2A873B3C5F408B321B6492DD2440A65C86A43B3C5F404533AA679CDD24408E5C37A53C3C5F40F6EE8FF7AADD2440B603BF573E3C5F4026E1421EC1DD24405757AAB03E3C5F40D79C28AECFDD2440B61490F63F3C5F40F79FEBB1E3DD2440F140AE1E413C5F40B4F51D0DF1DD2440AFAAA80B423C5F4023A298BC01DE2440791E81E4423C5F4096A3B6C315DE24408AB4E8F8433C5F40B9FB1C1F2DDE244089247A19453C5F40EAC5F59441DE244042BA336E453C5F407DD8C17751DE244036994C70453C5F400B4E33935EDE24408997A773453C5F4042B85DC367DE244012AC600A453C5F402C71D35570DE2440EFA76B92443C5F407CE7BC6B75DE2440725B11EB433C5F40495FAD7F7CDE2440731992EE423C5F402B1B310E89DE2440EAC5F594413C5F40D03CCAD298DE2440F140AE1E413C5F400A6C297BA6DE24409D1441F7403C5F4038013C58B5DE244020DC5328413C5F402E292D12C9DE24402C5CFBA7403C5F40654BA0D2D2DE2440	\N
 1169	Unnamed tertiary	tertiary	1	f	\N	0102000020E610000004000000FC896FCD423C5F40CC1E0D4C13CB2440B994A938443C5F40942F682101CB24407D5C1B2A463C5F405C40C3F6EECA2440A55C2BEB483C5F40CB25FA21DBCA2440	\N
@@ -9722,10 +9907,6 @@ COPY public.road_segments (id, road_name, road_type, base_weight, is_closed, haz
 1175	Unnamed tertiary	tertiary	1	f	\N	0102000020E6100000090000005357E311813B5F401B50CAFF3FB9244011966714813B5F40180225AA5CB92440117CC2C8813B5F401A38FB5E9EB92440AC297FAD813B5F400F8CCDD8E1B92440DCF5D214813B5F4058A42EBE0DBA2440BFE5FBF37E3B5F405A10CAFB38BA244016CE24A0783B5F401F3C24C67CBA2440CDB3ED0F6F3B5F401B78FF69B4BA2440684128EF633B5F4021730A97FABA2440	\N
 1176	Unnamed tertiary	tertiary	1	f	\N	0102000020E610000033000000684128EF633B5F4021730A97FABA24402E6695E35F3B5F40B8EC6BB823BB24408944A1655D3B5F400A922D814ABB2440E45993B8583B5F40C982D3CCA4BB24402DF823FB563B5F40ABC0DA62C8BB2440D634947F523B5F40AA0AB20A40BC24409C25B7DC4F3B5F4067ADB200B7BC2440FCAC8D0C4D3B5F40EB40310D1EBD24402C1DBD2B4C3B5F4022DA33F048BD2440569F06674B3B5F40676325E659BD24402707FD964A3B5F40791F477364BD2440581EA4A7483B5F4075E789E76CBD2440C467A153463B5F40CD823FB26FBD244014179172413B5F40967DB2BD71BD244058D00F7E3D3B5F400B12369776BD244019C51792383B5F4011340B5982BD2440F271B735333B5F400FBE8B529DBD244082DCEADE2F3B5F4075DDA51EB3BD244013EE95792B3B5F40A4F732F6CABD24406FEC7EBA263B5F40328A8ADDE3BD2440C1BEE7D11E3B5F40A88AA9F413BE244056B2086A1D3B5F4011EA7D3E25BE2440F15FC54E1D3B5F40BF8D83013ABE2440C162C3891E3B5F402D0F2D0D57BE24401A4C68371F3B5F40E93697D17EBE2440A8797D9C1F3B5F4064B72AE4A5BE244043273A811F3B5F4066DE05A5C3BE2440DEA34808203B5F4093B8D8FEDFBE2440480C4CB8213B5F40B69DB64604BF2440CF70B9B0243B5F407A7A5B9F28BF244093D96A20273B5F408688409A56BF2440A46FD234283B5F40F2C92F2878BF2440BC838E0C283B5F403B1856968DBF24402294522B273B5F402CA3EC889EBF244035DDA117243B5F4076768DF1BCBF2440C6617A0C203B5F406C68B922E7BF2440041C42951A3B5F408352B4722FC02440B2B0F1AA183B5F4036FBA82B44C02440AD9A3116173B5F40F87AAD3A61C02440121E238F163B5F4080B56AD784C02440484B8A34163B5F4009BA62EBBEC0244090E67E3D153B5F40CF1B823EECC02440F0E082C7123B5F40645529E219C12440877B1B51103B5F40ABE80FCD3CC1244008347D1B073B5F403C24C67C8AC124400BBCEE08023B5F40ED365E70BCC124409652E119FE3A5F4016D9733EE1C12440C6F3BE96FC3A5F40ACB07499F5C124406E69DA6AFB3A5F40D4884FF003C224408CB33396FA3A5F40FDA8E1B611C22440D9226937FA3A5F40A40A35F91CC22440	\N
 1177	Unnamed tertiary	tertiary	1	f	\N	0102000020E610000028000000D9226937FA3A5F40A40A35F91CC22440B6A8AA2BFA3A5F40922A40CA3EC224404B0FF91DF93A5F4038D1538957C22440C38D4AA0F73A5F40F086342A70C224402F617EB8F53A5F407262597A7EC224406CE45F70F23A5F40B80B282F8DC22440AFC5B82CF03A5F40B073D3669CC2244068925852EE3A5F40452BF702B3C224401538D906EE3A5F40952E5805C5C224404B06802AEE3A5F402E8ECA4DD4C22440048B68E0EC3A5F40D807FE5CD9C22440C9A365EEEB3A5F40D7E7209EDBC2244094AA48E0EA3A5F40BB360AFFD8C224408E322C90EA3A5F4055C444DECDC224403B62E3B0EA3A5F40E6875B4FBEC22440E1A3B4EDEA3A5F40BAA29410ACC224402F6F0ED7EA3A5F40739F1C0588C22440AC4E7397E93A5F403CCC4D8A45C224408ED9A381E93A5F400B92E3F32FC22440C5DB943CE83A5F405C8649021EC2244007D15AD1E63A5F40BC9179E40FC224400822E6EDE33A5F4043609B4308C224406376BB03E13A5F40FD43447B06C224405992F249DD3A5F408B54185B08C224401B5C8473D73A5F40355EBA490CC22440E0BFD42AD53A5F40D1E000440BC224407C140901D43A5F408E194DD30CC2244005B93077D23A5F406E089FF710C22440D754713ED03A5F40F240649126C2244078978BF8CE3A5F4093E57F4D31C22440749B70AFCC3A5F400562235A3CC22440C8467B17CA3A5F40D0B936AF45C2244075D88EF3C83A5F400E0176244DC22440521C51EBC73A5F404930D5CC5AC224400C73277DC63A5F40B9F1385673C224401FA2D11DC43A5F401221640FA3C22440CD672F91C13A5F4052D735B5C7C224407FCD8305C13A5F40EFFBDC75DBC2244032EB200AC13A5F4049C961E6F1C22440843F68E2C23A5F4050F05EFFBFC32440	\N
-1305	Unnamed footway	footway	1	f	\N	0102000020E6100000100000008AAC3594DA3E5F40D951E630A9C724409B59A6BADB3E5F4060CD5C3BACC72440656EBE11DD3E5F4094BA0963B0C72440F40E01D1DD3E5F4045590927B3C7244082AF4390DE3E5F40E4A08499B6C724407646A522DF3E5F4024287E8CB9C72440DB3CC4F5DE3E5F400417D0B0BDC724407058BF3EDF3E5F40FC19DEACC1C724404649A35DE03E5F406C1107BFC3C72440C80D1A55E13E5F406534F279C5C72440514D49D6E13E5F4011B11C7CBCC7244003F51C47E23E5F40330285D5B3C72440E5DB7179E23E5F4017299485AFC724404B45BEA6E23E5F409CB7FB66ACC72440573B2FBAE13E5F40AA7125F1A8C72440C80D1A55E13E5F40F8FAFFDDA7C72440	\N
-1306	Unnamed residential	residential	1	f	\N	0102000020E61000000800000094522BA7983E5F40CCD3B9A294C82440DD4F7C6B963E5F40850A0E2F88C824404AE4CCC0923E5F40C19206126FC8244069931EE18F3E5F4067ED5B525AC82440582E652A8E3E5F4034BBEEAD48C82440585F13888D3E5F40E6CC76853EC82440BE6C3B6D8D3E5F40C776082D35C82440D5F3249F8D3E5F40540262122EC82440	\N
-1307	Unnamed residential	residential	1	f	\N	0102000020E610000002000000D5F3249F8D3E5F40540262122EC82440FFE5FFFA8D3E5F40BA82120B21C82440	\N
-1308	Unnamed residential	residential	1	f	\N	0102000020E610000002000000FFE5FFFA8D3E5F40BA82120B21C82440BDC5C37B8E3E5F408510EBE813C82440	\N
 1178	Unnamed tertiary	tertiary	1	f	\N	0102000020E610000065000000843F68E2C23A5F4050F05EFFBFC3244073A66494C23A5F408604E7E7E1C32440F129A50CC13A5F4053094FE8F5C3244087F24FBABE3A5F407F53B36213C424409B6FE93DBA3A5F404DA7D0D446C424407F4E417EB63A5F40644C0BA881C42440104647CDB23A5F406A7DDB5DB1C42440BE9877E6AF3A5F409BF4087FD0C42440D154F42CAD3A5F40EE015F76F4C4244019219793AB3A5F4084132C6920C52440AF8A81BFA93A5F40C98E328749C5244027B04A33A73A5F4044CA051D63C52440B8A75082A33A5F4094CD661F75C52440B087403F9D3A5F40052A2D6D82C524403C832B45973A5F40D63E78488CC52440AB88E4758E3A5F40E28222CCA3C5244018AA07718A3A5F403BA35291AFC52440C128F7F1863A5F404927B792C2C52440F3EC4D67823A5F4018FC47F0D0C5244021BE5D40793A5F4012FB5F09FFC524408E249C71753A5F405E19AFD40EC624402B9C4940713A5F409176ED1C14C62440746E241A6E3A5F40C00EF7EC14C62440B9782E42673A5F408F2738ABF4C524407905A227653A5F40B90501E8E6C52440B09701C2623A5F407C6B161EEAC5244046ED7E15603A5F401BD0775CF9C524401E0714A05C3A5F40437D810F14C62440DF855220583A5F40B7BB62A131C62440999D45EF543A5F401FA8AED74FC62440FAB1EEC4513A5F4060D1089167C624403D23B6604E3A5F40341B1A0577C624402601C5234C3A5F403B15151681C62440453A4DB0493A5F4068FDD24785C6244082FFAD64473A5F400BC2CBC28DC62440245F09A4443A5F40502ED7EC92C62440C737CAB0403A5F401F93D629A0C62440E2BCEE633B3A5F40D4C045DDBDC62440387705EC343A5F4080F9BF7EE3C624402191B6F1273A5F401B118C834BC72440A69883A0233A5F40CAF154D169C7244038DBDC981E3A5F40BF5E06088BC72440E0B254281C3A5F40907351E394C7244094D9C5D9193A5F40F86D88F19AC724409C919CA7153A5F404DF15DEFA3C724405D86A4BB103A5F40EB7D99DEB4C724401E95511B0B3A5F40FF23D3A1D3C7244010A10040043A5F405FEB5223F4C72440D0EE9062003A5F406F67BA3203C824408A03E8F7FD395F40CBC7A4750AC8244038C9456BFB395F4046393D940DC824401011ED19F8395F40F9F719170EC824405E413FF8F5395F40F21A05D20FC824400C079D6BF3395F40A29927D714C82440BAB25593F1395F409D418D8C1FC8244044CAAA63F0395F402C8F24F72AC8244027309DD6ED395F40BD4B4E9253C82440B1924550EB395F40AB764D486BC82440704A2F20EA395F409122D7F26FC82440B9FFC874E8395F409002FA3372C82440BA64C169E6395F4027E8E5666EC824400F9D9E77E3395F403802A72D64C82440FBEB1516DC395F40CE1D58E949C82440F1660DDED7395F402B3982AF43C8244093509F89D5395F4016A243E048C82440B25B15F2D2395F40D43F2DAB55C824401370BEC7CF395F401E13CE1374C82440F6BB0BEFCD395F40DBF5775B8EC82440A4F496BCCB395F40074BD0BAA1C82440D6BB896BC6395F409F9C572BC9C82440B4F116FEC2395F40C5991540E7C82440814FBD7FBD395F40AAFEF79628C924401261681AB9395F40F0D69EFE58C924403DBBD7A4B6395F40B6F3FDD478C924404481E3D7B4395F407AB3BC6191C92440CE250B4EB3395F40FC1065B9B6C9244016DBA4A2B1395F402D978DCEF9C92440B18BFDC0B0395F40D8ECED3B2BCA2440AC5B98E0AF395F404EED0C535BCA244077EF4D78AE395F40934039C082CA244019BF3AD8AC395F40B982B751AECA244014364DE9AA395F407B96314FF8CA24400801F912AA395F408DC6EB0B32CB2440F7819A10A9395F4019E3C3EC65CB2440685485ABA8395F4086A92D7590CB244074BD2319A8395F4096992DB4CECB2440F26BDA7BA7395F40D072EA14F5CB244064E53C08A6395F40A8D8E2642CCC24402A63320BA3395F403304B63984CC2440557B22999F395F406562049EC5CC2440682096CD9C395F402DB1321AF9CC2440C9A4D0C39A395F40A3B1513129CD2440776DCA7097395F40C08355AB65CD2440B51089E791395F408FCC7E38A3CD2440361FD7868A395F40CD0CD1D7E2CD244049DB53CD87395F402ED4505903CE244045DF388485395F40F7FAA42435CE2440E60A4A2C84395F40C916EE015FCE2440E0C03F0084395F40528770276CCE2440F259434E84395F40E2F4E45075CE2440FD46E0B485395F40A9143B1A87CE2440	\N
 1181	Maharlika Highway	trunk	1	f	\N	0102000020E6100000060000007CB4DDA925415F4063DA92B0CAC4244024473A0323415F405FFC7E7BE8C42440F616C5611F415F40D60A896A00C52440397183EB1B415F4026C632FD12C52440C38B74F519415F40FDDF6CCE1CC524400143A04415415F40F68FCF752BC52440	\N
 1182	Maharlika Highway	trunk	1	f	\N	0102000020E6100000030000000143A04415415F40F68FCF752BC52440AB3A504C03415F40A7689BD145C52440CBE9FC25F3405F40C0D600005BC52440	\N
@@ -9755,9 +9936,8 @@ COPY public.road_segments (id, road_name, road_type, base_weight, is_closed, haz
 1211	Unnamed tertiary	tertiary	1	f	\N	0102000020E6100000030000009B83B1CF2D3D5F40449C983FF0B62440D9999DA0283D5F409C1A683EE7B624402E1796E4253D5F40164F3DD2E0B62440	\N
 1286	Unnamed path	path	1	f	\N	0102000020E61000000A000000446E861BF03F5F4061D79BBDD8C42440C18F6AD8EF3F5F40C1CCD2A986C424408B4E965AEF3F5F40A2E6F5717EC42440FDAAB761EF3F5F4078EE3D5C72C42440685E0EBBEF3F5F40D02456EB69C424404A0048B7EF3F5F406105532866C42440FDAAB761EF3F5F40561B52FB63C42440D4EC269DED3F5F405BE37D665AC42440A5541DCDEC3F5F40A8774C384FC42440B794980CEC3F5F40F35BCF6B47C42440	\N
 1288	Unnamed unclassified	unclassified	1	f	\N	0102000020E61000000200000020D84C19133E5F402F015361C7B6244081655BBC0E3E5F40D670917BBAB62440	\N
+1193	Veloso Street	residential	1	f	\N	0102000020E610000003000000497A62E7B73E5F40502C014235C7244088DE3D9BB03E5F40611BF16437C72440E6DA615DA63E5F40F2608BDD3EC72440	\N
 1015	Unnamed residential	residential	1	f	\N	0102000020E610000002000000749BCB683F475F40C2210A1CBFB62440C2DCEEE53E475F400A890F47B2B62440	\N
-1310	Unnamed unclassified	unclassified	1	f	\N	0102000020E610000011000000E2B43BFFD1475F408890042B98C22440536AE514D3475F4029154328A5C2244070AB6A93D4475F40E6B22CF3B1C224408D79C2B7D5475F40B20A4048BBC224407A4A1817D8475F40078E1546C4C22440C0A8EEDBDA475F40FFF5C07DD3C2244077F35487DC475F40D74CBED9E6C2244053D21E8ADD475F4010A1004004C32440057AF2FADD475F40E8F7FD9B17C3244088CB3B98DE475F40062E8F3523C32440FFB3E6C7DF475F40C5EB55BF2DC3244028D1370EE1475F40DFA4695034C324400DA837A3E6475F403AE576D43DC32440B3B5BE48E8475F4076EFF2BE3BC32440B29B19FDE8475F409600A19A37C32440DC453DE9E9475F4000D6F4EA2DC324408DA2BDB0EB475F40012C973215C32440	\N
-1311	Unnamed unclassified	unclassified	1	f	\N	0102000020E6100000020000008DA2BDB0EB475F40012C973215C32440A97E4A3AEF475F400CF5AA84DDC22440	\N
 1212	Unnamed tertiary	tertiary	1	f	\N	0102000020E6100000270000002E1796E4253D5F40164F3DD2E0B624404D6AC3BC223D5F4026016A6AD9B62440EA82B0091F3D5F406511D43ABBB62440054DF0F2193D5F40887E124482B62440BA371A1B153D5F40F8544E7B4AB624405BC2EB44133D5F40A954E46B2AB6244009FB7612113D5F4027F73B1405B6244087C3D2C00F3D5F403D49BA66F2B524408E5BCCCF0D3D5F40BE8575E3DDB52440A11749160B3D5F40D4D7F335CBB5244004972254043D5F40B8C4364EAFB52440BB062230FB3C5F4073710AE187B5244077FF0EFBF33C5F4013AA8A5F67B52440BBB88D06F03C5F406FC5B42561B5244012BB5BFEE83C5F4013AA8A5F67B52440880DBB94DF3C5F40B8A3497375B5244063CC0292D53C5F402CA85E6D7BB52440432B4190CD3C5F4090FA46CF88B52440B258D471C63C5F403A01F2CA9AB524403EE1911DC03C5F40E8A4F78DAFB5244041F33977BB3C5F4046578E35C8B524404514EEF0B23C5F406B990CC7F3B5244089409A56AF3C5F406401B8FE02B624404249DCBEA23C5F40D90CCBFA28B62440678D8BB49E3C5F40BE28E6C52EB62440DF67017F9D3C5F405D70613832B624400F6503449C3C5F40D269824D42B62440758CD0749B3C5F4017A0C8EE5DB624402321808A993C5F40AB71DB638EB62440DE1099A8943C5F40BA07324CB7B624406A0C84AE8E3C5F40DE7C7E73DAB624408822EEFB813C5F40305F03C70AB724409772BED87B3C5F4094CED1F423B7244098EEBFDF793C5F40FDCC0F1258B724402ECBD765783C5F402BAEE06D94B724401DAED51E763C5F40DB91A0AEA4B724408B76700B713C5F4004954CA9A6B72440C6E70423653C5F4070E4260FB0B724408C2BD3D4573C5F40C567FC0CB9B72440	\N
 1213	Unnamed tertiary	tertiary	1	f	\N	0102000020E6100000180000008C2BD3D4573C5F40C567FC0CB9B7244058699C97543C5F40A9633A19C1B72440F5E681D94E3C5F40EE9980BADCB724408152FEFF493C5F405669E624EFB724402F771CF5463C5F40410C74ED0BB824403DA70F13433C5F409149A18735B8244081632A583E3C5F40854EBE8F59B8244079495288363C5F40C6257D10B8B82440F806150B323C5F402BEFF494E6B82440811BCEA1313C5F402914D852F6B82440C37D891D323C5F40DA17755204B92440744D373F343C5F407F9EAB521FB924401E238F96393C5F40960A2AAA7EB92440BECF02FE3A3C5F4044A33B889DB924407DE074DC3A3C5F4086144DB1B4B92440F42D18013A3C5F40283EE367C8B924403194B833383C5F40AA36EE83E2B924400DD87A2B373C5F40042159C004BA24400D0055DC383C5F401B44108C28BA244065B84B2C3A3C5F40BB9289004CBA24409B13C5F5393C5F403D8B941C66BA2440EF4806CA373C5F4039002C3C79BA2440ABB184B5313C5F40BD1F1219B1BA24401D14DE2F303C5F40F2D9F0AABDBA2440	\N
 1214	Unnamed tertiary	tertiary	1	f	\N	0102000020E61000001F0000001D14DE2F303C5F40F2D9F0AABDBA2440E1575128303C5F40749C363EEEBA244023E81EC8303C5F40AACDA4F21BBB2440BBB4E1B0343C5F40D53CEC2A49BB24407BD7A02F3D3C5F400B0DC4B299BB2440675A07AC413C5F4066AB819CE6BB244060AB048B433C5F40E1A991A7F6BB2440DC4D4B07463C5F406775BC13FDBB24406FD39FFD483C5F407AEC1D24FABB244098BCA6AC4B3C5F4088539C5901BC2440AEADE98B4E3C5F409527B5BC17BC2440CBC05CE64F3C5F406341069733BC24407D1DDDAD513C5F40C3503D8853BC24400300112C583C5F403B8A181B5FBC24407DF8437D5C3C5F409835B1C057BC2440CECDED14613C5F4038E5C06158BC2440DF180280633C5F407C43E1B375BC2440E45CD438653C5F400806103E94BC2440312592E8653C5F405D65129AC9BC244037589302663C5F40C8CEDBD8ECBC24408390E2D2673C5F404E39701816BD24403C9F01F5663C5F4005C47F153BBD2440617B1CBC653C5F40EA53331070BD244067F9707F643C5F40E08A1FBEA7BD24404AE361EB633C5F40DBDFD91EBDBD2440F891B64C613C5F40CE62731FCABD2440F5A4A7235B3C5F40E0466F5DD6BD2440229BF573543C5F40B2987DC3E9BD24404A05BA9B4C3C5F40806A172E06BE24405322895E463C5F40EE505E752EBE24407AFCDEA63F3C5F4077F0B84D5DBE2440	\N
@@ -9774,13 +9954,12 @@ COPY public.road_segments (id, road_name, road_type, base_weight, is_closed, haz
 1290	Unnamed path	path	1	f	\N	0102000020E61000000A00000032DEFBC0FA455F4033AFD980BEBB24408BDEA980FB455F40C39ACAA2B0BB2440E4B0451CFC455F4080E9FEFB9DBB2440A306D330FC455F40DFFF22C385BB2440A3D8C00CFC455F408F6C53E174BB2440792865ADFC455F401F58440367BB2440BA00EABCFC455F405AEB30CB43BB24404312071AFD455F402BA6D24F38BB24404312071AFD455F40FE7854A126BB24404F4AF729FD455F4022A5D93C0EBB2440	\N
 1291	Unnamed path	path	1	f	\N	0102000020E6100000020000004F4AF729FD455F4022A5D93C0EBB2440EA6D7DA2FC455F40BAFD4D83FDBA2440	\N
 1292	Maharlika Highway	trunk	1	f	\N	0102000020E610000002000000F332D47231415F405A65A6B4FEC224408EE32C9130415F40D93ADD1E29C32440	\N
-1293	Osme??a Street	primary	1	f	\N	0102000020E6100000040000009236FA3D563E5F40D1F12C9CFFC22440B48707DE5A3E5F40465ED6C402C32440F484CA645D3E5F40029F1F4608C32440E63DCE34613E5F40D02BF93317C32440	\N
+1293	Osme├▒a Street	primary	1	f	\N	0102000020E6100000040000009236FA3D563E5F40D1F12C9CFFC22440B48707DE5A3E5F40465ED6C402C32440F484CA645D3E5F40029F1F4608C32440E63DCE34613E5F40D02BF93317C32440	\N
 1294	Unnamed path	path	1	f	\N	0102000020E61000001C000000B3B9C557163C5F40DCD9571EA4CF2440D5100B6B193C5F40A9DDAF027CCF24408845B181193C5F40BCEF73D76DCF24402F2B5E76193C5F40A4761AC462CF2440E1ECD632193C5F40F82FB54A55CF2440AC66E77E183C5F40E0B65B374ACF2440B8CF85EC173C5F4056061F9441CF2440ED5575A0183C5F40E1A7604326CF24402E9E8BD0193C5F407E6A61BB20CF2440332779BF1B3C5F401C2D62331BCF2440DF9513A31D3C5F405F14F36217CF24403D39549D1F3C5F40F6F9DE9513CF2440FAF202EC233C5F40B488CD6CFCCE2440DF707A72283C5F40A2670EA4E6CE2440F0BB8EDD2A3C5F40FF3D78EDD2CE2440D803F74D2B3C5F40487DA367C4CE24408BC56F0A2B3C5F40425BCEA5B8CE24403238EFA42A3C5F40BAEA4B80ABCE2440E4DFC2152B3C5F40032A77FA9CCE2440C04B5FBE2B3C5F400982114592CE2440DDFF11972D3C5F404BE4277A85CE24403B3025372F3C5F404647CDB282CE2440CAD067F62F3C5F40BBDB508C87CE2440DBF3A1B0303C5F40877B1B5190CE2440BC30E3B7323C5F4092A2DF089CCE24402843FA92323C5F4064C515BC8DCE2440EB973E2A343C5F40068A0E3796CE244044F7AC6B343C5F40546694788ACE2440	\N
-971	Flores Street	tertiary	1	f	\N	0102000020E61000000B000000E6DA615DA63E5F40F2608BDD3EC72440D61FBCD1A23E5F408DF6D3DA8FC724401EBBB0DAA13E5F402C257090B5C7244048C73082A13E5F40CEBE9767CAC72440DD2AE33AA13E5F40E1270EA0DFC72440961F5D11A13E5F40146C6D2B07C824409C830C89A03E5F40CCF67C282CC82440A3BC45169F3E5F4067182DF64DC82440C811C6AA9C3E5F408D857C2B6DC82440BE721827993E5F401C9D4E0D8FC8244094522BA7983E5F40CCD3B9A294C82440	\N
 1221	Unnamed unclassified	unclassified	1	f	\N	0102000020E6100000AC00000046B3B27DC83D5F4036BBA4202EC32440C765DCD4C03D5F404E7CB5A338C3244066625F57B83D5F40CFB5792D32C324402620819AB53D5F40A5750AA826C324408E870849B03D5F4041182E6123C3244066A19DD3AC3D5F400419A65B1BC32440E589D640A93D5F40FC5F64B8F0C224405D95FA68A73D5F40C40B2252D3C2244036841909A33D5F4070438CD7BCC22440132DD4F59F3D5F40E03AB5E9BEC22440D0F7AE9C983D5F405EFEF96CD3C22440741E5F8C923D5F407F942243D8C224409357E718903D5F40383B08F0CCC22440D00E13688B3D5F4052BA4FE9BBC224407F3969D0863D5F4026D588AAA9C22440E04D12A6833D5F40F55D5B898AC2244045E570F7833D5F4033DE567A6DC224409F8C96A8833D5F405CA736DD57C22440B7B75B92833D5F405E1DB6E33CC22440CF41E1FD823D5F40B79E7CD525C2244060F4CB167F3D5F405E0EBBEF18C2244051B8C3CB783D5F40724B5068FEC12440C5FB1642733D5F404C18CDCAF6C124401C1252126D3D5F4062FAB9FCE2C124408F3B003D683D5F40BF15E4C2DCC1244046ABFF185F3D5F40A9C36570EFC12440C966FD1C553D5F40786D252A0AC22440EF6BC94F4F3D5F40B79E7CD525C22440A4B217C04A3D5F40818EFBFB31C224402FBC372B473D5F406CD7DF6D39C22440069FE6E4453D5F40AE03311A43C22440CB2A114D453D5F4029BA89B553C22440295B24ED463D5F4005AEE1D869C22440F9156BB8483D5F406A824D428EC22440E5E6C0174B3D5F4039BC7BDBA7C224401B9BC2EF4B3D5F40831F8B23C5C224404B0BF20E4B3D5F40459F8F32E2C22440F4D43439463D5F404AD05FE811C32440EA077591423D5F40DEE522BE13C32440CDC6EF12413D5F40CB0924720BC3244063D4B5F63E3D5F40C5E74EB0FFC224405467FF4D393D5F4017D4B7CCE9C22440027278F7363D5F40980D7C56E3C22440626C7C81343D5F4049AC7B1AE6C2244006DBE3E02D3D5F4017D4B7CCE9C22440FD27C984293D5F40B9A3A42CE8C22440F35DA516253D5F40B596B844E4C22440E91DB814213D5F4085B6F704E4C22440E407F87F1F3D5F40EC905154ECC2244092FB67171D3D5F40A5660FB402C324407031F5A9193D5F4084DFE1D121C32440E9FD350F163D5F40D0CA62073AC324408DF6D3DA0F3D5F400EE7D0D84DC32440E399E150093D5F4003C70A2362C32440915F3FC4063D5F40BA87DFA870C32440BD602640033D5F4023E7B3F281C3244066E2B1FAFE3C5F40256F25E07CC32440F607CA6DFB3C5F403DD68C0C72C324400A0962EAF83C5F40ABB8CC446CC32440B741EDB7F63C5F407C687AE46AC32440E3FDB8FDF23C5F40E852B70E69C324400EE5FA2DF03C5F40254E380543C32440212E4A1AED3C5F408B77369A12C3244030A6F4A7E83C5F40A35126DAFAC22440DE2637E5E53C5F40C350E2CEE0C224402153E34AE23C5F40066E3887C6C22440FF154383DE3C5F4090543AB3B8C22440DD4BD015DB3C5F408BB7DFEBB5C224406ED0A80AD73C5F4070438CD7BCC224407C7665BCD23C5F403AE05FA9D3C224401256197CD03C5F40FA4A7BDEE8C22440DDCF29C8CF3C5F40834078FEFEC224405F35E03DD13C5F40C7FC378A07C3244099B7EA3AD43C5F402318625001C324409E40D829D63C5F4080338C16FBC22440268E3C10D93C5F4057050F7805C324405BCC7454DA3C5F407410CF6D1DC3244013A4ADA5DB3C5F40295B24ED46C32440AD4ECE50DC3C5F40E0BA624678C3244078279F1EDB3C5F401B704C05CBC32440C5933886DB3C5F40939E33B3E0C32440CA8F53CFDD3C5F401B0FB6D8EDC324406A954F45E03C5F4068FA360E06C424405B34AEC9E43C5F4019BA23AD42C4244048A643A7E73C5F40A64984A169C42440590BFD5DE93C5F40A25D85949FC42440F3870BE5E93C5F407F60D8ABD9C424408E041A6CEA3C5F401AAD591DEFC42440355DF4BAEA3C5F402DCE18E604C52440FFD60407EA3C5F400AC270091BC52440BE74498BE93C5F403F34982B28C5244030D406CCE83C5F4004AF963B33C5244048A643A7E73C5F408542041C42C524400744882BE73C5F40CC0BB08F4EC524402412E04FE83C5F40218F858D57C52440C3FD367AEB3C5F4054466D2C72C52440B05B5F7FED3C5F4067672CF587C52440FD0C141DEE3C5F406CCEC133A1C52440FD0C141DEE3C5F4071355772BAC52440057A9741EB3C5F400BFD5DE9C6C52440CADDE7F8E83C5F40B743C362D4C52440E3AF24D4E73C5F408F9AC0BEE7C5244007B7B585E73C5F40F11C80C3FAC52440C6E1CCAFE63C5F404BC22A830FC62440130CE71AE63C5F4079C7CE801FC624404FF92180E53C5F40B94EC87322C62440731A587DE43C5F403D4DC17520C624406242716CE23C5F405F9E29CF17C62440E16FC50FDF3C5F408D69013510C62440959636C1DC3C5F40F563384316C62440BA8F920DDA3C5F401D3C139A24C62440D361CFE8D83C5F406AC2F69331C6244098C51FA0D63C5F40345FCA6548C62440CF9C9A70D43C5F40773870BD5CC62440461850B9D33C5F40BE54C7855EC6244082644BA0D23C5F4089473D9F5CC62440068EBA8CD13C5F4000B7DDBA51C6244042F45ABFCF3C5F40D9FEDF2241C6244008E57D1CCD3C5F4062C5049035C624401C2ECD08CA3C5F40402FDCB930C62440C96658D6C73C5F401364045438C624405F741EBAC53C5F406D09AF134DC624401381EA1FC43C5F4039C65FA461C62440AF09698DC13C5F4053C433B275C62440330BFEC8BE3C5F4009652B7986C624405EA7EC4FBD3C5F40809E060C92C624408EA4EE14BC3C5F402383DC4598C624400C6D4AC3BA3C5F4035DA609797C624404258326CB93C5F4091D5AD9E93C62440D1D09A7AB83C5F40A8ACA6EB89C62440E4B4F171B73C5F40A005572F75C6244067DE605EB63C5F4095264AE768C62440508BC1C3B43C5F402C0C361A65C62440693524EEB13C5F40312E0BDC70C62440FA2C2A3DAE3C5F406BA22A018CC62440EFB5566AAC3C5F40A014522399C62440F01A4F5FAA3C5F40C08A9D3AA0C62440E5304E32A83C5F40194630C4A0C624402E73BA2CA63C5F40CC24EA059FC62440BE05C886A43C5F40013274ECA0C62440945BA49AA33C5F402F62E98DA4C624409ABCB7D8A33C5F40BFCF5DB7ADC62440766D6FB7A43C5F40F5A91908B8C6244069E78FC4A63C5F40272F3201BFC624408C892881A83C5F401ADAA5B2CDC624403E59D6A2AA3C5F4004882760E0C62440495D7C1BAC3C5F40BB48FCE5EEC6244012729472AD3C5F403DDC69C6FDC624403B8FE5B8AE3C5F40AD3830140BC72440BEC6890AB03C5F40AC7DF09018C72440FEC34C91B23C5F408B4C65F61EC72440B581E096B43C5F40F903D48A25C72440E519EA66B53C5F401A9AFC602AC72440974E907DB53C5F407BB71E2A32C72440EB07D04AB53C5F4088B608313CC72440093B2064B43C5F404774CFBA46C72440167CE420B23C5F405133FF4355C724405AC235D2AD3C5F4003379C4363C72440436F9637AC3C5F40CE8EAF986CC7244025A13E13AB3C5F403ECB98277CC7244080F277EFA83C5F40A0B5EC5A8CC7244011A56208A53C5F40BCC8A942A8C7244024C09FD0A13C5F4036EF93FEB9C72440D26B58F89F3C5F40FF06EDD5C7C724404B38995D9C3C5F40AA9212CCE2C72440B73C7BD3993C5F40B90B83E8FFC72440DC35D71F973C5F40E0C3808010C824401F1730DC943C5F40332779BF1BC82440759A6093903C5F40EAE74D452AC8244078C949728A3C5F405A89D40F45C824407FC39F3C873C5F40F330FEC753C82440FA2587F4803C5F40684705A96FC82440	\N
-1222	Maasin ??? Macrohon ??? Sogod Road	primary	1	f	\N	0102000020E610000006000000D0C07E3E003E5F40E6BD20D8A7BE24408B51D7DAFB3D5F406BEFF89BF5BE244028E08DBBF73D5F40537EADA646BF24408F3E41BDF43D5F408811C2A38DBF2440A8FC10C0F23D5F406F46CD57C9BF24405BAA1CA4F13D5F40A9119FE007C02440	\N
-1223	Maasin ??? Macrohon ??? Sogod Road	primary	1	f	\N	0102000020E6100000070000005BAA1CA4F13D5F40A9119FE007C0244079509A17F13D5F4020E0FF7D7CC02440EADACD42F13D5F405B86EE48ABC024409C548F8FF13D5F40593B40E6B9C024401F5E21BDF23D5F40D5E6A49CD4C024408E249C71F53D5F40B91CAF40F4C024404B299E69F83D5F401572A59E05C12440	\N
-1225	Maasin ??? Macrohon ??? Sogod Road	primary	1	f	\N	0102000020E610000003000000E2146756003E5F40BA32A83638C12440BAAAA22E083E5F40C03B9E3B66C12440A01111A30C3E5F406F1C678984C12440	\N
+1222	Maasin ΓÇô Macrohon ΓÇô Sogod Road	primary	1	f	\N	0102000020E610000006000000D0C07E3E003E5F40E6BD20D8A7BE24408B51D7DAFB3D5F406BEFF89BF5BE244028E08DBBF73D5F40537EADA646BF24408F3E41BDF43D5F408811C2A38DBF2440A8FC10C0F23D5F406F46CD57C9BF24405BAA1CA4F13D5F40A9119FE007C02440	\N
+1223	Maasin ΓÇô Macrohon ΓÇô Sogod Road	primary	1	f	\N	0102000020E6100000070000005BAA1CA4F13D5F40A9119FE007C0244079509A17F13D5F4020E0FF7D7CC02440EADACD42F13D5F405B86EE48ABC024409C548F8FF13D5F40593B40E6B9C024401F5E21BDF23D5F40D5E6A49CD4C024408E249C71F53D5F40B91CAF40F4C024404B299E69F83D5F401572A59E05C12440	\N
+1225	Maasin ΓÇô Macrohon ΓÇô Sogod Road	primary	1	f	\N	0102000020E610000003000000E2146756003E5F40BA32A83638C12440BAAAA22E083E5F40C03B9E3B66C12440A01111A30C3E5F406F1C678984C12440	\N
 1226	Unnamed residential	residential	1	f	\N	0102000020E61000000300000080AAC07FA93E5F401C40BFEFDFC424401693ED32B23E5F400D1E0137E6C424403BD7416FBB3E5F402A5F86B5E7C42440	\N
 1227	Unnamed residential	residential	1	f	\N	0102000020E6100000060000004E91E80ADB3E5F4060F3604150C42440119BD9F8DD3E5F4097885C154DC4244021C9ACDEE13E5F40003ED3A645C42440F5AD2017E63E5F4069AB92C83EC42440B36D07D9E83E5F4077AD73C23AC4244016139B8FEB3E5F40EF31FDB737C42440	\N
 1228	Unnamed footway	footway	1	f	\N	0102000020E610000007000000DC4D4B07C63E5F40F70890FC1CCA24401F74BFF9C33E5F40931B45D61ACA2440442564D6C13E5F404D47A57D18CA2440BC4A2D4ABF3E5F4049F2012615CA2440AB1386B7BD3E5F40A842F28414CA2440E7E9B70ABD3E5F40EA3180A614CA24406A865451BC3E5F406A1899DB18CA2440	\N
@@ -9801,8 +9980,7 @@ COPY public.road_segments (id, road_name, road_type, base_weight, is_closed, haz
 1244	Maharlika Highway	trunk	1	f	\N	0102000020E6100000040000008D3FF61FBE415F407B325AA20EBA2440F3F63130BC415F4060A527D137BA24405333B5B6BA415F40FD9EFDED57BA24407ECFA33DB9415F40B63EF6C484BA2440	\N
 1279	Bagares Street	tertiary	1	f	\N	0102000020E61000003E000000468F8422023E5F404E379A6DB8CD244034942419033E5F405AEAC5F594CD2440E5492DEF053E5F401B71B7DA79CD24400CE2A8810B3E5F40535C55F65DCD24404AB956D6113E5F40936FB6B931CD2440BDCE3C6F193E5F405C1E6B4606CD24400C923EAD223E5F40DCD5ABC8E8CC24404617E5E3243E5F4072A9A514CFCC2440825DA857253E5F40EEEE5C73A2CC2440C427F801233E5F40B2A60DE25ECC2440250BF379203E5F40650D28E5FFCB2440C0D254AA1F3E5F40F709FBD1CBCB2440F5108DEE203E5F405823168CA5CB2440DCF3FC69233E5F404CDF6B088ECB24408143030C263E5F4075FBF6BF6DCB2440B5920CEF283E5F40E943BC1A45CB2440EF1417EC2B3E5F4015D2D0F533CB2440DC2A88812E3E5F400191346E20CB244065F789A82E3E5F40D1E638B709CB24402408FC862E3E5F40F5AD2017E6CA2440340EF5BB303E5F406AEBF18CC7CA24402C9B3924353E5F40DA7D7D63BECA24403579CA6A3A3E5F40844A5CC7B8CA2440964E35C4423E5F401A4D2EC6C0CA2440E17A14AE473E5F40AE450BD0B6CA24402CA7F3974C3E5F407FC6E0BC93CA244011AC0551523E5F40CB1DEC037FCA2440321180C9573E5F406F10AD156DCA2440D1CB28965B3E5F404B00FE2955CA2440CFEDCAD35E3E5F40C870862C1CCA244093B2A08B613E5F40E2506452E8C924403D1B03FC643E5F404CF7DFEFBCC9244018361488683E5F40DF6A42FFA9C92440DB0E57186C3E5F40FBE18C0695C924403CBCE7C0723E5F40B9E4130DADC92440127FB9BB733E5F40D0DCF934DDC92440F9EEFBDC753E5F4013C19371E7C92440A5749FD2773E5F405B57714FFCC924406E6C76A47A3E5F406E9516E41DCA2440C9F7D6D1823E5F40B13CFEC176CA2440924BD2EB853E5F40C02500FF94CA244074603942863E5F40C4DF4092A3CA2440DFB4CF19873E5F40A31E4718ABCA24407EBD67C9883E5F40963C43DDACCA244054C2B8C08A3E5F40BCE24E8EA7CA2440BF164F988B3E5F403E84A7469ECA244030A182C38B3E5F40D404F63D8FCA2440364DE9AA8A3E5F40293C0DBD6ACA244072DB638E8A3E5F401BB8A8BB57CA2440DC2FFA658B3E5F40397AA12534CA2440DC2FFA658B3E5F4030968EDE15CA2440367BFBCE8A3E5F40806A172E06CA24409098EA138A3E5F40F6E4AB2EF1C92440B4B92011893E5F408A085ADCDAC92440D2A4B9BA883E5F4090A8AB96CFC924406EFF2504863E5F404210D6B5ACC9244092F249DD843E5F405E1F8C8E9AC92440BCB9AE4E843E5F40DE3B6A4C88C924402EBD4747833E5F40C058840772C92440B7D49C17823E5F406C90EE8C5BC9244035DF77C2813E5F40B0CD21043FC924403873FEDC863E5F40D20C987620C92440	\N
 1280	Unnamed service	service	1	f	\N	0102000020E6100000020000005AFC5C23B83E5F40F08398F0F0C724407754EBB3B93E5F4085B93885F0C72440	\N
-1263	Unnamed residential	residential	1	f	\N	0102000020E610000002000000E6DA615DA63E5F40F2608BDD3EC72440813A8A189B3E5F408A5B60EA42C72440	\N
-885	Concepcion Street	tertiary	1	f	\N	0102000020E610000003000000CED5A079CA3E5F40850838842AC5244057772CB6C93E5F4008C4904193C52440106CA68CC93E5F403E3DB665C0C52440	\N
+1281	Unnamed residential	residential	1	f	\N	0102000020E610000004000000AD9DCD4F963E5F40BCF20F11EDC52440ACAE9EEE973E5F400C2252D32EC624408151932A9B3E5F4096253ACB2CC62440A4F6C7209C3E5F406C921FF12BC62440	\N
 1247	Maharlika Highway	trunk	1	f	\N	0102000020E61000009700000006AFA7678B405F404329102CFDEA24403608CE748A405F40AFE87BB207EB2440C716DDD586405F40278007AB56EB244075F6DF9483405F40435DFF0989EB2440FE463B6E78405F403D8CFFF114EC24408DB38E4F6D405F40EDB199E898EC2440ED061BE86B405F40B63984E0A7EC24404D04BBAB68405F40C6D2D1BBC2EC2440B6FE4C7361405F408B34F10EF0EC2440BD207DEE5F405F40147D9983FBEC24409A362DC25E405F40C6585CD207ED24405F7D3CF45D405F4031B0332A15ED2440B82462A55D405F404809B07E22ED2440717500C45D405F404606B98B30ED2440D6517A4B5E405F401C70A7BE3DED2440CF7701405F405F40879FA46549ED24408D54298760405F407D1A417452ED244003B0011162405F400833124658ED24400217BF8465405F40AD37C53E5CED24408E603EB46A405F40E921646A5CED244063F261516C405F404C7F40B15FED2440E05229D16D405F408B9EA57565ED2440A95038166F405F40982DFE5B6EED24405078640770405F403F8F519E79ED244026C808A870405F408C15359886ED24407F106ED770405F40C6FCDCD094ED2440AF38E68670405F4053E2DF0CA3ED24400E5BC4C16F405F405227A089B0ED2440E5828EB16E405F40E1E4C814BDED24409769A09E63405F40403AD09E26EE2440FEF565C460405F404609FA0B3DEE2440A6E14A2C5F405F406C84341944EE24405FDCFC755D405F40DCEBEE4B47EE24409D09F25858405F40DC7B5D2B46EE244075C4C66155405F404913EF004FEE2440CF296D1654405F4052955BFF53EE24407C5F5CAA52405F40C579933A5CEE2440BEC74F9951405F4002791B4064EE24401ED324C250405F40FDD8C9856FEE244030FC96EF4F405F4084296FEC7EEE2440C76E55C84B405F407903CC7C07EF24407D2E090646405F4096218E7571EF24408A6FCDC243405F407E9E5099ACEF24404983DBDA42405F4026CEE561FCEF24402BB2E77C42405F407F28E2BE1FF024408BBA206C42405F40A6704E362FF0244002614C9F42405F407BBA5FAA3EF02440D2C20A5C43405F40100DE60A4AF024405AFF9DA344405F40223999B855F0244053DD6D2846405F406AB290CA5EF024401760C4E347405F40970AE01C64F02440E603029D49405F405B481BA265F02440330E3F494B405F4044543C8963F02440C7C7DDD64C405F4059EB7A585EF024408411FB0450405F403083312251F02440BD8A315555405F40C9096EFF25F024407222B0285B405F403A652431F7EF244035400EEF5E405F4028F1B913ECEF24402EA814E060405F40A5129ED0EBEF24409E2C109862405F40CD3D247CEFEF2440C15B7BFA63405F40111AC1C6F5EF244079AC191964405F40BED3AE53F6EF2440EA78CC4065405F401814BCD7FFEF2440C6127B0D66405F408F4D976A0BF02440AE5AE37D66405F4047E6913F18F024400142356F66405F401C50807225F02440497E69F665405F4010D3197332F0244062597A7E62405F407A81A32E63F024400F8CCDD861405F4038D7D58970F0244093872AA160405F4035199F138CF0244016212BAE60405F408257CB9D99F0244075406DAF60405F40B7AC0CF49AF024403F2A0F1C61405F40304388D0ADF02440DE718A8E64405F407FFF417FFCF02440A91611C564405F406B15585B0CF12440020352AC64405F40EE105A6A18F124400E83F92B64405F40F2CA9AFD26F12440443D337763405F40BC2AAB4434F12440CECA51DB61405F40B0CD21043FF12440443756BD57405F4072CFA91A73F124408158DBB955405F406B0F7BA180F12440B1868BDC53405F40A6CE48298DF12440E93290C250405F400EBB945FABF1244079B130444E405F401AF44AFECCF124408693347F4C405F404ABB2C81EFF124401B9BC2EF4B405F40DC8541F4FFF12440BC1F5CA64B405F4019E76F4221F224405C4299A14C405F40024A438D42F2244072EEC04A4F405F40F086342A70F22440AD6296E24F405F40EEF3CE577FF224401EEDC90D50405F406A3A96D28EF2244090D6BDBA4F405F403E84A7469EF2244096DE48EA4E405F409684FA4CACF22440913BB6AF4D405F40DD955D30B8F22440E662C21E49405F409E3D3CF0D6F2244029A3DB5C46405F40FE5767C6ECF22440B9ED314745405F405D35CF11F9F2244066097C8F44405F40A973FB9B06F32440C5B5903644405F402B4F20EC14F324405AA3795B44405F40D99F7A5A34F32440481EE3E544405F407C9E3F6D54F32440716CE28945405F40E9FF0BBA73F3244083610A2046405F40C396C39382F324403BAF0C0547405F4057C96C3590F324400596123848405F408109DCBA9BF324409C3F5C284F405F409DBEF968CCF32440B84C970F52405F40157A5803EFF32440B289271653405F4084AB4DAD08F42440A091634653405F40C5DF9B4B16F4244029EB371353405F400514EAE923F424408852318452405F407C759F2D31F42440A79C8AAF51405F405E79DA2B3DF4244030B4DF7F50405F40400D840948F4244031D120054F405F40E289C51451F42440FC1FBB664D405F406E5ADF7657F42440C74043A44B405F40C0A8EEDB5AF4244063AF1CC649405F409C429DA85BF42440EF343E3844405F403348669A55F42440C8E1DDDB3E405F4011DA177552F42440473D44A33B405F400EC237A858F42440121615713A405F40BFD0C88C5CF42440317DAF2138405F40A164726A67F424406DFA586636405F40925F9A7D79F42440A9CDEE7F36405F4061095A3794F424405A9D9CA138405F40B0389CF9D5F4244030044A5439405F40F2D885D50EF52440A132593739405F40C045820420F524405A10CAFB38405F40694C2D0032F52440A823DB5438405F4097E13FDD40F5244037E15E9937405F4015F82FB54AF52440264BF78436405F40CD48731A58F52440565F025C35405F40A9FF07B364F52440B185C54D32405F40BBD80F0C7BF52440BE50C07630405F4086E86BF184F52440E9995E622C405F40A14ED42D96F52440F88D0AF725405F4059BCFD5EAFF524401EE626C522405F400186E5CFB7F52440321EA5121E405F40F67013FFC1F52440FA0967B716405F40E74E5546C8F524407513C6600F405F403130E186CEF52440D6581D940B405F40503E986FD8F5244096B77E5509405F40686F3A13E4F52440D248957208405F40B855B549EAF524408B12995E07405F40F9612937F6F52440E5773F1306405F4034F6251B0FF62440C1B865D105405F40097DFA1928F62440EB06657506405F40443CC8A134F6244002FB438E08405F40EC9227FF49F624406A29C5330D405F40F7B6F4C363F62440F42FEEAB17405F40D641B9C898F62440E764F38219405F404826F103A1F62440	\N
 1248	Maharlika Highway	trunk	1	f	\N	0102000020E610000018000000E764F38219405F404826F103A1F624403E0EDEB21E405F4084921337B8F62440B9F2A32B22405F405CE91093CBF6244059CD29B723405F40320B4856D9F62440996EC8F525405F406095664EF2F6244033445F8B27405F40929C024F10F72440BC838E0C28405F4084B7072120F7244098AA0F7F28405F40BCEB6CC83FF72440F196506628405F40EFF5FFBB4FF7244010B3976D27405F4009A128756EF724406A8E07B625405F40A6BADB508CF724405A1B199A21405F401C9029C4C8F724407A8B87F71C405F400837BE9B13F82440520141CA19405F40378B170B43F82440772B4B7416405F40274D83A279F82440EAD55B5E14405F400943D3C89DF824409C69C2F613405F40A08D5C37A5F82440DE72F56313405F400B4DC8BDAFF82440AB3D91CC0F405F4039F1D58EE2F82440FF72D2A00D405F40FF9DA34401F924400CCB9F6F0B405F408EDD4FD724F92440897956D20A405F40B4DA0DEC42F92440B354281C0B405F403646A11B50F924403C0A21310B405F4008EB5AD658F92440	\N
 1249	Maharlika Highway	trunk	1	f	\N	0102000020E6100000290000003C0A21310B405F4008EB5AD658F92440C5A810340B405F40E094038761F9244053019C830C405F402B6B9BE271F924403455E69C0E405F40B9E00CFE7EF92440FCD0BB6713405F406D5E3013A0F92440B9AA477515405F4043588D25ACF92440C552C9A516405F4050E7E50BB5F924400C7558E116405F4085F46FF2B6F92440D0B52FA017405F4099F04BFDBCF924401D7EED4F18405F4093C08B63C9F92440171A3ED818405F40AB819CE6D3F9244090AADCFA1F405F405D2CB1D760FA24406CA0AF0F21405F40B4C46FAF71FA2440C25A6BDE27405F40CBDD42B2DBFA2440C13D2A5929405F40E9DD0EC3FDFA24409115B2A929405F40D63BDC0E0DFB2440C75686272A405F402E5915E126FB244062ED39FA29405F40F8F5E8B23DFB24409EC6078728405F40CA6FD1C952FB244016BB229D26405F4060FF1AB567FB2440A67B421B25405F40CBE660EC73FB2440065CA15923405F4030A1DD7C7EFB244073ABD6781F405F40A62A6D718DFB24409A82908719405F40A5B7E45D9AFB244031C73C3C15405F40BC581822A7FB2440E57D1CCD11405F40EAED2AFFB5FB24402E6A9CF20D405F4085628621CDFB2440A3E1390007405F409F8F32E202FC244089CC012700405F40EFA18ED838FC2440F7692629FA3F5F4004CD429660FC2440A167B3EAF33F5F4072231BFE89FC2440666C4320F23F5F40CF5037AB99FC2440FBA1E3B4F13F5F4002F62C639EFC24405BDBCA01F13F5F40FE052747A6FC2440D3286E26F03F5F40CEFA9463B2FC244068EBE060EF3F5F40A3D414B7C0FC2440CDFBA47FEE3F5F40CAB4ECFFD2FC244051C653EAED3F5F408B170B43E4FC2440C8B4368DED3F5F4053C7CFEBF4FC2440C82A0021ED3F5F400483B57B03FD2440E0B4858CEC3F5F407D89C27817FD2440	\N
@@ -9835,14 +10013,29 @@ COPY public.road_segments (id, road_name, road_type, base_weight, is_closed, haz
 1278	Unnamed service	service	1	f	\N	0102000020E610000002000000180D7448C53E5F4054A703594FC92440B8431E1CC73E5F4078C59D1C4FC92440	\N
 1295	Unnamed footway	footway	1	f	\N	0102000020E610000008000000A31F0DA74C3C5F40D5FDADAE54C924400ADD802A493C5F4037F3F5C65AC924400E85CFD6413C5F40F9F36DC152C92440D188E30A393C5F4010131E7E48C9244013C6600F373C5F404DD5E2F846C92440B7F704E4263C5F4010B9742733C9244005D781180D3C5F40F1B8A81611C924408DC58036033C5F407E0A3664F2C82440	\N
 1287	Maharlika Highway	trunk	1	f	\N	0102000020E610000002000000F32D628ED4415F407D9983FB5CB82440A0BF756AD3415F40EFC27BB372B82440	\N
+1296	Unnamed footway	footway	1	f	\N	0102000020E610000006000000BE3BE8C8803B5F4072D7B738CFC924408594449B883B5F4034BC5983F7C924406D6C1BEB873B5F40C480801024CA2440FE1E0604843B5F40A3C38DA559CA24407613211A823B5F4029D082AB97CA2440020C70E67C3B5F40C4F24295F5CA2440	\N
+1297	Unnamed unclassified	unclassified	1	f	\N	0102000020E610000008000000E9A7EE8021415F40B465AF2DF2C5244015AC71361D415F403623DE95B8C52440D5C853FB19415F4063416150A6C524403CE2EBC616415F40767BFFD599C524404831E5E816415F40B998558E7FC5244083A856BA16415F402CC13D2A59C524404890A56A16415F4040AB274E49C524400143A04415415F40F68FCF752BC52440	\N
+1298	Unnamed footway	footway	1	f	\N	0102000020E610000003000000470EC7A98C405F40E490C31671DC2440DBDE6E498E405F403AA7FEE66ADC2440D9A4EC3E91405F404CB6CBC86ADC2440	\N
+1299	Sogod-Bontoc Road	primary	1	f	\N	0102000020E6100000090000000C95DAE6213E5F404240BE840ABA2440C5A05DCF213E5F40EDAEFDAE19BA244097FA1E9A1E3E5F40B8C777CEBBBA2440FD5536621C3E5F40D683937E0CBB2440B1378CDD193E5F4080666BD84ABB24403C725AA6153E5F405B83ADC89EBB2440E9D2BF24153E5F405D0828C3A7BB2440A29927D7143E5F40305D2D1CADBB2440DA48C8F6103E5F406C150ECEF1BB2440	\N
+1300	Unnamed path	path	1	f	\N	0102000020E6100000060000007AED88F9283C5F40AD8E77A27FCD2440E55828E3293C5F40E3BFE556ADCD24406C335F6F2C3C5F404B2EB594E2CD244037209D152C3C5F404FDA0A5009CE24405E73FD71313C5F405386600B30CE2440A18BE1453A3C5F4082C1DABD81CE2440	\N
+1301	Unnamed residential	residential	1	f	\N	0102000020E6100000020000003EF262BCC13E5F400DD1D7E209CB2440CD6D6704C03E5F4078616BB6F2CA2440	\N
+1302	Unnamed unclassified	unclassified	1	f	\N	0102000020E610000002000000C0A1A64C203E5F40E3FDB8FDF2C12440BA884A7E1F3E5F40C0D42A55FDC12440	\N
+1303	Unnamed unclassified	unclassified	1	f	\N	0102000020E6100000260000006FBC3B32D63B5F40CD36DCECB4E22440FF12A749DF3B5F4023A0C211A4E2244075E1AC2DE13B5F40B42D14FAAAE22440D311C0CDE23B5F40A6B8AAECBBE224408B5C2679E43B5F40ACDA7FAEC7E2244067AE1DD6E53B5F4015F5937BCBE224407B7CE7BCEB3B5F4083E5BE8BADE22440F00DCF5CF13B5F40DB9953138EE224406669A7E6F23B5F40E7CE02A381E22440D0E8B3A8F43B5F402AEC585B67E22440ED293927F63B5F402C62D8614CE22440407E80FFF73B5F404D2EC6C03AE22440CCC7FF2EFD3B5F409CC58B8521E22440489E9042FE3B5F4098480E7D1CE22440D1C31A78FF3B5F40BE16F4DE18E2244022B3695B033C5F40D2AD32AE13E22440FD778E12053C5F40AB5AD2510EE224406209B5F0063C5F40E5BFF68205E22440D12B54ED093C5F40ED574B4BF6E12440A114ADDC0B3C5F40584D7C5AEAE12440469561DC0D3C5F402E35E785E0E1244044CB70F2113C5F4010FF55ECD4E124404F9BCCD3143C5F40581EA4A7C8E1244083499638173C5F405E961BB1BBE12440050E0D30183C5F409BA0979BB9E12440ED3BD054193C5F40E204A6D3BAE124404BDF104F1B3C5F40B29476B4BBE1244043273A811F3C5F4099FB3FE2B2E12440E98D4935223C5F40B58F70B5A9E124402F79F29F243C5F40FDAEBE709DE1244022382EE3263C5F40B028DB7690E12440321015F4283C5F4047A9296E81E12440D72BD1FE2C3C5F40E9CEB81567E12440DC0D47FC2F3C5F40B0EA07D04AE12440D41055F8333C5F4016CC4EF51AE12440BA1E3B5E373C5F403EAE0D15E3E02440785787ED383C5F405F155E38C6E024407665BC523B3C5F408EF1176998E02440	\N
+1304	Unnamed unclassified	unclassified	1	f	\N	0102000020E61000000E0000004A65E5F2FA3D5F40B4D59B0766C72440A8EE80A1FD3D5F4094BA0963B0C724405A65A6B4FE3D5F40D5C67D50BCC72440A19BA2C8FF3D5F404DBB9866BAC72440712B73A9003E5F40C42A3982AFC7244010BE41C5023E5F404268F3EE7EC72440B19B638A033E5F407153A81375C72440BC8564B7053E5F4057BA71416CC72440FC0FFAE3073E5F4024CDC41968C72440885979130D3E5F405D77A9C76CC724402C5B90D2113E5F40CD6ED2D96EC7244007D561E0143E5F4023ADE75A6AC72440D15CA791163E5F407A0BDA9A63C72440A708707A173E5F401B7629BF56C72440	\N
+1305	Unnamed footway	footway	1	f	\N	0102000020E6100000100000008AAC3594DA3E5F40D951E630A9C724409B59A6BADB3E5F4060CD5C3BACC72440656EBE11DD3E5F4094BA0963B0C72440F40E01D1DD3E5F4045590927B3C7244082AF4390DE3E5F40E4A08499B6C724407646A522DF3E5F4024287E8CB9C72440DB3CC4F5DE3E5F400417D0B0BDC724407058BF3EDF3E5F40FC19DEACC1C724404649A35DE03E5F406C1107BFC3C72440C80D1A55E13E5F406534F279C5C72440514D49D6E13E5F4011B11C7CBCC7244003F51C47E23E5F40330285D5B3C72440E5DB7179E23E5F4017299485AFC724404B45BEA6E23E5F409CB7FB66ACC72440573B2FBAE13E5F40AA7125F1A8C72440C80D1A55E13E5F40F8FAFFDDA7C72440	\N
+1306	Unnamed residential	residential	1	f	\N	0102000020E61000000800000094522BA7983E5F40CCD3B9A294C82440DD4F7C6B963E5F40850A0E2F88C824404AE4CCC0923E5F40C19206126FC8244069931EE18F3E5F4067ED5B525AC82440582E652A8E3E5F4034BBEEAD48C82440585F13888D3E5F40E6CC76853EC82440BE6C3B6D8D3E5F40C776082D35C82440D5F3249F8D3E5F40540262122EC82440	\N
+1307	Unnamed residential	residential	1	f	\N	0102000020E610000002000000D5F3249F8D3E5F40540262122EC82440FFE5FFFA8D3E5F40BA82120B21C82440	\N
+1308	Unnamed residential	residential	1	f	\N	0102000020E610000002000000FFE5FFFA8D3E5F40BA82120B21C82440BDC5C37B8E3E5F408510EBE813C82440	\N
+1310	Unnamed unclassified	unclassified	1	f	\N	0102000020E610000011000000E2B43BFFD1475F408890042B98C22440536AE514D3475F4029154328A5C2244070AB6A93D4475F40E6B22CF3B1C224408D79C2B7D5475F40B20A4048BBC224407A4A1817D8475F40078E1546C4C22440C0A8EEDBDA475F40FFF5C07DD3C2244077F35487DC475F40D74CBED9E6C2244053D21E8ADD475F4010A1004004C32440057AF2FADD475F40E8F7FD9B17C3244088CB3B98DE475F40062E8F3523C32440FFB3E6C7DF475F40C5EB55BF2DC3244028D1370EE1475F40DFA4695034C324400DA837A3E6475F403AE576D43DC32440B3B5BE48E8475F4076EFF2BE3BC32440B29B19FDE8475F409600A19A37C32440DC453DE9E9475F4000D6F4EA2DC324408DA2BDB0EB475F40012C973215C32440	\N
+1311	Unnamed unclassified	unclassified	1	f	\N	0102000020E6100000020000008DA2BDB0EB475F40012C973215C32440A97E4A3AEF475F400CF5AA84DDC22440	\N
 1312	Unnamed unclassified	unclassified	1	f	\N	0102000020E61000000C000000A97E4A3AEF475F400CF5AA84DDC22440AD889AE8F3475F40E708CF3A99C22440DB2ED91DF7475F4059DB148F8BC22440320C0EE5FA475F405A9654127EC2244013E7F230FE475F4006137F1475C22440244CACE7FF475F4034FE33396BC22440F3C1D77C01485F4063E9E85D61C2244046894CAF03485F4000474C9A50C2244092D5085806485F409907550F3DC2244037E38FFD07485F40591BBEE02EC2244096F9FD510A485F403263C0481EC22440C39F3C870D485F406EA301BC05C22440	\N
-1313	Maasin ??? Macrohon ??? Sogod Road	primary	1	f	\N	0102000020E610000003000000999020A60E3E5F4045CE0C2C91C1244072CA3736163E5F4076D2B139BDC12440717C4853183E5F4062C0ED64CBC12440	\N
-1314	Maasin ??? Macrohon ??? Sogod Road	primary	1	f	\N	0102000020E610000003000000717C4853183E5F4062C0ED64CBC12440C11DA8531E3E5F40D0697121EAC12440C0A1A64C203E5F40E3FDB8FDF2C12440	\N
-1315	Maasin ??? Macrohon ??? Sogod Road	primary	1	f	\N	0102000020E610000003000000C0A1A64C203E5F40E3FDB8FDF2C124408AE4D0C7213E5F40F1ACEEA2F9C1244046E39A4C263E5F40CE05E4011BC22440	\N
-1316	Maasin ??? Macrohon ??? Sogod Road	primary	1	f	\N	0102000020E61000000400000046E39A4C263E5F40CE05E4011BC224403F373465273E5F401FE16A532BC22440B61FDF94283E5F409587E01346C2244086819D51293E5F402F19220269C22440	\N
-1317	Maasin ??? Macrohon ??? Sogod Road	primary	1	f	\N	0102000020E61000000200000086819D51293E5F402F19220269C22440A397ACE5293E5F40F2704C6084C22440	\N
-1318	Maasin ??? Macrohon ??? Sogod Road	primary	1	f	\N	0102000020E610000008000000A397ACE5293E5F40F2704C6084C22440DE95B8E92A3E5F40BB6FC67AB4C22440F58C333C2C3E5F4093A6E617CAC22440E304018D2D3E5F4099107349D5C22440BFE3CA8F2E3E5F4037C87FDCD9C224406A21B715313E5F40C398993EE0C22440FCE5EECE353E5F40266607A6E4C22440019DEEE1373E5F40AEB9A3FFE5C22440	\N
-1319	Maasin ??? Macrohon ??? Sogod Road	primary	1	f	\N	0102000020E610000002000000019DEEE1373E5F40AEB9A3FFE5C22440D78DD200393E5F40965D30B8E6C22440	\N
+1313	Maasin ΓÇô Macrohon ΓÇô Sogod Road	primary	1	f	\N	0102000020E610000003000000999020A60E3E5F4045CE0C2C91C1244072CA3736163E5F4076D2B139BDC12440717C4853183E5F4062C0ED64CBC12440	\N
+1314	Maasin ΓÇô Macrohon ΓÇô Sogod Road	primary	1	f	\N	0102000020E610000003000000717C4853183E5F4062C0ED64CBC12440C11DA8531E3E5F40D0697121EAC12440C0A1A64C203E5F40E3FDB8FDF2C12440	\N
+1315	Maasin ΓÇô Macrohon ΓÇô Sogod Road	primary	1	f	\N	0102000020E610000003000000C0A1A64C203E5F40E3FDB8FDF2C124408AE4D0C7213E5F40F1ACEEA2F9C1244046E39A4C263E5F40CE05E4011BC22440	\N
+1316	Maasin ΓÇô Macrohon ΓÇô Sogod Road	primary	1	f	\N	0102000020E61000000400000046E39A4C263E5F40CE05E4011BC224403F373465273E5F401FE16A532BC22440B61FDF94283E5F409587E01346C2244086819D51293E5F402F19220269C22440	\N
+1317	Maasin ΓÇô Macrohon ΓÇô Sogod Road	primary	1	f	\N	0102000020E61000000200000086819D51293E5F402F19220269C22440A397ACE5293E5F40F2704C6084C22440	\N
+1318	Maasin ΓÇô Macrohon ΓÇô Sogod Road	primary	1	f	\N	0102000020E610000008000000A397ACE5293E5F40F2704C6084C22440DE95B8E92A3E5F40BB6FC67AB4C22440F58C333C2C3E5F4093A6E617CAC22440E304018D2D3E5F4099107349D5C22440BFE3CA8F2E3E5F4037C87FDCD9C224406A21B715313E5F40C398993EE0C22440FCE5EECE353E5F40266607A6E4C22440019DEEE1373E5F40AEB9A3FFE5C22440	\N
+1319	Maasin ΓÇô Macrohon ΓÇô Sogod Road	primary	1	f	\N	0102000020E610000002000000019DEEE1373E5F40AEB9A3FFE5C22440D78DD200393E5F40965D30B8E6C22440	\N
 1320	Unnamed unclassified	unclassified	1	f	\N	0102000020E61000000200000046E39A4C263E5F40CE05E4011BC224406235F169293E5F40A07BC50902C22440	\N
 1321	Unnamed unclassified	unclassified	1	f	\N	0102000020E610000005000000717C4853183E5F4062C0ED64CBC12440C9062D7F193E5F40255CC823B8C124404CF9B59A1A3E5F404AC5104AA9C124409301A08A1B3E5F4014A39D899FC124407589343B1C3E5F40816500039CC12440	\N
 1322	Unnamed unclassified	unclassified	1	f	\N	0102000020E610000002000000298128F36A445F40AA1BDE62340D2540B972F6CE68445F40DAB6DE25270D2540	\N
@@ -9887,8 +10080,6 @@ COPY public.road_segments (id, road_name, road_type, base_weight, is_closed, haz
 1379	Unnamed service	service	1	f	\N	0102000020E610000005000000ABB35A600F3E5F40E64988A878B62440EB26E77A113E5F406460788082B62440C74ACCB3123E5F401E81E4428AB62440D8C92AB6133E5F4045D4449F8FB624406C0D00B0153E5F406045A1C096B62440	\N
 1423	Don Vicente Street	residential	1	f	\N	0102000020E61000000500000015B7C0D4053F5F40A5EFDA4A54C82440B75ED383023F5F408CD8278062C8244065DF15C1FF3E5F40D599D6016BC82440BA17F3CEFC3E5F407E3BE4C171C82440757A3947F83E5F401179814875C82440	\N
 1424	Don Vicente Street	residential	1	f	\N	0102000020E610000006000000757A3947F83E5F401179814875C82440053B59C5F63E5F4095E70B6B74C82440A0EBB1E3F53E5F40483657CD73C8244072A197F6F23E5F40A2C90FA672C824402C15AF0DF03E5F4082E3326E6AC824405CB68C8AEE3E5F4001B562C966C82440	\N
-1425	Don Vicente Street	residential	1	f	\N	0102000020E6100000050000005CB68C8AEE3E5F4001B562C966C824402F41FCB2EA3E5F406010470D5CC824403EAB71DBE33E5F4034BBEEAD48C824408852D6CADF3E5F403EB0E3BF40C8244069FC6772D63E5F40C84E2E7C33C82440	\N
-1426	Don Vicente Street	residential	1	f	\N	0102000020E61000000300000069FC6772D63E5F40C84E2E7C33C82440900A0852CE3E5F405DAF9FB426C82440BED87BF1C53E5F408FFAEB1516C82440	\N
 1433	Rizal Street	primary	1	f	\N	0102000020E61000000300000078FD9309093F5F4095CE2CAE96C8244072E19B01093F5F40E05C0D9AA7C82440255EF987083F5F406B67F393C5C82440	\N
 1381	Unnamed path	path	1	f	\N	0102000020E610000003000000027FF8F9EF3A5F40AC860ECBB0C3244098FFEB37EE3A5F40E70B10BBA5C324404C400235EB3A5F40F1C6383586C32440	\N
 1383	Unnamed tertiary	tertiary	1	f	\N	0102000020E610000002000000D9017C5C403C5F40B963FBDA44CB24400FFE34A4403C5F408F238C5539CB2440	\N
@@ -9911,10 +10102,6 @@ COPY public.road_segments (id, road_name, road_type, base_weight, is_closed, haz
 1430	Rizal Street	primary	1	f	\N	0102000020E610000003000000F4C473B6003F5F402FB5EF9B0CC8244086E86BF1043F5F408364A65945C8244015B7C0D4053F5F40A5EFDA4A54C82440	\N
 1431	Rizal Street	primary	1	f	\N	0102000020E61000000300000015B7C0D4053F5F40A5EFDA4A54C8244073D0CA62073F5F4021E3F6706EC824408B822A7F083F5F40A708CB338AC82440	\N
 1432	Rizal Street	primary	1	f	\N	0102000020E6100000020000008B822A7F083F5F40A708CB338AC8244078FD9309093F5F4095CE2CAE96C82440	\N
-1309	Unnamed residential	residential	1	f	\N	0102000020E610000007000000BDC5C37B8E3E5F408510EBE813C82440DF7BC910913E5F402AAFF089D0C724408BB9B596933E5F400126BA7889C72440C00EF7EC943E5F405DBF60376CC72440952DED2F963E5F408BC0FD254EC72440242A5437973E5F408DB800344AC72440813A8A189B3E5F408A5B60EA42C72440	\N
-886	Concepcion Street	tertiary	1	f	\N	0102000020E610000002000000106CA68CC93E5F403E3DB665C0C52440ABA63517C93E5F409968EB3B1AC62440	\N
-958	Concepcion Street	residential	1	f	\N	0102000020E610000003000000534DFF48C73E5F4019C2D6112CC724407C9E9A26C73E5F40065D67E844C724405FF30CA4C63E5F40BDDB98B2A3C72440	\N
-1190	Veloso Street	residential	1	f	\N	0102000020E6100000030000005A7B44F1CF3E5F40B037312427C7244062307F85CC3E5F40742DB53929C72440534DFF48C73E5F4019C2D6112CC72440	\N
 1391	Unnamed tertiary	tertiary	1	f	\N	0102000020E61000008F000000364B1300AD475F4023F609A018CD244010919A76B1475F4025EA059FE6CC24403A3BBE62B2475F40D95427B1B5CC24401A3048FAB4475F407A0327367ACC24405B75C2F0B6475F40320BA30F4CCC2440B3F96EA9B9475F4035762E313BCC24401C11E73CBE475F40F32103D42FCC24409E488B8EBF475F40D9B0A6B228CC2440DE42B2DBC2475F40A9BEF38B12CC24402ABD80A8C5475F4097587446EFCB2440AB1CFFAAC8475F40F68480D7C2CB24401CE9B1D2C9475F40107459F1B2CB24409E205624CB475F40EF0802BFA1CB2440EB419CE2CC475F40AFACD96F92CB24403D68D196CE475F40EB0901AF85CB2440F9043F60D4475F4076E50EF681CB2440037976F9D6475F409ABBF14982CB24406D6814DCD9475F40530F2CA281CB2440CA92EF08DD475F40097657D17ACB2440B6E10BEEE2475F40FE439F3479CB24405C4E5315E4475F40B697D98C78CB24403CB0D293E8475F40A758350873CB2440174449EDEA475F400BE1E2F269CB244004A271F2EC475F40CBAC94545CCB24401C125212ED475F4098158A743FCB24407BEC78DDEC475F40A75027EA16CB24408D881865EC475F40546EA296E6CA2440C905C2A9EA475F400FA8ED15CCCA24409B1430CBE8475F40A3135333B5CA24402440F273E8475F40C282A0489CCA2440FA30D692E9475F40A075E84F76CA2440FA788D02E9475F401A4520A864CA244078753348E6475F407D900A0852CA2440F849FFDCE1475F40AB08371955CA2440472465E6DD475F40C4E9245B5DCA244008E8BE9CD9475F40898FF40E5CCA2440B6E166A7D5475F40577A6D3656CA244052C0D1E9D4475F403F749C363ECA24402136FD7ED6475F40AB69CD4532CA2440BAA93759D9475F40AC6CC43824CA2440A24A28D8DA475F402C41EB8612CA244042565CC1DB475F40CF914BD2EBC92440FBEB1516DC475F40BD659824E0C92440FB8FF1CDDB475F404AB72572C1C924402A6D16D4DC475F4026C45C52B5C924403A28BC5FE0475F40F4AED579AFC92440D92DB8D5E2475F40DA159FA7A6C92440D94125AEE3475F40F9E989F898C92440C2C073EFE1475F406FD4AF1985C9244076A565A4DE475F40CDE7DCED7AC92440494D1652D9475F40858EC29A6FC92440980A3BD6D6475F40FACB931051C92440C2757BFFD5475F404A4D710B4CC92440DB029DA4D4475F404A95287B4BC924401D71C806D2475F40863710374CC924402B6D718DCF475F404BDDDFEA4AC92440C8FB276ECB475F407C5006FD3BC924405060F01FC1475F4041F2CEA10CC924400E654DD1B6475F40EF91CD55F3C82440F93A5FA2B0475F40F7D676C9EEC824401F99B3E3AB475F40A42EBE0DD6C824408C2D0439A8475F408963B895B9C8244041CDDAB7A4475F401FB52EDA88C82440E29CC717A3475F409E21C1F979C824406CB41CE8A1475F4036C2ECAF68C8244037BBFFD9A0475F40568EDA0E57C82440C0D254AA9F475F40D5FA6C2E48C82440BB4967BB9D475F4066BE839F38C8244051CA5AF99B475F40609CAEDD2CC82440A675656199475F40A2FEC41220C824402F00E88B98475F4013B12DA814C824407062A30799475F40682508B2F9C724407C3E6FCF98475F40318C05CFCEC7244088A70D3D98475F40953F845DB9C724401260A28B97475F40D39FA28F9EC72440ADC8433A97475F40E02AF46679C724402F8DBA3198475F40FD14C78157C72440717C485398475F40D03AF4273BC72440FF8FB86C99475F408A2C883721C72440FF02E6C699475F40E702F2800DC7244075EB90F69A475F4071E9F3ACFFC6244092B9E81A9C475F40369AB745F4C624402D36F7A19C475F403078E283E8C6244015F18C6C9D475F4062F9F36DC1C6244009A2934A9D475F40075449AEACC624407578639C9A475F4029DB76908DC62440C084C08094475F40C467A15346C62440BBFBD29192475F40DE567A6D36C624406E4A1EF491475F400E620C512AC6244092DE814B91475F400D1D3BA8C4C524403E4D1C2F93475F409357E71890C524404E25034095475F402039E34570C524401E9B2ED596475F409066D1E05BC52440EE9D2C1098475F406411798148C52440CA969B5E98475F40C1E7E2CA34C524403BF6589F97475F40F1283A3712C5244060178F9C96475F40206A91A3EFC42440DDC545FF95475F406387E75BD5C42440E92EE46C95475F40E74B14C6BBC4244001E77BFC94475F406D95BB2AABC424404E25034095475F4031467FC39FC424405F8ABCF696475F40A9D5FC9D92C42440E2C1604898475F40883FD4C78DC42440A5E892BB99475F40B16D516683C424404A044FC69D475F40E0AEA8D260C42440F6E51604A0475F40CF48298D3DC4244043249E47A0475F40FF0EFBF323C4244001A83D80A0475F40EF63BB31F3C32440157E5F129D475F40BEDD921CB0C324408DA328869A475F409103C0C293C324406486D73F99475F4028A4EB7882C3244047D2246797475F406715EC7541C324402B69C53794475F407B319413EDC224409DC8827893475F40E6B22CF3B1C224407FAFD7AA93475F4059DB148F8BC22440A8B8BB1894475F40E4ECE75E71C22440C09E65CC93475F405C0CD41863C22440BB88A53792475F409F292AD148C22440D3403DC791475F405F3D93A23AC22440626E522C92475F40E24680892EC224404F8AFB3493475F40D08A5EFC23C224405B8EA1AD94475F401FEC5E3821C224406578A2DA96475F405F03C70A23C22440A08DB7F097475F409A5DF75624C224406486D73F99475F401DCC817923C224405D33F9669B475F40A25AE95A20C22440F74A0FF99D475F40E9BEF79221C224406D1915DD9F475F404BFCF61A27C22440483A5EDCA1475F40736F34362AC2244077B8C260A3475F40FC9AF6DE29C2244040400812A5475F4017EF6C3425C2244093077D44A7475F4011CD977219C224404A52E3EFA8475F40532FAEA70CC2244043723271AB475F40429369D9FFC124403029E384AE475F40F4ECA820F5C124408ECC237FB0475F40492BBEA1F0C1244009B1E9F7B3475F4035947FD2F5C12440B51F84DBB5475F403C719417F4C124403757282DB7475F40E010AAD4ECC1244059AE6D40BA475F40CEAA2A8FC9C1244041F6D5B0BA475F40040E57BDB2C124408E345DF4BA475F409CAE8273A1C124408258912CBB475F40334FAE2990C12440	\N
 1392	Unnamed tertiary	tertiary	1	f	\N	0102000020E61000000B0000008258912CBB475F40334FAE2990C124400007488FBA475F40912518737CC124405498ADABB8475F4002D8800871C1244079D388F4B6475F405EF3AACE6AC1244052F355F2B1475F40FE2B2B4D4AC12440418E9C3BB0475F40476B56C73BC12440D60E9079AE475F4082F057B730C12440EACA0CC0AB475F40ECC5AB0727C12440D9655309AA475F406FCF98EE1AC1244080D8D2A3A9475F40BFEBD8AD0AC124406EB2FCAFA9475F408BB6741607C12440	\N
 1393	Unnamed unclassified	unclassified	1	f	\N	0102000020E610000017000000C39F3C870D485F406EA301BC05C22440EDDC0FD319485F4018D1764CDDC124409E7EABD01B485F4097BE7C57A9C12440865C042134485F402C6684B707C124406DE34F5436485F4056FC9584FAC0244019C8B3CB37485F401CDF28C302C12440B4BA8BE637485F40B17A76AF49C124405A27D30D39485F403D409C2C5AC12440A1FE0EA03A485F400850F81164C1244074C9DD8C3F485F407C8AD29453C12440BA89B5534E485F40FE20376854C1244075DBCF7355485F40479A2E7A5DC124407356FABF59485F40B6A73F564BC12440CDE9B29858485F40CDDFCECF1EC1244013060A615A485F401CDF28C302C124401AEC979963485F4024905C48D1C02440249C16BC68485F408D70A47DBDC02440E4EF839870485F40B304BE47A2C0244010C935AA78485F4074E558839CC0244049A12C7C7D485F404CA8E0F082C024405DCB1AAB83485F40DEC5A0B888C02440C27CC38E90485F40A1FFD42E5CC0244018C1B5C997485F405886DD1C53C02440	\N
@@ -10015,7 +10202,6 @@ COPY public.road_segments (id, road_name, road_type, base_weight, is_closed, haz
 1509	Unnamed residential	residential	1	f	\N	0102000020E6100000020000007E41C17BFD3E5F407319EDA7B5C324403A0C4169033F5F40935A83520FC42440	\N
 1510	Unnamed residential	residential	1	f	\N	0102000020E6100000040000003A0C4169033F5F40935A83520FC424402282BBFD033F5F4013B12DA814C42440F6381D12083F5F40681B24E93FC424409B2963320B3F5F40DD312BCA5BC42440	\N
 1511	Unnamed residential	residential	1	f	\N	0102000020E610000006000000D284926EF03E5F406E9FFAACD7C524405D4997A3EC3E5F40D107CBD8D0C5244094201274EA3E5F4025DE4B2BCFC524407136C247E93E5F4002502047CEC52440FC28D9A0E53E5F401B84B9DDCBC524402995F084DE3E5F40FE8AEBCEC9C52440	\N
-1191	Veloso Street	residential	1	f	\N	0102000020E610000003000000534DFF48C73E5F4019C2D6112CC72440BBE8D08EC03E5F40FAD005F52DC72440A41CCC26C03E5F40E8C138132EC72440	\N
 1513	Unnamed tertiary	tertiary	1	f	\N	0102000020E61000003F000000CB147310F43D5F4090FEF22444CC2440A075E84FF63D5F403846578E35CC2440AE94AF15FE3D5F40CAA7C7B60CCC2440EAECBF29073E5F40658BA4DDE8CB244073124A5F083E5F40247F30F0DCCB244037B2E19F083E5F407353B93FCDCB2440C655C098083E5F408ED20039BCCB2440A80E03A7083E5F404DC68C4BB0CB24400890A163073E5F4086EEEDF19DCB24400F289B72053E5F4028AFDF5D78CB24403F2201FE043E5F401B7629BF56CB2440FDB90D0F063E5F40A85725EC36CB2440AA7697D5053E5F4091099D7C1FCB2440887E1244023E5F4088258A3501CB2440EB483F2BFA3D5F40C548E5DCDCCA2440BFF6274CF33D5F40D5B551F8C7CA24405B20E637F13D5F405757AAB0BECA24402CA281B3EF3D5F4041D653ABAFCA2440F7A5C86BEF3D5F40F6FFBB4F9FCA24402CFEA5FBEF3D5F40E87B574E8CCA2440DCC47F70F43D5F403F051B3279CA2440D5E4CEF1F63D5F405A796E4672CA2440C29B7F05FA3D5F4039E345706DCA24409D7A4908FB3D5F4096FE6F3667CA2440C7246DF4FB3D5F403A9E85F35FCA244055C5AFB3FC3D5F40DF3D9BB058CA244025558094FD3D5F4076DEC66647CA2440E47F97BEFC3D5F4030D05A762DCA244044D32357FB3D5F405AB9179815CA2440AA70BA1BFA3D5F40F31483D1F6C92440D557FC4BF73D5F403ECA2D52CDC9244077418EF7F43D5F40158DB5BFB3C924409501B1B6F33D5F40BC07E8BE9CC9244061E0B9F7F03D5F406FB7C94D79C924405C57CC08EF3D5F40F2C0B6346DC92440D47C957CEC3D5F40E67C0CB155C92440AB5F4436EB3D5F4072A3C85A43C9244052D2C3D0EA3D5F40675F1ED72BC924405245F12AEB3D5F40543E5F0E16C924401C018173EB3D5F40D8D7BAD408C92440F80D5D9AEC3D5F405C71169BFBC8244080EB2F60EE3D5F408A5CCBBFF1C82440EF80FCB6F13D5F4069C6A2E9ECC824404D0A9865F43D5F40F9CE79D7EAC824408039C489F93D5F4055EAA39DE4C82440FC1D8A02FD3D5F400844E3E4D9C82440195F0F81FE3D5F4009FF2268CCC82440DC12149AFF3D5F401E51A1BAB9C82440E1815C3D023E5F407480BB4791C8244016084CF1023E5F4063E4767984C82440FEDC8607033E5F40683C11C479C824401B1E0C86043E5F4007BA51BF66C82440BB963556073E5F405EB3A6C354C8244072E19B01093E5F408DBE38A748C824405F251FBB0B3E5F40B6227BCE27C82440ACD6D3580C3E5F400D1CD0D215C82440177085660D3E5F4007FAFA100AC8244058B89B960E3E5F401C4C7963F7C72440E0F42EDE0F3E5F40018173EBDAC72440684293C4123E5F408E626F18BBC72440599CD612173E5F40EB6E9EEA90C72440A64D8BB0173E5F40B93C31467FC72440A64D8BB0173E5F40D5DB55FE6BC72440	\N
 1514	Unnamed residential	residential	1	f	\N	0102000020E610000002000000F96A47710E3F5F4083893F8A3ACB2440D9846A39063F5F40B740272955CB2440	\N
 1515	Unnamed service	service	1	f	\N	0102000020E6100000020000003BB2A83EC63E5F4093C3279D48C82440CB694FC9B93E5F403A08951348C82440	\N
@@ -10024,6 +10210,7 @@ COPY public.road_segments (id, road_name, road_type, base_weight, is_closed, haz
 1518	Unnamed service	service	1	f	\N	0102000020E6100000020000004F0647C9AB3E5F409453967C47C82440C3EAD9BDA63E5F40E14C028A47C82440	\N
 1519	Unnamed service	service	1	f	\N	0102000020E610000002000000C3EAD9BDA63E5F40E14C028A47C82440BE1CD198A43E5F40D085EC1747C82440	\N
 1520	Unnamed residential	residential	1	f	\N	0102000020E610000004000000E80C3103BA3E5F40519C48D51BC624400AC09A5EBD3E5F40B739DF991AC624409D876E51C13E5F402851E56A1AC62440ABA63517C93E5F409968EB3B1AC62440	\N
+1523	Unnamed residential	residential	1	f	\N	0102000020E610000002000000106CA68CC93E5F403E3DB665C0C524402995F084DE3E5F40FE8AEBCEC9C52440	\N
 1524	Unnamed service	service	1	f	\N	0102000020E61000000200000074B91C0AFA3E5F4026851ED6C0C3244088D459D2F63E5F4078FAF7CF89C32440	\N
 1525	Unnamed path	path	1	f	\N	0102000020E61000000900000076824765D43F5F4017597C540DC424400AFA66F6D43F5F4080BB479110C4244051D43EC2D53F5F40E580B80611C4244092054CE0D63F5F403B94FCE318C42440382D78D1D73F5F40F30F11ED19C42440CD76853ED83F5F40F2C7597D1AC4244079758E01D93F5F40574513831BC4244073E3CC65D93F5F40FD69A33A1DC424403D714A8AD93F5F400327DBC01DC42440	\N
 1526	Unnamed unclassified	unclassified	1	f	\N	0102000020E610000003000000E764F38219405F404826F103A1F62440136F53F220405F4047BA55C675F62440116047D224405F406C6B555C66F62440	\N
@@ -10076,13 +10263,13 @@ COPY public.road_segments (id, road_name, road_type, base_weight, is_closed, haz
 1179	Maharlika Highway	trunk	1	f	\N	0102000020E610000002000000C6B24FB637415F40BA3EBD63C2C1244084679D4C37415F4021EE450FD7C12440	\N
 1180	Maharlika Highway	trunk	1	f	\N	0102000020E6100000040000008EE32C9130415F40D93ADD1E29C324404AF3226E29415F40B2625D818DC42440400CBE7A26415F407F6EC383C1C424407CB4DDA925415F4063DA92B0CAC42440	\N
 1218	Unnamed unclassified	unclassified	1	f	\N	0102000020E610000002000000717C4853183E5F4062C0ED64CBC124408602B683113E5F40B0AF75A911C22440	\N
-1224	Maasin ??? Macrohon ??? Sogod Road	primary	1	f	\N	0102000020E6100000020000004B299E69F83D5F401572A59E05C12440E2146756003E5F40BA32A83638C12440	\N
+1224	Maasin ΓÇô Macrohon ΓÇô Sogod Road	primary	1	f	\N	0102000020E6100000020000004B299E69F83D5F401572A59E05C12440E2146756003E5F40BA32A83638C12440	\N
 1250	Maharlika Highway	trunk	1	f	\N	0102000020E610000002000000E0B4858CEC3F5F407D89C27817FD2440D6B37B4DEA3F5F4048814FBD7FFD2440	\N
 1382	Unnamed path	path	1	f	\N	0102000020E610000002000000C7BC8E38643B5F40344A97FE25D924406635B808673B5F4075B7A1180FD92440	\N
 1435	Unnamed unclassified	unclassified	1	f	\N	0102000020E610000002000000987B928579405F401E8997A773C52440ACDBEA8376405F402DD21FF532C52440	\N
 1479	Unnamed residential	residential	1	f	\N	0102000020E610000006000000B7D49C17023E5F40870ECBB09BB72440818D9026033E5F40507DD6EBCCB724406E5EE685053E5F40B8B1D991EAB7244009F59958053E5F40AF5E454607B82440143E5B07073E5F40E91A1CDB21B82440E42CEC69073E5F409851877027B82440	\N
 1512	Unnamed tertiary	tertiary	1	f	\N	0102000020E61000000C000000468F8422023E5F404E379A6DB8CD24404D0A3DAC013E5F4039758AFAC9CD2440CAD2985A003E5F40542E9E8BD0CD2440B96DDFA3FE3D5F40A38F9EC7CDCD2440FF7D213FF63D5F40AC9D7296A3CD244001D5E4CEF13D5F40C06A76EE87CD24403EAEB25BF03D5F40615E36F059CD2440FC4BF7DFEF3D5F40B3F0F5B52ECD24407F106ED7F03D5F40887DA76ED3CC2440F50F2219F23D5F40061CF80780CC2440D11CFE3FF33D5F40709A99F452CC2440CB147310F43D5F4090FEF22444CC2440	\N
-1456	Zamora Street	residential	1	f	\N	0102000020E610000002000000DC44D213BB3E5F4011BC6B1A25C52440BEA1F0D9BA3E5F406166440EB6C52440	\N
+1555	Unnamed tertiary	tertiary	1	f	\N	0102000020E610000005000000692CABFAA63E5F40C1638918C0C524404CA60A46A53E5F40F0405365CEC524405F62878CA23E5F40EF8513E2DBC52440AF3F89CF9D3E5F409797B2C2E3C52440AD9DCD4F963E5F40BCF20F11EDC52440	\N
 1582	Unnamed service	service	1	f	\N	0102000020E6100000070000009F5CAED9A53E5F401D3FAFD3A3C82440D5FFDE12A53E5F4012BB5BFEE8C82440C3071B43A53E5F40AED117E714C92440C90C0A39A53E5F4029A84D4123C924407625B847A53E5F40A57E839B31C924405EFAF25DA53E5F4021BA56314BC92440F903D48AA53E5F402F91668753C92440	\N
 1583	Talisay Barangay Road	residential	1	f	\N	0102000020E6100000040000000296010CF03D5F40160CF846BEB8244016551A8CEC3D5F405C5E1498A9B8244032E94A5FE33D5F4079909E2287B824400F52A687D73D5F4071E2506452B82440	\N
 1584	Unnamed footway	footway	1	f	\N	0102000020E610000002000000AC7FC63BF63D5F4081B053AC1AB824405E3EA3BEF63D5F40D41E40D01BB82440	\N
@@ -10093,19 +10280,7 @@ COPY public.road_segments (id, road_name, road_type, base_weight, is_closed, haz
 1589	Unnamed residential	residential	1	f	\N	0102000020E610000004000000089854C870405F407BD168BCBEC424404CCA38A16B405F403E247CEF6FC42440DC4B755C68405F40AEEFC34142C42440D9B7EE4163405F4037E8A628F2C32440	\N
 1590	Unnamed residential	residential	1	f	\N	0102000020E610000003000000D9B7EE4163405F4037E8A628F2C32440A4E9471E63405F40D9FF4AF8EFC32440F2EB87D860405F4057A2A2A0CAC32440	\N
 1591	Unnamed residential	residential	1	f	\N	0102000020E610000003000000F2EB87D860405F4057A2A2A0CAC32440DE6BADD458405F40235635F746C3244062AFC10C57405F4038B3A72E2AC32440	\N
-1555	Unnamed tertiary	tertiary	1	f	\N	0102000020E610000005000000692CABFAA63E5F40C1638918C0C524404CA60A46A53E5F40F0405365CEC524405F62878CA23E5F40EF8513E2DBC52440AF3F89CF9D3E5F409797B2C2E3C52440AD9DCD4F963E5F40BCF20F11EDC52440	\N
-1380	Unnamed tertiary	tertiary	1	f	\N	0102000020E61000000A01000047A9296E813A5F400CD4186316F42440B1283630833A5F40D23F1C7FFDF32440289EB305843A5F4089F1F510E8F3244004C53478843A5F404D2036A2C5F32440B686AD34843A5F4094C8F43A98F32440043BFE0B843A5F405D2FF2576DF32440AA4885B1853A5F40E1F31EC253F32440B6245179853A5F4031A0CD6042F324402876D954823A5F405829F34531F32440FAF774D0803A5F40FDBD141E34F324400D9A4CCB7E3A5F4079944A7842F3244043FE99417C3A5F40235635F746F3244050E09D7C7A3A5F408D9B1A683EF3244016197849773A5F4088C4F30824F324409A9E0B7E763A5F401586127706F32440E0E5D830793A5F40C80D1A55E1F22440F1EE6D9F7A3A5F40A2630795B8F224400817974F7B3A5F408BB3D8DC87F22440F660527C7C3A5F400C433FAE68F224404EFC07477F3A5F40DF03CF1841F224408FEB95687F3A5F4008324CB736F22440D1C6B6B17E3A5F40A564DE4F32F224402056C9117C3A5F40D324C2D034F224405686CCF07A3A5F40C073942820F224400FC3FD367A3A5F4015AEA29AEDF124404477FF0E7B3A5F40719AF4ADC5F12440D936D60F7B3A5F40DF9513A39DF12440C198E3CB7A3A5F404B7C49BE6DF124406E13EE95793A5F400542FC0D24F12440EB5CAC037B3A5F4027C929F004F124403D974E907D3A5F40EC342D0CECF02440A0504F1F813A5F409E5F94A0BFF02440E7A0F07E813A5F40B8E9CF7EA4F024408E869D73813A5F405602733E86F024407689EAAD813A5F4026AB22DC64F024407DC5BF747F3A5F40A5A31CCC26F02440F0E8352C7C3A5F401A0CBFE5FBEF24401DC5DE30763A5F40D9470268EFEF2440F65D11FC6F3A5F405FA39BB3F4EF2440EECAD35E693A5F40C9224DBC03F02440AA36EE83623A5F406D2700B507F02440328111EA583A5F403F4A3668F9EF244058AEB7CD543A5F40D0F0660DDEEF244084CCDFCE4F3A5F40E4F32FEEABEF24404A05BA9B4C3A5F404EC9833EA2EF2440B0EDA3094A3A5F40C8D2872EA8EF2440A08B868C473A5F4024456458C5EF24400523E5DD473A5F404EA2B9A9DCEF2440B7F52E39493A5F403F92EDD7F8EF2440E6BEE666493A5F40AF3374A213F02440F3CEFCC5473A5F405F1734E323F02440A1078893453A5F4010B633A726F0244044C93F8E413A5F40A8565F5D15F02440CA07F30D3B3A5F4089905FE40AF02440A9FE9CDD353A5F404D4C1762F5EF24408F311C742E3A5F40D0C59569EAEF24405D3C725A263A5F408F49905BDDEF244015DA835A1D3A5F40D955ED3FD7EF2440A4ED4E2D113A5F40E3D7593EDCEF2440366156830B3A5F408AAC3594DAEF24401513E51C063A5F40C7B6B17ED8EF2440E7CE02A3013A5F40A99D06B1D8EF244048C9062DFF395F40886C7B16DFEF2440854CE8E4FB395F40B96C1915DDEF2440B2E375B3F5395F401660692AD5EF24406214048FEF395F4049DA8D3EE6EF244075B977C3EC395F4045EA8722EEEF244076AB425EEA395F409415C3D501F02440A80D3D18E7395F4080E3214212F0244026C86361E3395F408505F7031EF024403BE9D89CDE395F40ADAEF9A70AF024400DB6C7C1DB395F403F2D509CEDEF244015151681D6395F40A87D29F2DAEF244088669E5CD3395F404CEE66FCB1EF244041BAD8B4D2395F407418DD8B79EF244012F4BCC0D1395F409F91088D60EF2440309DD66DD0395F4050F63BB94BEF24403763E2A0CE395F4007CCE8EC09EF2440D2414DE3CD395F40DEE11BAFE5EE24409C700A86CE395F408B9AF91FAAEE244056C7E017CD395F40254113BC7CEE244092E86514CB395F40EC67565B56EE2440D9075916CC395F401994C4ED2BEE24401975ADBDCF395F406E217EB4EEED24408EF85FF8D2395F406A7528F9C7ED2440BD8DCD8ED4395F403341C351A8ED2440FEA7D19AD5395F404C8E3BA583ED2440394D5590D5395F4042507F0750ED2440E58DDD4FD7395F40E6DDA2DD32ED2440FD70EBC9D7395F404DFCAC8D0CED2440C8D68E3DD6395F40E0D0A5C9D6EC2440806C4892D6395F40E6E37F97BEEC2440AD3A6178DB395F403C139A2496EC244024963902DD395F40C694FE147DEC24409BE3DC26DC395F40EE3D01B969EC2440906C0954DA395F402A7E422C51EC24401BD5E940D6395F405650076811EC244012F4BCC0D1395F40993E856DD5EB2440EA245B5DCE395F4054CE7234A2EB244056C7E017CD395F40E0F42EDE8FEB24404C8A8F4FC8395F402145532C6DEB2440F553D279C3395F40934D5E0949EB2440EC8C4A45BE395F40A17609980AEB24408E76DCF0BB395F40B5311B09D9EA2440774EB340BB395F40C4978922A4EA244064F72EEFBB395F401684F23E8EEA24403A419B1CBE395F40E1D4079277EA24402B84D558C2395F40D8D30E7F4DEA24402A4A534EC5395F4007F5882C2DEA2440B8FB66ACC7395F40C1BE428B11EA2440C2E567D9C9395F40320C0EE5FAE924400370FD05CC395F400A99D0C9F7E924406C00DB66CF395F40556F682508EA2440C4F41840D3395F403229F4B006EA2440CEAACFD5D6395F40DFC5FB71FBE92440DE510889D9395F408AEF7A1FFDE92440D9FFA5B1E2395F40D5438F73F6E9244019B2158FE6395F4082E09634EBE9244058EEBBD8EA395F402AC35D62D1E92440045ABA82ED395F40BE9E54A0BBE92440DFC5562BEE395F405ADCDA1DADE9244092E3F32FEE395F401A0D2ABBAAE9244080BD1D3CEE395F40B817E2A2A4E924409287CFE7ED395F4028AA6D799BE92440529E7939EC395F40C8844EBE8FE9244041B22550E9395F40AAE91FE978E9244071AF2715E8395F405CDEC1F462E9244009FA0B3DE2395F402918DF6124E9244004FEF0F3DF395F40E12E562F1AE92440D2CEC4CFDA395F40304B96EE09E9244026EDFC91D8395F402909E46D00E924406CFD3E2DD0395F40C9DCC6B0D4E82440CF4E0647C9395F40333E82D19BE82440943F29A4C6395F407CE24A8798E82440381B86EAC1395F405BB1BFEC9EE82440DB69108BBD395F408F39CFD897E824404E06EC0FB9395F400DA661F888E8244037CDF1C0B6395F40B29B19FD68E82440A57BE761B2395F4004F0051CF8E72440D07CCEDDAE395F4075FFFDCE9BE7244042DC8B1EAE395F405C21078085E72440D07CCEDDAE395F4048C08D3974E72440E16E5A3AB0395F408A22A46E67E72440A1BF2BDDB8395F400ED8D5E429E7244012BAF028BA395F409F9BEC551AE7244071C22918BA395F40F694415A08E724400835E8F0B5395F40889FFF1EBCE62440D39A8B64B4395F40A087DA368CE624401B649291B3395F40A2CE818A4FE62440868DB27EB3395F40F6F69D1507E624402D2E443DB3395F402CCD5257E3E524405E45EB4DB1395F400BD28C45D3E52440CA04B28DAE395F405E8830D9D3E52440485AE0E1AC395F401669E21DE0E52440AEC6C848AC395F4086ED821CEFE52440E8C13813AE395F40441FE2D528E62440485744A8AD395F4001028C1D43E6244008CDAE7BAB395F40A8380EBC5AE62440B0BECB56A8395F40474AC4A574E624407B832F4CA6395F40CDCD37A27BE62440418EF7F4A2395F40E601D13879E62440244D7276A1395F40421DFBFE72E6244037A4F6C7A0395F4098F6724463E624403D7E6FD39F395F40AC53E57B46E624409803F3469C395F40A281B3EFE5E524401D925A2899395F40960E31B9ACE5244071B092EA96395F403849980E42E52440E98A08B595395F40389F3A5629E5244061B0D12893395F40B521B53F06E5244052CAB5B28E395F4088E244AADEE424401424B6BB87395F40414F5EBFBBE4244009ADE2E885395F40E7C990BEA4E424404586B07584395F4008CC43A67CE424404C8E3BA583395F409F07D22060E42440B276251381395F40C2137AFD49E42440E62FE35C79395F40CA46318A2FE424401CA89DAB77395F4067A494C61EE42440ED0F94DB76395F40D0F46D1C0CE42440E794DB5177395F40278925E5EEE32440869AD7C779395F40F4F11A05D2E32440B984E8B57E395F4090CA0347B8E3244058E36C3A82395F400305DEC9A7E32440D4B3C5DA84395F404B123A9E85E324407A0CA02985395F40EA4ABA1C65E32440527C218983395F4019C2D6112CE32440F34B0EE981395F401491065CFCE22440AD60657E7F395F40B3FF4B63C5E2244007955DD57E395F409AF27C618DE2244054D3E4187F395F40972831BE1EE224405A34F8567F395F40840772F508E22440C440D7BE80395F40313FDC7AF2E124401BBCAFCA85395F404D5F741EBAE12440744694F686395F402642D94A9EE124401A9F6E4587395F409CE73EEF7CE1244056EB692C86395F407C0C569C6AE124406AC18BBE82395F4090D959F44EE124402F25DC7580395F402FBC372B47E12440D9EE1EA07B395F40930A197E26E124407E946CD072395F401D7D827AE9E02440EADD697C70395F40D0910145D1E024406482D0306B395F40A5FED53E78E02440033A387D62395F40DCC8867F22E02440455D103661395F40F7FF160912E024408102942B61395F40CB62073AFFDF24404AA1E2EE62395F40E525FF93BFDF2440982721A262395F407332CC6493DF2440E0F027CF61395F40E11EF06547DF244093E34EE960395F40B655FFD604DF244087F0790F61395F409ED89EB4CBDE2440AA1FE57162395F4027A9A7EA79DE2440CEB348C961395F406AB702AF3BDE24407CECD3965F395F4067FCB1FFF0DD24406A81E26C5F395F402E31E076B2DD244064062AE35F395F401FC65A327DDD2440C3537E0860395F406904769032DD24402E7A02BC60395F402AA73D25E7DC24408C344CC862395F40D00B772E8CDC2440E4BB94BA64395F402B9E1FEB4EDC24409EE4582863395F40A65E5C4F19DC244098DF693263395F40B5464E70FBDB24403E35A84764395F40EEB25F77BADB2440083653C664395F408AC10D428ADB2440FCE659A464395F40F487669E5CDB2440200890A163395F40DDF016A309DB2440387870C163395F4072A43330F2DA2440A8E5626765395F40E0826C59BEDA2440D838510166395F40734C71B092DA2440E4BB94BA64395F404A4CAB7C2ADA2440A3A190AE63395F409159075108DA244033373A4261395F401844FF5FD0D924409AACF6555E395F402123FB7B84D92440BFA552A25B395F40F8CF89F326D92440BF3225485B395F408B21EF0B9ED82440B99DC7725C395F40735CD77965D82440C5AA41985B395F40E8DD585018D82440F42B42565C395F4060240F9FCFD72440833FB26F5D395F405BBD7960B6D72440F261516C60395F408688409A56D72440DBAC551660395F404DA088450CD72440CF32E6095F395F40E8C715CDB9D624408417D8BE5B395F40CAC342AD69D62440B4BB517559395F40247EC51A2ED62440BD8DCD8E54395F409AE55718C7D52440002DA74E51395F406E7A06C36FD524404897EDF950395F40853309281ED52440B9DC05EF50395F40FF6ECB91DFD424404763A36252395F40335B689DA7D424406E15C44057395F40C7D1C19F86D424400EEDAD9259395F402E1B9DF353D42440E79F2AF05F395F40969D34C3FCD3244043F2DFCD64395F40115E7127C7D324405245F12A6B395F402C6920F186D324402A06A3ED73395F40E7BE41203CD324402357A0CC75395F4075F6DF9403D324403FD7080E79395F40BDC85FB58DD22440E5A210B779395F40C651B9895AD22440E794DB5177395F402EE23B31EBD12440AD9FA3FA73395F4051BF0B5BB3D1244014ED855D6F395F40346B84D95FD12440B05B5F7F6D395F40ADEB06C02ED12440271C30FE6C395F40B41EBE4C14D1244010F16A146D395F40D04D51E4FFD024401B9C887E6D395F403716B94CF2D024402D32F0926E395F4096B95400E7D024407F58254770395F40F5143944DCD02440C540327873395F404AEEB089CCD02440	\N
-966	Unnamed residential	residential	1	f	\N	0102000020E610000003000000A4F6C7209C3E5F406C921FF12BC624407E50BC6FA13E5F4093F0733227C62440F2E1A30FA73E5F4077CFCB7223C62440	\N
-622	Flores Street	tertiary	1	f	\N	0102000020E6100000020000007B455CA5E03E5F40C162C3899EC62440C3D4963AC83E5F40BD022C4DA5C62440	\N
-887	Concepcion Street	tertiary	1	f	\N	0102000020E610000003000000ABA63517C93E5F409968EB3B1AC62440E1606F62C83E5F40009013268CC62440C3D4963AC83E5F40BD022C4DA5C62440	\N
-1556	Unnamed tertiary	tertiary	1	f	\N	0102000020E610000002000000AD9DCD4F963E5F40BCF20F11EDC52440CCBF4CCA933E5F408B620333F0C52440	\N
-1521	Unnamed residential	residential	1	f	\N	0102000020E610000002000000AA32422EA73E5F4088C4984FB1C52440942243D8BA3E5F407D87ECCDB9C52440	\N
-957	Concepcion Street	residential	1	f	\N	0102000020E61000000200000070630EDDC73E5F40D2020F67D9C62440534DFF48C73E5F4019C2D6112CC72440	\N
-1522	Unnamed residential	residential	1	f	\N	0102000020E610000002000000942243D8BA3E5F407D87ECCDB9C52440106CA68CC93E5F403E3DB665C0C52440	\N
-970	Flores Street	tertiary	1	f	\N	0102000020E610000009000000C3D4963AC83E5F40BD022C4DA5C624407BD404F6BD3E5F4098C4B4CAA7C624400CA1945AB93E5F404436EBE7A8C6244092F01879B43E5F403D111F33ABC62440E2CD1ABCAF3E5F400C395BE5AEC62440F56FF2B6AD3E5F40AAF06778B3C62440724F5777AC3E5F4010F39B78BDC624409054956CAB3E5F40CD70A884CCC62440E6DA615DA63E5F40F2608BDD3EC72440	\N
-1193	Veloso Street	residential	1	f	\N	0102000020E610000003000000497A62E7B73E5F40502C014235C7244088DE3D9BB03E5F40611BF16437C72440E6DA615DA63E5F40F2608BDD3EC72440	\N
-1281	Unnamed residential	residential	1	f	\N	0102000020E610000004000000AD9DCD4F963E5F40BCF20F11EDC52440ACAE9EEE973E5F400C2252D32EC624408151932A9B3E5F4096253ACB2CC62440A4F6C7209C3E5F406C921FF12BC62440	\N
-1523	Unnamed residential	residential	1	f	\N	0102000020E610000002000000106CA68CC93E5F403E3DB665C0C524402995F084DE3E5F40FE8AEBCEC9C52440	\N
+1456	Zamora Street	residential	1	t	\N	0102000020E610000002000000DC44D213BB3E5F4011BC6B1A25C52440BEA1F0D9BA3E5F406166440EB6C52440	32
 \.
 
 
@@ -10123,15 +10298,34 @@ COPY public.roster_years (id, year, is_active, created_at) FROM stdin;
 --
 
 COPY public.staff_notifications (id, user_id, event_type, resource_type, resource_id, title, message, is_emergency, is_read, created_at) FROM stdin;
+82	3	hazard_report	hazard_report	27	New hazard report	JESTER LETRERO GESULGA submitted a flood report for review.	f	f	2026-11-18 07:12:47.469805
+86	3	hazard_report	hazard_report	28	New hazard report	JESTER LETRERO GESULGA submitted a flood report for review.	f	f	2026-11-18 07:29:31.879332
+89	3	hazard_report	hazard_report	29	New hazard report	JESTER LETRERO GESULGA submitted a flood report for review.	f	f	2026-11-18 07:33:34.814423
+91	7	hazard_report	hazard_report	30	New hazard report	JESTER LETRERO GESULGA submitted a flood report for review.	f	f	2026-11-18 07:57:45.899491
+93	3	hazard_report	hazard_report	30	New hazard report	JESTER LETRERO GESULGA submitted a flood report for review.	f	f	2026-11-18 07:57:45.899491
+94	6	hazard_report	hazard_report	30	New hazard report	JESTER LETRERO GESULGA submitted a flood report for review.	f	f	2026-11-18 07:57:45.899491
+95	7	hazard_report	hazard_report	31	New hazard report	JESTER LETRERO GESULGA submitted a flood report for review.	f	f	2026-11-18 08:07:11.488067
+97	3	hazard_report	hazard_report	31	New hazard report	JESTER LETRERO GESULGA submitted a flood report for review.	f	f	2026-11-18 08:07:11.488067
+98	6	hazard_report	hazard_report	31	New hazard report	JESTER LETRERO GESULGA submitted a flood report for review.	f	f	2026-11-18 08:07:11.488067
+99	7	hazard_report	hazard_report	32	New hazard report	JESTER LETRERO GESULGA submitted a flood report for review.	f	f	2026-11-18 08:29:44.269189
+101	3	hazard_report	hazard_report	32	New hazard report	JESTER LETRERO GESULGA submitted a flood report for review.	f	f	2026-11-18 08:29:44.269189
+102	6	hazard_report	hazard_report	32	New hazard report	JESTER LETRERO GESULGA submitted a flood report for review.	f	f	2026-11-18 08:29:44.269189
 16	3	hazard_report	hazard_report	3	New hazard report	JESTER LETRERO GESULGA submitted a flood report for review.	f	f	2026-11-09 14:39:42.314367
+103	7	hazard_report	hazard_report	33	New hazard report	JESTER LETRERO GESULGA submitted a road blockage report for review.	f	f	2026-11-18 10:06:54.792405
 18	3	hazard_report	hazard_report	4	New hazard report	A resident submitted a road blockage report for review.	f	f	2026-11-09 14:54:59.296641
 20	3	rescue_request	rescue_request	5	EMERGENCY: Rescue requested	A resident requested emergency rescue. Open the request for details.	t	f	2026-11-09 14:55:31.056418
+105	3	hazard_report	hazard_report	33	New hazard report	JESTER LETRERO GESULGA submitted a road blockage report for review.	f	f	2026-11-18 10:06:54.792405
 22	3	hazard_report	hazard_report	5	New hazard report	JESTER LETRERO GESULGA submitted a flood report for review.	f	f	2026-11-09 14:57:39.351215
+106	6	hazard_report	hazard_report	33	New hazard report	JESTER LETRERO GESULGA submitted a road blockage report for review.	f	f	2026-11-18 10:06:54.792405
 24	3	rescue_request	rescue_request	6	EMERGENCY: Rescue requested	A resident requested emergency rescue. Open the request for details.	t	f	2026-11-09 14:59:31.537846
+107	7	hazard_report	hazard_report	34	New hazard report	JESTER LETRERO GESULGA submitted a flood report for review.	f	f	2026-11-18 10:25:31.596786
 26	3	hazard_report	hazard_report	6	New hazard report	JESTER LETRERO GESULGA submitted a flood report for review.	f	f	2026-11-09 16:10:27.44764
 28	3	rescue_request	rescue_request	7	EMERGENCY: Rescue requested	A resident requested emergency rescue. Open the request for details.	t	f	2026-11-09 16:11:41.490898
+109	3	hazard_report	hazard_report	34	New hazard report	JESTER LETRERO GESULGA submitted a flood report for review.	f	f	2026-11-18 10:25:31.596786
 30	3	hazard_report	hazard_report	7	New hazard report	JESTER LETRERO GESULGA submitted a flood report for review.	f	f	2026-11-10 21:21:13.716439
+110	6	hazard_report	hazard_report	34	New hazard report	JESTER LETRERO GESULGA submitted a flood report for review.	f	f	2026-11-18 10:25:31.596786
 32	3	hazard_report	hazard_report	8	New hazard report	JESTER LETRERO GESULGA submitted a flood report for review.	f	f	2026-11-10 21:22:22.043466
+111	7	hazard_report	hazard_report	35	New hazard report	JESTER LETRERO GESULGA submitted a landslide report for review.	f	f	2026-11-18 10:28:33.452755
 34	3	hazard_report	hazard_report	9	New hazard report	JESTER LETRERO GESULGA submitted a landslide report for review.	f	f	2026-11-10 23:24:58.004222
 37	3	hazard_report	hazard_report	10	New hazard report	JESTER LETRERO GESULGA submitted a road blockage report for review.	f	f	2026-11-10 23:40:08.634344
 38	3	hazard_report	hazard_report	11	New hazard report	JESTER LETRERO GESULGA submitted a road blockage report for review.	f	f	2026-11-11 01:21:05.592783
@@ -10153,6 +10347,14 @@ COPY public.staff_notifications (id, user_id, event_type, resource_type, resourc
 74	3	rescue_request	rescue_request	9	EMERGENCY: Rescue requested	A resident requested emergency rescue. Open the request for details.	t	f	2026-11-16 10:37:49.476949
 76	3	rescue_request	rescue_request	10	EMERGENCY: Rescue requested	A resident requested emergency rescue. Open the request for details.	t	f	2026-11-16 10:38:24.225291
 78	3	rescue_request	rescue_request	11	EMERGENCY: Rescue requested	A resident requested emergency rescue. Open the request for details.	t	f	2026-11-16 13:12:38.463376
+113	3	hazard_report	hazard_report	35	New hazard report	JESTER LETRERO GESULGA submitted a landslide report for review.	f	f	2026-11-18 10:28:33.452755
+114	6	hazard_report	hazard_report	35	New hazard report	JESTER LETRERO GESULGA submitted a landslide report for review.	f	f	2026-11-18 10:28:33.452755
+115	7	hazard_report	hazard_report	36	New hazard report	JESTER LETRERO GESULGA submitted a road blockage report for review.	f	f	2026-11-18 10:30:30.913191
+117	3	hazard_report	hazard_report	36	New hazard report	JESTER LETRERO GESULGA submitted a road blockage report for review.	f	f	2026-11-18 10:30:30.913191
+118	6	hazard_report	hazard_report	36	New hazard report	JESTER LETRERO GESULGA submitted a road blockage report for review.	f	f	2026-11-18 10:30:30.913191
+119	7	rescue_request	rescue_request	12	EMERGENCY: Rescue requested	A resident requested emergency rescue. Open the request for details.	t	f	2026-11-18 15:47:05.351053
+120	3	rescue_request	rescue_request	12	EMERGENCY: Rescue requested	A resident requested emergency rescue. Open the request for details.	t	f	2026-11-18 15:47:05.351053
+122	6	rescue_request	rescue_request	12	EMERGENCY: Rescue requested	A resident requested emergency rescue. Open the request for details.	t	f	2026-11-18 15:47:05.351053
 \.
 
 
@@ -10964,7 +11166,7 @@ COPY public.system_logs (id, user_id, action, "timestamp") FROM stdin;
 800	1	Added evacuation center: Samplera	2026-10-29 18:15:18.368689
 801	1	Added room Room 1 to evacuation center: Samplera	2026-10-29 18:15:44.892472
 802	1	Edited evacuation center: Sogod Central School	2026-10-30 14:26:00.346675
-803	1	Validated hazard report #2 ??? auto-closed road(s): Unnamed footway, LuzViMin	2026-10-30 14:27:19.382324
+803	1	Validated hazard report #2 ΓÇö auto-closed road(s): Unnamed footway, LuzViMin	2026-10-30 14:27:19.382324
 804	1	Edited evacuation center: Sogod Central School	2026-10-30 14:30:40.96821
 805	1	Added family ZZ-TEST-RESIDENT-2026 in San Jose	2026-11-02 14:48:17.607037
 806	1	Approved resident registration #1	2026-11-02 14:53:27.500506
@@ -11041,7 +11243,7 @@ COPY public.system_logs (id, user_id, action, "timestamp") FROM stdin;
 887	1	Added room Sample to evacuation center: Sogod Central School	2026-11-09 14:09:52.945621
 888	1	Assigned family 'JESTER LETRERO GESULGA' (FAM-6-3C221A15) to Sogod Central School - Room Sample	2026-11-09 14:33:55.310303
 889	1	Manually created resident account for JESTER GESULGA (gesulga63@gmail.com)	2026-11-09 14:35:43.103067
-890	1	Validated hazard report #6 ??? auto-closed road(s): Unnamed service, Bagares Street, Concepcion Street, Zamora Street, Unnamed residential	2026-11-09 16:12:29.355787
+890	1	Validated hazard report #6 ΓÇö auto-closed road(s): Unnamed service, Bagares Street, Concepcion Street, Zamora Street, Unnamed residential	2026-11-09 16:12:29.355787
 891	1	Updated rescue request #7 to responding	2026-11-09 16:18:20.451069
 892	1	Updated rescue request #7 to resolved	2026-11-09 16:18:23.562183
 893	1	Checked in Salvador Dacoro Pacatang (ZONEII-SALVADORDACOROPACATANG) at Sogod Central School via manual	2026-11-09 16:33:49.453714
@@ -11064,21 +11266,21 @@ COPY public.system_logs (id, user_id, action, "timestamp") FROM stdin;
 910	1	Updated rescue request #6 to acknowledged	2026-11-10 20:49:07.894026
 911	1	Updated rescue request #6 to responding	2026-11-10 20:49:09.693952
 912	1	Reopened road(s) for hazard report #6: Unnamed service, Bagares Street, Concepcion Street, Zamora Street, Unnamed residential	2026-11-10 20:49:40.912885
-913	1	Validated hazard report #7 ??? auto-closed road(s): Zamora Street, Bagares Street, Unnamed service, Concepcion Street, Unnamed residential	2026-11-10 21:21:34.077001
-914	1	Validated hazard report #8 ??? auto-closed road(s): T. Dagohoy Street, Unnamed unclassified, Unnamed residential, Unnamed tertiary	2026-11-10 21:22:41.110639
-915	1	Validated hazard report #9 ??? auto-closed road(s): T. Dagohoy Street	2026-11-10 23:25:19.183536
-916	1	Validated hazard report #10 ??? auto-closed road(s): Unnamed service	2026-11-10 23:40:29.481041
-917	1	Validated hazard report #11 ??? auto-closed road(s): Flores Street, Unnamed residential	2026-11-11 01:21:44.142949
+913	1	Validated hazard report #7 ΓÇö auto-closed road(s): Zamora Street, Bagares Street, Unnamed service, Concepcion Street, Unnamed residential	2026-11-10 21:21:34.077001
+914	1	Validated hazard report #8 ΓÇö auto-closed road(s): T. Dagohoy Street, Unnamed unclassified, Unnamed residential, Unnamed tertiary	2026-11-10 21:22:41.110639
+915	1	Validated hazard report #9 ΓÇö auto-closed road(s): T. Dagohoy Street	2026-11-10 23:25:19.183536
+916	1	Validated hazard report #10 ΓÇö auto-closed road(s): Unnamed service	2026-11-10 23:40:29.481041
+917	1	Validated hazard report #11 ΓÇö auto-closed road(s): Flores Street, Unnamed residential	2026-11-11 01:21:44.142949
 918	1	Reopened road(s) for hazard report #9: T. Dagohoy Street, Unnamed tertiary	2026-11-11 01:38:17.628361
-919	1	Validated hazard report #9 ??? auto-closed road(s): T. Dagohoy Street, Unnamed tertiary	2026-11-11 01:38:40.070478
+919	1	Validated hazard report #9 ΓÇö auto-closed road(s): T. Dagohoy Street, Unnamed tertiary	2026-11-11 01:38:40.070478
 920	1	Reopened road(s) for hazard report #8: Unnamed tertiary	2026-11-11 01:38:55.406422
 921	1	Reopened road(s) for hazard report #7: Zamora Street	2026-11-11 01:39:04.929452
-922	1	Validated hazard report #12 ??? auto-closed road(s): Zamora Street, Unnamed residential	2026-11-11 01:40:38.157873
-923	1	Validated hazard report #13 ??? auto-closed road(s): Unnamed unclassified, Unnamed residential, Unnamed tertiary	2026-11-11 02:13:29.948486
-924	1	Validated hazard report #14 ??? auto-closed road(s): Concepcion Street	2026-11-11 02:14:48.641486
-925	1	Validated hazard report #15 ??? auto-closed road(s): Concepcion Street	2026-11-11 02:33:28.51147
-926	1	Validated hazard report #16 ??? auto-closed road(s): Concepcion Street, Veloso Street	2026-11-11 02:35:10.240988
-927	1	Validated hazard report #17 ??? auto-closed road(s): Flores Street, Veloso Street, Unnamed residential	2026-11-11 02:35:17.289632
+922	1	Validated hazard report #12 ΓÇö auto-closed road(s): Zamora Street, Unnamed residential	2026-11-11 01:40:38.157873
+923	1	Validated hazard report #13 ΓÇö auto-closed road(s): Unnamed unclassified, Unnamed residential, Unnamed tertiary	2026-11-11 02:13:29.948486
+924	1	Validated hazard report #14 ΓÇö auto-closed road(s): Concepcion Street	2026-11-11 02:14:48.641486
+925	1	Validated hazard report #15 ΓÇö auto-closed road(s): Concepcion Street	2026-11-11 02:33:28.51147
+926	1	Validated hazard report #16 ΓÇö auto-closed road(s): Concepcion Street, Veloso Street	2026-11-11 02:35:10.240988
+927	1	Validated hazard report #17 ΓÇö auto-closed road(s): Flores Street, Veloso Street, Unnamed residential	2026-11-11 02:35:17.289632
 928	1	Updated check-in for Aida Abella Salazar (ZONEIII-AIDAABELLASALAZAR): 1/2 members present at Sogod Central School	2026-11-13 14:28:25.684148
 929	1	Checked in Aida Abella Salazar (ZONEIII-AIDAABELLASALAZAR) at Sogod Central School via manual	2026-11-13 14:28:37.544608
 930	1	Undid check-in for Aida Abella Salazar (ZONEIII-AIDAABELLASALAZAR) at Sogod Central School	2026-11-13 14:28:42.671118
@@ -11196,16 +11398,16 @@ COPY public.system_logs (id, user_id, action, "timestamp") FROM stdin;
 1043	1	Edited evacuation center: Material Amenities Test Center	2026-11-15 07:56:35.819624
 1044	1	Validated hazard report #18	2026-11-15 11:11:11.22732
 1045	1	Rejected hazard report #18	2026-11-15 11:23:52.477605
-1046	1	Validated hazard report #18 ??? auto-closed road(s): Unnamed residential	2026-11-15 11:23:53.775996
-1047	1	Validated hazard report #19 ??? auto-closed road(s): Concepcion Street	2026-11-15 11:24:44.878118
-1048	1	Rejected hazard report #19 ??? reopened road(s): Concepcion Street	2026-11-15 11:32:24.527157
-1049	1	Validated hazard report #19 ??? auto-closed road(s): Unnamed residential, Concepcion Street	2026-11-15 11:32:25.547767
-1050	1	Validated hazard report #20 ??? auto-closed road(s): Unnamed tertiary, Unnamed residential	2026-11-15 11:50:30.319334
-1051	1	Validated hazard report #21 ??? auto-closed road(s): Unnamed residential, Flores Street, Veloso Street	2026-11-15 11:50:35.625649
-1052	1	Validated hazard report #22 ??? auto-closed road(s): Concepcion Street, Veloso Street	2026-11-15 11:50:41.977413
-1053	1	Validated hazard report #23 ??? auto-closed road(s): Concepcion Street, Flores Street	2026-11-15 11:50:46.022039
-1054	1	Validated hazard report #25 ??? auto-closed road(s): Unnamed tertiary	2026-11-15 12:18:18.355327
-1055	1	Validated hazard report #26 ??? auto-closed road(s): Zamora Street, Bagares Street	2026-11-15 12:19:13.721556
+1046	1	Validated hazard report #18 ΓÇö auto-closed road(s): Unnamed residential	2026-11-15 11:23:53.775996
+1047	1	Validated hazard report #19 ΓÇö auto-closed road(s): Concepcion Street	2026-11-15 11:24:44.878118
+1048	1	Rejected hazard report #19 ΓÇö reopened road(s): Concepcion Street	2026-11-15 11:32:24.527157
+1049	1	Validated hazard report #19 ΓÇö auto-closed road(s): Unnamed residential, Concepcion Street	2026-11-15 11:32:25.547767
+1050	1	Validated hazard report #20 ΓÇö auto-closed road(s): Unnamed tertiary, Unnamed residential	2026-11-15 11:50:30.319334
+1051	1	Validated hazard report #21 ΓÇö auto-closed road(s): Unnamed residential, Flores Street, Veloso Street	2026-11-15 11:50:35.625649
+1052	1	Validated hazard report #22 ΓÇö auto-closed road(s): Concepcion Street, Veloso Street	2026-11-15 11:50:41.977413
+1053	1	Validated hazard report #23 ΓÇö auto-closed road(s): Concepcion Street, Flores Street	2026-11-15 11:50:46.022039
+1054	1	Validated hazard report #25 ΓÇö auto-closed road(s): Unnamed tertiary	2026-11-15 12:18:18.355327
+1055	1	Validated hazard report #26 ΓÇö auto-closed road(s): Zamora Street, Bagares Street	2026-11-15 12:19:13.721556
 1056	1	Added family FAM-10-8F9A729F in Hibod-Hibod	2026-11-15 16:21:25.807007
 1057	1	Added family FAM-10-BCB46567 in Hibod-Hibod	2026-11-15 17:08:48.566575
 1058	1	Deleted family 'DASDSADA ASDASASDASD ADASDASD SDSADSAD' (DASDSADSA)	2026-11-15 20:05:48.365876
@@ -11240,6 +11442,86 @@ COPY public.system_logs (id, user_id, action, "timestamp") FROM stdin;
 1087	1	Updated rescue request #10 to acknowledged	2026-11-16 14:04:12.388029
 1088	1	Updated rescue request #10 to resolved	2026-11-16 14:04:19.659918
 1089	1	Reopened road(s) for hazard report #26: Zamora Street, Bagares Street	2026-11-17 12:02:02.634429
+1090	1	Approved resident registration #9	2026-11-17 12:57:39.797362
+1091	1	Created lgu_personnel account: felixrobertpahamotang@gmail.com	2026-11-17 13:29:29.501211
+1092	1	Sent password reset email to: gesulgajester22@gmail.com	2026-11-17 15:23:39.978106
+1093	1	Sent password reset email to: gesulgajester22@gmail.com	2026-11-17 15:25:18.635975
+1094	1	Sent password reset email to: felixrobertpahamotang@gmail.com	2026-11-17 15:26:35.480217
+1095	1	Sent password reset email to: gesulgajester22@gmail.com	2026-11-17 15:36:43.905365
+1096	1	Sent password reset email to: gesulgajester22@gmail.com	2026-11-17 15:38:31.156326
+1097	3	Password set or reset using email link	2026-11-17 15:39:28.703085
+1098	1	Sent password reset email to: felixrobertpahamotang@gmail.com	2026-11-17 15:46:07.155946
+1099	6	Password set or reset using email link	2026-11-17 15:47:06.367853
+1100	1	Validated hazard report #27 ΓÇö auto-closed road(s): Unnamed residential	2026-11-18 07:13:26.769427
+1101	6	Exported non-registered contacts and medical needs, operation #3	2026-11-18 07:26:11.44574
+1102	1	Validated hazard report #28 ΓÇö auto-closed road(s): Unnamed residential	2026-11-18 07:29:49.531019
+1103	1	Validated hazard report #29 ΓÇö auto-closed road(s): Zamora Street	2026-11-18 07:33:45.451147
+1104	1	Created lgu_personnel account: glitterydavincie@gmail.com	2026-11-18 07:34:57.865183
+1105	7	Password set or reset using email link	2026-11-18 07:36:03.644327
+1106	1	Validated hazard report #30 ΓÇö auto-closed road(s): Zamora Street, Unnamed residential	2026-11-18 07:58:21.12957
+1107	1	Validated hazard report #31 ΓÇö auto-closed road(s): Zamora Street, Unnamed residential	2026-11-18 08:07:24.472502
+1108	1	Validated hazard report #32 ΓÇö auto-closed road(s): Bagares Street, Zamora Street	2026-11-18 08:30:01.37001
+1109	1	Edited evacuation center: PNHS	2026-11-18 10:03:53.833055
+1110	1	Validated hazard report #33 ΓÇö auto-closed road(s): Don Vicente Street, Unnamed residential	2026-11-18 10:07:15.880289
+1111	1	Validated hazard report #33 ΓÇö auto-closed road(s): Unnamed residential, Don Vicente Street	2026-11-18 10:07:19.07682
+1112	1	Validated hazard report #33 ΓÇö auto-closed road(s): Unnamed residential, Don Vicente Street	2026-11-18 10:07:26.576321
+1113	1	Validated hazard report #33 ΓÇö auto-closed road(s): Unnamed residential, Don Vicente Street	2026-11-18 10:07:29.426033
+1114	1	Rejected hazard report #33 ΓÇö reopened road(s): Unnamed residential, Don Vicente Street	2026-11-18 10:08:20.759046
+1115	1	Validated hazard report #33 ΓÇö auto-closed road(s): Don Vicente Street, Unnamed residential	2026-11-18 10:08:22.632274
+1116	1	Validated hazard report #33 ΓÇö auto-closed road(s): Don Vicente Street, Unnamed residential	2026-11-18 10:08:26.170579
+1117	1	Reopened road(s) for hazard report #33: Unnamed residential, Don Vicente Street	2026-11-18 10:24:27.142627
+1118	1	Validated hazard report #34 ΓÇö auto-closed road(s): Don Vicente Street	2026-11-18 10:27:31.487299
+1119	1	Validated hazard report #35 ΓÇö auto-closed road(s): Don Vicente Street	2026-11-18 10:28:50.396894
+1120	1	Validated hazard report #36 ΓÇö auto-closed road(s): Don Vicente Street, Unnamed residential	2026-11-18 10:30:40.356032
+1121	1	Validated hazard report #36 ΓÇö auto-closed road(s): Don Vicente Street, Unnamed residential	2026-11-18 10:30:42.767074
+1122	1	Validated hazard report #36 ΓÇö auto-closed road(s): Don Vicente Street, Unnamed residential	2026-11-18 10:30:45.80894
+1123	1	Validated hazard report #36 ΓÇö auto-closed road(s): Don Vicente Street, Unnamed residential	2026-11-18 10:30:48.147292
+1124	1	Validated hazard report #36 ΓÇö auto-closed road(s): Don Vicente Street, Unnamed residential	2026-11-18 10:30:48.324832
+1125	1	Validated hazard report #36 ΓÇö auto-closed road(s): Unnamed residential, Don Vicente Street	2026-11-18 10:30:57.672721
+1126	1	Validated hazard report #36 ΓÇö auto-closed road(s): Unnamed residential, Don Vicente Street	2026-11-18 10:30:58.90056
+1127	1	Validated hazard report #36 ΓÇö auto-closed road(s): Unnamed residential, Don Vicente Street	2026-11-18 10:30:59.098328
+1128	1	Validated hazard report #36 ΓÇö auto-closed road(s): Unnamed residential, Don Vicente Street	2026-11-18 10:31:02.014981
+1129	1	Reopened road(s) for hazard report #35	2026-11-18 10:31:47.159094
+1130	1	Reopened road(s) for hazard report #34	2026-11-18 10:32:52.931308
+1131	1	Reopened road(s) for hazard report #36: Unnamed residential, Don Vicente Street	2026-11-18 10:33:58.825328
+1132	1	Validated hazard report #35 ΓÇö auto-closed road(s): Don Vicente Street	2026-11-18 10:34:08.626481
+1133	1	Validated hazard report #34 ΓÇö auto-closed road(s): Don Vicente Street	2026-11-18 10:35:12.931363
+1134	1	Updated rescue request #11 to acknowledged	2026-11-18 12:07:48.718698
+1135	1	Undid check-in for Aida Abella Salazar (ZONEIII-AIDAABELLASALAZAR) at Sogod Central School	2026-11-18 14:55:06.368521
+1136	1	Checked in Aida Abella Salazar (ZONEIII-AIDAABELLASALAZAR) at Sogod Central School via manual	2026-11-18 14:55:08.251385
+1137	1	Exported non-registered contacts and medical needs, operation #3	2026-11-18 14:55:15.545574
+1138	1	Set evacuation schedule for all centers: 2026-11-25 08:00 - 2026-11-26 18:00 (open)	2026-11-18 14:59:02.765472
+1139	1	Added evacuation center: SLSU	2026-11-18 15:17:11.056716
+1140	1	Edited evacuation center: SLSU	2026-11-18 15:18:24.753108
+1141	1	Added room Room 1 to evacuation center: SLSU	2026-11-18 15:19:58.391612
+1142	1	Updated room Room 1 (ID: 271)	2026-11-18 15:20:32.604296
+1143	1	Added family FAM-8-214A798E in Zone I	2026-11-18 15:24:21.505909
+1144	1	Added family FAM-8-88BA771F in Zone I	2026-11-18 15:41:28.398131
+1145	1	Assigned family 'Haa LETRERO GESULGA' (FAM-8-88BA771F) to Sogod Central School - Room Sample	2026-11-18 15:42:58.07228
+1146	1	Updated rescue request #12 to acknowledged	2026-11-18 15:48:08.377313
+1147	1	Unassigned family 'Elena Navarro Escalante' (ZONEV-ELENANAVARROESCALANTE) from Sogod Central School - Room Room 1	2026-11-18 19:19:38.819738
+1148	1	Unassigned family 'John LETRERO GESULGA' (FAM-8-214A798E) from SLSU - Room Room 1	2026-11-18 19:45:05.971305
+1149	1	Updated room Room 1 (ID: 271)	2026-11-18 19:45:18.003572
+1150	1	Safely deactivated/deleted room: Room 1 (ID: 271)	2026-11-18 19:45:21.132104
+1151	1	Added evacuation center: BitolYwakaBitol	2026-11-18 20:19:16.781738
+1152	1	Added room adad to evacuation center: BitolYwakaBitol	2026-11-18 20:19:50.197595
+1153	1	Added family FAM-10-D1E3E5DC in Hibod-Hibod	2026-11-18 20:32:23.02971
+1154	1	Edited evacuation center: BitolYwakaBitol	2026-11-18 20:34:44.141138
+1155	1	Assigned family 'John LETRERO GESULGA' (FAM-8-214A798E) to Sogod Central School - Room Room 1	2026-11-18 21:01:05.474237
+1156	1	Updated room Room 29 (ID: 29)	2026-11-18 21:13:14.424138
+1157	1	Edited evacuation center: PNHS	2026-11-18 22:43:49.403329
+1158	1	Edited evacuation center: PNHS	2026-11-18 22:44:58.463379
+1159	1	Assigned family 'Addd LETRERO GESULGA' (FAM-10-BCB46567) to PNHS	2026-11-18 22:47:04.46241
+1160	1	Assigned family 'Dave Canillas Rosales' (HIBODHIBOD-RENEBAUTISTAROSALES) to BitolYwakaBitol - Room adad	2026-11-18 23:00:05.398632
+1161	1	Edited evacuation center: Hibod-Hibod Evacuation Center	2026-11-19 00:53:34.335943
+1162	1	Created non-registered arrival group (1 people), operation #3	2026-11-19 00:55:41.205745
+1163	1	Viewed non-registered contact numbers and medical needs, operation #3	2026-11-19 06:37:34.201204
+1164	1	Viewed non-registered contact numbers and medical needs, operation #3	2026-11-19 06:54:53.280584
+1165	1	Viewed non-registered contact numbers and medical needs, operation #3	2026-11-19 06:55:57.368739
+1166	1	Viewed non-registered contact numbers and medical needs, operation #3	2026-11-19 07:19:48.634271
+1167	1	Viewed non-registered contact numbers and medical needs, operation #3	2026-11-19 07:20:10.547133
+1168	1	Added room Room 999, floor 2 to evacuation center: Sogod Central School	2026-11-19 12:19:20.437108
+1169	1	Assigned family 'Elena Navarro Escalante' (ZONEV-ELENANAVARROESCALANTE) to Sogod Central School - Room Room 999 (floor 2)	2026-11-19 15:15:19.049478
 \.
 
 
@@ -11249,8 +11531,10 @@ COPY public.system_logs (id, user_id, action, "timestamp") FROM stdin;
 
 COPY public.users (id, name, email, password_hash, contact_number, role, is_active, created_at, resident_id, last_login_at) FROM stdin;
 2	Juan Dela Cruz	lgu@evacway.local	scrypt:32768:8:1$2lC7LPNOun32uovm$1e3858235a936601ac7dac2d43de47926507c93b548f1785960fff0309a91aa9bddd6015cb2447a48fa1b8e2ce68ddedf93252eb663485da1d37b851d9cb2596	09179876543	lgu_personnel	f	2026-09-13 13:40:37.334443	\N	\N
-3	Jester Gesulga	gesulgajester22@gmail.com	scrypt:32768:8:1$ytTMHHu9vXOILRwd$f08ef03d188b5976ff755c28acea319cd8429826b7ce21cbcb935f420a3be6802f670d9306d1297cee1a56444443ca91677e1d8c78841d2a98dd7b1885376fd1	09120486893	lgu_personnel	t	2026-09-29 09:38:05.667234	\N	2026-11-16 21:53:21.507929
-1	EvacWay Admin	admin@evacway.local	scrypt:32768:8:1$oIfoICPUrYxzXfrf$4452189d3c430a9b74c32ac8598c3ec3d3f5b13196bc3db39304e75700efec509e5bb077e2a6a4a795ad882852dae74bf2d0086f6f5ed58a4da0621ad55b5a7e	09171234567	admin	t	2026-09-13 13:40:37.334443	\N	2026-11-17 12:24:24.831513
+7	Vince Maunes	glitterydavincie@gmail.com	scrypt:32768:8:1$2wTw0Oa4dZpOROH0$e9b8e288589cad6b0b8c762d80c78dc13780b09731c3366923ac4fdf3d8f7f92145daae91a599e971d571f10736a32130551788a828712eb9446cdd3ce1ca186	09502401536	lgu_personnel	t	2026-11-18 07:34:57.85824	\N	2026-11-18 07:36:58.518788
+3	Jester Gesulga	gesulgajester22@gmail.com	scrypt:32768:8:1$lYIqzLiOuWZGxKZg$22f1c47bdcf020c35b04e625f3fdb07ef47618b8cc75b308c746d82e74d8c0ba4e7dbbbf29f738e614d0f7b44964581f9ce5148dd49d45ce8fa00c3ca5f72995	09120486893	lgu_personnel	t	2026-09-29 09:38:05.667234	\N	2026-11-17 15:40:02.639001
+1	EvacWay Admin	admin@evacway.local	scrypt:32768:8:1$oIfoICPUrYxzXfrf$4452189d3c430a9b74c32ac8598c3ec3d3f5b13196bc3db39304e75700efec509e5bb077e2a6a4a795ad882852dae74bf2d0086f6f5ed58a4da0621ad55b5a7e	09171234567	admin	t	2026-09-13 13:40:37.334443	\N	2026-11-19 14:07:00.6537
+6	Felix Robert Pahamotang	felixrobertpahamotang@gmail.com	scrypt:32768:8:1$sAhuN8rN2s0BvC9m$3ecc125b3700a8c54d6d92e3d93e761567be962b5fdb0818fd77c31408be68545f6f7969e7a8cf2f4c8da6887760cf6d0d3ed27a6dba0c7ec58b0730ea5c3d5b	09691339602	lgu_personnel	t	2026-11-17 13:29:29.482152	\N	2026-11-18 06:49:01.671545
 \.
 
 
@@ -11535,28 +11819,28 @@ SELECT pg_catalog.setval('public.center_types_id_seq', 7, true);
 -- Name: evacuation_assignments_id_seq; Type: SEQUENCE SET; Schema: public; Owner: -
 --
 
-SELECT pg_catalog.setval('public.evacuation_assignments_id_seq', 1350, true);
+SELECT pg_catalog.setval('public.evacuation_assignments_id_seq', 1367, true);
 
 
 --
 -- Name: evacuation_center_buildings_id_seq; Type: SEQUENCE SET; Schema: public; Owner: -
 --
 
-SELECT pg_catalog.setval('public.evacuation_center_buildings_id_seq', 7, true);
+SELECT pg_catalog.setval('public.evacuation_center_buildings_id_seq', 22, true);
 
 
 --
 -- Name: evacuation_center_rooms_id_seq; Type: SEQUENCE SET; Schema: public; Owner: -
 --
 
-SELECT pg_catalog.setval('public.evacuation_center_rooms_id_seq', 270, true);
+SELECT pg_catalog.setval('public.evacuation_center_rooms_id_seq', 273, true);
 
 
 --
 -- Name: evacuation_centers_id_seq; Type: SEQUENCE SET; Schema: public; Owner: -
 --
 
-SELECT pg_catalog.setval('public.evacuation_centers_id_seq', 45, true);
+SELECT pg_catalog.setval('public.evacuation_centers_id_seq', 47, true);
 
 
 --
@@ -11577,21 +11861,21 @@ SELECT pg_catalog.setval('public.evacuation_operations_id_seq', 3, true);
 -- Name: families_id_seq; Type: SEQUENCE SET; Schema: public; Owner: -
 --
 
-SELECT pg_catalog.setval('public.families_id_seq', 532, true);
+SELECT pg_catalog.setval('public.families_id_seq', 535, true);
 
 
 --
 -- Name: hazard_report_photos_id_seq; Type: SEQUENCE SET; Schema: public; Owner: -
 --
 
-SELECT pg_catalog.setval('public.hazard_report_photos_id_seq', 12, true);
+SELECT pg_catalog.setval('public.hazard_report_photos_id_seq', 22, true);
 
 
 --
 -- Name: hazard_reports_id_seq; Type: SEQUENCE SET; Schema: public; Owner: -
 --
 
-SELECT pg_catalog.setval('public.hazard_reports_id_seq', 26, true);
+SELECT pg_catalog.setval('public.hazard_reports_id_seq', 36, true);
 
 
 --
@@ -11602,38 +11886,45 @@ SELECT pg_catalog.setval('public.hazard_zones_id_seq', 1, false);
 
 
 --
+-- Name: non_registered_evacuees_id_seq; Type: SEQUENCE SET; Schema: public; Owner: -
+--
+
+SELECT pg_catalog.setval('public.non_registered_evacuees_id_seq', 1, true);
+
+
+--
 -- Name: push_subscriptions_id_seq; Type: SEQUENCE SET; Schema: public; Owner: -
 --
 
-SELECT pg_catalog.setval('public.push_subscriptions_id_seq', 320, true);
+SELECT pg_catalog.setval('public.push_subscriptions_id_seq', 325, true);
 
 
 --
 -- Name: rescue_requests_id_seq; Type: SEQUENCE SET; Schema: public; Owner: -
 --
 
-SELECT pg_catalog.setval('public.rescue_requests_id_seq', 11, true);
+SELECT pg_catalog.setval('public.rescue_requests_id_seq', 12, true);
 
 
 --
 -- Name: resident_accounts_id_seq; Type: SEQUENCE SET; Schema: public; Owner: -
 --
 
-SELECT pg_catalog.setval('public.resident_accounts_id_seq', 1, true);
+SELECT pg_catalog.setval('public.resident_accounts_id_seq', 2, true);
 
 
 --
 -- Name: resident_registration_requests_id_seq; Type: SEQUENCE SET; Schema: public; Owner: -
 --
 
-SELECT pg_catalog.setval('public.resident_registration_requests_id_seq', 8, true);
+SELECT pg_catalog.setval('public.resident_registration_requests_id_seq', 9, true);
 
 
 --
 -- Name: residents_id_seq; Type: SEQUENCE SET; Schema: public; Owner: -
 --
 
-SELECT pg_catalog.setval('public.residents_id_seq', 1618, true);
+SELECT pg_catalog.setval('public.residents_id_seq', 1623, true);
 
 
 --
@@ -11654,21 +11945,21 @@ SELECT pg_catalog.setval('public.roster_years_id_seq', 1, true);
 -- Name: staff_notifications_id_seq; Type: SEQUENCE SET; Schema: public; Owner: -
 --
 
-SELECT pg_catalog.setval('public.staff_notifications_id_seq', 79, true);
+SELECT pg_catalog.setval('public.staff_notifications_id_seq', 122, true);
 
 
 --
 -- Name: system_logs_id_seq; Type: SEQUENCE SET; Schema: public; Owner: -
 --
 
-SELECT pg_catalog.setval('public.system_logs_id_seq', 1089, true);
+SELECT pg_catalog.setval('public.system_logs_id_seq', 1169, true);
 
 
 --
 -- Name: users_id_seq; Type: SEQUENCE SET; Schema: public; Owner: -
 --
 
-SELECT pg_catalog.setval('public.users_id_seq', 5, true);
+SELECT pg_catalog.setval('public.users_id_seq', 7, true);
 
 
 --
@@ -12148,6 +12439,14 @@ ALTER TABLE ONLY public.hazard_reports
 
 ALTER TABLE ONLY public.hazard_zones
     ADD CONSTRAINT hazard_zones_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: non_registered_evacuees non_registered_evacuees_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.non_registered_evacuees
+    ADD CONSTRAINT non_registered_evacuees_pkey PRIMARY KEY (id);
 
 
 --
@@ -13069,6 +13368,48 @@ CREATE INDEX ix_hazard_reports_reported_by_user_id ON public.hazard_reports USIN
 
 
 --
+-- Name: ix_nre_arrived_desc; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX ix_nre_arrived_desc ON public.non_registered_evacuees USING btree (arrived_at DESC);
+
+
+--
+-- Name: ix_nre_group; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX ix_nre_group ON public.non_registered_evacuees USING btree (group_code);
+
+
+--
+-- Name: ix_nre_name; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX ix_nre_name ON public.non_registered_evacuees USING btree (lower((last_name)::text), lower((first_name)::text));
+
+
+--
+-- Name: ix_nre_operation_center; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX ix_nre_operation_center ON public.non_registered_evacuees USING btree (operation_id, center_id);
+
+
+--
+-- Name: ix_nre_present_center; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX ix_nre_present_center ON public.non_registered_evacuees USING btree (center_id) WHERE (departed_at IS NULL);
+
+
+--
+-- Name: ix_nre_room_present; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX ix_nre_room_present ON public.non_registered_evacuees USING btree (room_id) WHERE (departed_at IS NULL);
+
+
+--
 -- Name: ix_push_subscriptions_user_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -13150,6 +13491,13 @@ CREATE INDEX ix_staff_notifications_is_read ON public.staff_notifications USING 
 --
 
 CREATE INDEX ix_staff_notifications_user_id ON public.staff_notifications USING btree (user_id);
+
+
+--
+-- Name: uq_nre_group_head; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_nre_group_head ON public.non_registered_evacuees USING btree (group_code) WHERE is_group_head;
 
 
 --
@@ -13255,6 +13603,13 @@ CREATE UNIQUE INDEX objects_bucket_id_name_version_key ON storage.objects USING 
 --
 
 CREATE UNIQUE INDEX vector_indexes_name_bucket_id_idx ON storage.vector_indexes USING btree (name, bucket_id);
+
+
+--
+-- Name: non_registered_evacuees nre_group_consistency; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE CONSTRAINT TRIGGER nre_group_consistency AFTER INSERT OR DELETE OR UPDATE ON public.non_registered_evacuees DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.check_non_registered_group();
 
 
 --
@@ -13754,6 +14109,38 @@ ALTER TABLE ONLY public.hazard_zones
 
 
 --
+-- Name: non_registered_evacuees non_registered_evacuees_center_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.non_registered_evacuees
+    ADD CONSTRAINT non_registered_evacuees_center_id_fkey FOREIGN KEY (center_id) REFERENCES public.evacuation_centers(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: non_registered_evacuees non_registered_evacuees_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.non_registered_evacuees
+    ADD CONSTRAINT non_registered_evacuees_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.evacuation_operations(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: non_registered_evacuees non_registered_evacuees_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.non_registered_evacuees
+    ADD CONSTRAINT non_registered_evacuees_recorded_by_fkey FOREIGN KEY (recorded_by) REFERENCES public.users(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: non_registered_evacuees non_registered_evacuees_room_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.non_registered_evacuees
+    ADD CONSTRAINT non_registered_evacuees_room_id_fkey FOREIGN KEY (room_id) REFERENCES public.evacuation_center_rooms(id) ON DELETE SET NULL;
+
+
+--
 -- Name: push_subscriptions push_subscriptions_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -14046,7 +14433,7 @@ CREATE PUBLICATION supabase_realtime WITH (publish = 'insert, update, delete, tr
 
 CREATE EVENT TRIGGER issue_graphql_placeholder ON sql_drop
          WHEN TAG IN ('DROP EXTENSION')
-   EXECUTE FUNCTION set_graphql_placeholder();
+   EXECUTE FUNCTION extensions.set_graphql_placeholder();
 
 
 --
@@ -14055,7 +14442,7 @@ CREATE EVENT TRIGGER issue_graphql_placeholder ON sql_drop
 
 CREATE EVENT TRIGGER issue_pg_cron_access ON ddl_command_end
          WHEN TAG IN ('CREATE EXTENSION')
-   EXECUTE FUNCTION grant_pg_cron_access();
+   EXECUTE FUNCTION extensions.grant_pg_cron_access();
 
 
 --
@@ -14064,7 +14451,7 @@ CREATE EVENT TRIGGER issue_pg_cron_access ON ddl_command_end
 
 CREATE EVENT TRIGGER issue_pg_graphql_access ON ddl_command_end
          WHEN TAG IN ('CREATE EXTENSION')
-   EXECUTE FUNCTION grant_pg_graphql_access();
+   EXECUTE FUNCTION extensions.grant_pg_graphql_access();
 
 
 --
@@ -14073,7 +14460,7 @@ CREATE EVENT TRIGGER issue_pg_graphql_access ON ddl_command_end
 
 CREATE EVENT TRIGGER issue_pg_net_access ON ddl_command_end
          WHEN TAG IN ('CREATE EXTENSION')
-   EXECUTE FUNCTION grant_pg_net_access();
+   EXECUTE FUNCTION extensions.grant_pg_net_access();
 
 
 --
@@ -14081,7 +14468,7 @@ CREATE EVENT TRIGGER issue_pg_net_access ON ddl_command_end
 --
 
 CREATE EVENT TRIGGER pgrst_ddl_watch ON ddl_command_end
-   EXECUTE FUNCTION pgrst_ddl_watch();
+   EXECUTE FUNCTION extensions.pgrst_ddl_watch();
 
 
 --
@@ -14089,13 +14476,11 @@ CREATE EVENT TRIGGER pgrst_ddl_watch ON ddl_command_end
 --
 
 CREATE EVENT TRIGGER pgrst_drop_watch ON sql_drop
-   EXECUTE FUNCTION pgrst_drop_watch();
+   EXECUTE FUNCTION extensions.pgrst_drop_watch();
 
 
 --
 -- PostgreSQL database dump complete
 --
-
-
 
 
