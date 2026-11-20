@@ -16,18 +16,28 @@ PERSON_FIELDS = (
 )
 
 
+_TABLE_READY_ENGINES = set()
+
+
 def table_ready():
     # Existing deployments keep working until the additive migration is applied.
+    engine_key = (id(db.engine), str(db.engine.url))
+    if engine_key in _TABLE_READY_ENGINES:
+        return True
     if not inspect(db.engine).has_table('non_registered_evacuees'):
         return False
     columns = {column['name'] for column in inspect(db.engine).get_columns('non_registered_evacuees')}
     if not {'is_lactating', 'is_solo_parent', 'needs_assistance', 'room_id'}.issubset(columns):
         return False
     if db.engine.dialect.name == 'postgresql':
-        return bool(db.session.execute(text(
+        ready = bool(db.session.execute(text(
             "SELECT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = to_regclass('non_registered_evacuees') "
             "AND tgname = 'nre_group_consistency' AND NOT tgisinternal)"
         )).scalar())
+        if ready:
+            _TABLE_READY_ENGINES.add(engine_key)
+        return ready
+    _TABLE_READY_ENGINES.add(engine_key)
     return True
 
 

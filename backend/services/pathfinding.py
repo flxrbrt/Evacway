@@ -1,6 +1,7 @@
 import math
 import logging
 import networkx as nx
+from flask import g, has_request_context
 from shapely.geometry import Point, LineString
 from shapely.strtree import STRtree
 from geoalchemy2.shape import to_shape
@@ -31,6 +32,8 @@ def invalidate_road_network_cache():
     """Call whenever road segments or hazard closures change."""
     global _cached_network
     _cached_network = None
+    if has_request_context():
+        g.pop("_closed_road_ids", None)
 
 
 def get_road_network():
@@ -43,14 +46,18 @@ def get_road_network():
     """
     global _cached_network
 
-    closed_ids = tuple(
-        sorted(
-            r.id
-            for r in RoadSegment.query.filter_by(is_closed=True)
-            .with_entities(RoadSegment.id)
-            .all()
+    closed_ids = g.get("_closed_road_ids") if has_request_context() else None
+    if closed_ids is None:
+        closed_ids = tuple(
+            sorted(
+                r.id
+                for r in RoadSegment.query.filter_by(is_closed=True)
+                .with_entities(RoadSegment.id)
+                .all()
+            )
         )
-    )
+        if has_request_context():
+            g._closed_road_ids = closed_ids
 
     if _cached_network is not None and _cached_network.get("closed_ids") == closed_ids:
         return _cached_network

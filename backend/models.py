@@ -1579,12 +1579,14 @@ class EvacuationCenterBuilding(BaseModel):
     )
 
     def to_dict(self):
+        active_rooms = [room for room in self.rooms if room.is_active]
+        usage_by_room = EvacuationCenterRoom.bulk_capacity_usage(active_rooms)
         floor_summary = []
         for floor in range(1, int(self.floors or 1) + 1):
-            floor_rooms = [room for room in self.rooms if room.is_active and room.floor == floor]
-            used_slots = sum(room.capacity_usage()["used_slots"] for room in floor_rooms)
-            used_spaces = sum(room.capacity_usage()["used_spaces"] for room in floor_rooms)
-            full_rooms = sum(1 for room in floor_rooms if room.capacity_usage()["is_full"])
+            floor_rooms = [room for room in active_rooms if room.floor == floor]
+            used_slots = sum(usage_by_room[room.id]["used_slots"] for room in floor_rooms)
+            used_spaces = sum(usage_by_room[room.id]["used_spaces"] for room in floor_rooms)
+            full_rooms = sum(1 for room in floor_rooms if usage_by_room[room.id]["is_full"])
             floor_summary.append({
                 "floor": floor,
                 "room_count": len(floor_rooms),
@@ -1695,40 +1697,91 @@ class EvacuationCenterRoom(BaseModel):
         cascade='all, delete-orphan'
     )
 
+    @classmethod
+    def bulk_capacity_usage(cls, rooms):
+        """Batch-calculate room usage for many rooms in 2 SQL queries instead of N+1."""
+        rooms_list = [room for room in (rooms or []) if room is not None]
+        if not rooms_list:
+            return {}
+
+        room_ids = [room.id for room in rooms_list if room.id is not None]
+        assigned_by_room = {rid: {} for rid in room_ids}
+        walkin_by_room = {}
+
+        if room_ids:
+            reg_rows = (
+                db.session.query(
+                    EvacuationAssignment.room_id,
+                    EvacuationAssignment.resident_id,
+                    Resident.family_id,
+                )
+                .outerjoin(Resident, Resident.id == EvacuationAssignment.resident_id)
+                .filter(
+                    EvacuationAssignment.room_id.in_(room_ids),
+                    EvacuationAssignment.resident_id.isnot(None),
+                )
+                .all()
+            )
+            for room_id, resident_id, family_id in reg_rows:
+                assigned_by_room.setdefault(room_id, {})[resident_id] = family_id
+
+            try:
+                walkin_rows = (
+                    db.session.query(
+                        NonRegisteredEvacuee.room_id,
+                        db.func.count(db.func.distinct(NonRegisteredEvacuee.group_code)),
+                        db.func.count(NonRegisteredEvacuee.id),
+                    )
+                    .filter(
+                        NonRegisteredEvacuee.room_id.in_(room_ids),
+                        NonRegisteredEvacuee.departed_at.is_(None),
+                    )
+                    .group_by(NonRegisteredEvacuee.room_id)
+                    .all()
+                )
+                for room_id, walk_in_slots, walk_in_spaces in walkin_rows:
+                    walkin_by_room[room_id] = (
+                        int(walk_in_slots or 0),
+                        int(walk_in_spaces or 0),
+                    )
+            except Exception:
+                db.session.rollback()
+
+        usage_map = {}
+        for room in rooms_list:
+            assigned_residents = assigned_by_room.get(room.id, {})
+            slot_keys = {
+                ('family', family_id) if family_id is not None else ('resident', resident_id)
+                for resident_id, family_id in assigned_residents.items()
+            }
+            walk_in_slots, walk_in_spaces = walkin_by_room.get(room.id, (0, 0))
+            used_slots = len(slot_keys) + walk_in_slots
+            used_spaces = len(assigned_residents) + walk_in_spaces
+            family_slots = int(room.family_slots or 0)
+            people_spaces = int(room.people_spaces or 0)
+            usage_map[room.id] = {
+                'used_slots': used_slots,
+                'used_spaces': used_spaces,
+                'available_slots': max(family_slots - used_slots, 0),
+                'available_spaces': max(people_spaces - used_spaces, 0),
+                'is_full': used_slots >= family_slots or used_spaces >= people_spaces,
+                'is_over_capacity': used_slots > family_slots or used_spaces > people_spaces,
+            }
+        return usage_map
+
     def capacity_usage(self):
         """Calculate current room usage from registered and walk-in occupants."""
-        assigned_residents = {}
-        for assignment in self.assignments or []:
-            resident = assignment.resident
-            if resident is not None:
-                assigned_residents[resident.id] = resident.family_id
-            elif assignment.resident_id is not None:
-                assigned_residents[assignment.resident_id] = None
-
-        slot_keys = {
-            ('family', family_id) if family_id is not None else ('resident', resident_id)
-            for resident_id, family_id in assigned_residents.items()
-        }
-        used_slots = len(slot_keys)
-        used_spaces = len(assigned_residents)
-        walk_in_slots, walk_in_spaces = db.session.query(
-            db.func.count(db.func.distinct(NonRegisteredEvacuee.group_code)),
-            db.func.count(NonRegisteredEvacuee.id),
-        ).filter(
-            NonRegisteredEvacuee.room_id == self.id,
-            NonRegisteredEvacuee.departed_at.is_(None),
-        ).one()
-        used_slots += int(walk_in_slots or 0)
-        used_spaces += int(walk_in_spaces or 0)
+        if self.id is not None:
+            return type(self).bulk_capacity_usage([self])[self.id]
         family_slots = int(self.family_slots or 0)
         people_spaces = int(self.people_spaces or 0)
         return {
-            'used_slots': used_slots,
-            'used_spaces': used_spaces,
-            'available_slots': max(family_slots - used_slots, 0),
-            'available_spaces': max(people_spaces - used_spaces, 0),
-            'is_full': used_slots >= family_slots or used_spaces >= people_spaces,
-            'is_over_capacity': used_slots > family_slots or used_spaces > people_spaces,
+            'used_slots': 0,
+            'used_spaces': 0,
+            'available_slots': max(family_slots, 0),
+            'available_spaces': max(people_spaces, 0),
+            'is_full': 0 >= family_slots or 0 >= people_spaces,
+            'is_over_capacity': False,
         }
 
     def to_dict(self):

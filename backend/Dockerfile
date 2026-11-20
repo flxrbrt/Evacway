@@ -12,4 +12,4 @@ RUN mkdir -p /app/static/uploads /home/evacway \
     && chown -R evacway:evacway /home/evacway /app
 USER evacway
 EXPOSE 5000
-CMD ["sh", "-c", "gunicorn --bind 0.0.0.0:${PORT:-5000} --no-control-socket --access-logfile - --error-logfile - app:app"]
+CMD ["sh", "-c", "gunicorn --workers 2 --threads 4 --timeout 120 --bind 0.0.0.0:${PORT:-5000} --no-control-socket --access-logfile - --error-logfile - app:app"]

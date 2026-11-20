@@ -1,30 +1,36 @@
+import json
 from flask import Blueprint, jsonify
-from models import RoadSegment
-from geoalchemy2.shape import to_shape
-from shapely.geometry import mapping
+from sqlalchemy import func
+from models import db, RoadSegment
 
 roads_bp = Blueprint('roads', __name__)
 
 
-def road_to_feature(road):
-    shapely_geom = to_shape(road.geom)
-    return {
-        "type": "Feature",
-        "geometry": mapping(shapely_geom),
-        "properties": {
-            "id": road.id,
-            "road_name": road.road_name,
-            "road_type": road.road_type,
-            "is_closed": road.is_closed,
-            "closed_by_report_id": road.closed_by_report_id
-        }
-    }
-
-
 @roads_bp.route('/api/road-segments', methods=['GET'])
 def get_road_segments():
-    roads = RoadSegment.query.all()
+    rows = db.session.query(
+        RoadSegment.id,
+        RoadSegment.road_name,
+        RoadSegment.road_type,
+        RoadSegment.is_closed,
+        RoadSegment.closed_by_report_id,
+        func.ST_AsGeoJSON(RoadSegment.geom),
+    ).all()
+    features = [
+        {
+            "type": "Feature",
+            "geometry": json.loads(geom_json) if geom_json else None,
+            "properties": {
+                "id": road_id,
+                "road_name": road_name,
+                "road_type": road_type,
+                "is_closed": is_closed,
+                "closed_by_report_id": closed_by_report_id,
+            },
+        }
+        for road_id, road_name, road_type, is_closed, closed_by_report_id, geom_json in rows
+    ]
     return jsonify({
         "type": "FeatureCollection",
-        "features": [road_to_feature(r) for r in roads]
+        "features": features,
     })

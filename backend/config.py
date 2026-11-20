@@ -15,7 +15,9 @@ class Config:
 
     SQLALCHEMY_DATABASE_URI = _raw_db_url or None
     SQLALCHEMY_ENGINE_OPTIONS = {
-        "connect_args": {"options": "-csearch_path=public,extensions"}
+        "pool_pre_ping": True,
+        "pool_recycle": 280,
+        "connect_args": {"options": "-csearch_path=public,extensions"},
     }
 
     SQLALCHEMY_TRACK_MODIFICATIONS = False

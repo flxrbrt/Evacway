@@ -208,7 +208,7 @@ def _center_metrics(center):
 
     linked_barangays = _center_barangays(center)
     structure_mode = getattr(center, 'structure_mode', None) or 'buildings_and_rooms'
-    room_usage_by_id = {room.id: room.capacity_usage() for room in rooms}
+    room_usage_by_id = EvacuationCenterRoom.bulk_capacity_usage(rooms)
     total_room_family_slots = sum(int(room.family_slots or 0) for room in rooms)
     total_room_people_spaces = sum(int(room.people_spaces or 0) for room in rooms)
     total_room_used_slots = sum(usage['used_slots'] for usage in room_usage_by_id.values())
