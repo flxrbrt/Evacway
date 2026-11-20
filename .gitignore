@@ -3,6 +3,7 @@ __pycache__/
 venv/
 node_modules/
 dist/
+.netlify/
 .env
 test-screenshots/
 test-admin-diagnosis/
