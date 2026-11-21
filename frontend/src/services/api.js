@@ -81,6 +81,24 @@ function roomCapacityPayload(data = {}) {
 
 
 export const api = {
+  getPublicOfflineCenters: async () => {
+    let response;
+    try {
+      response = await fetch(buildRequestUrl("/api/public/offline-centers"), {
+        method: "GET",
+        credentials: "omit",
+        headers: { Accept: "application/json" },
+      });
+    } catch {
+      throw new Error("Couldn't reach the server. Check your connection and try again.");
+    }
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(data.error || data.message || `Request failed (${response.status})`);
+    }
+    return data;
+  },
+
   getNonRegisteredEvacuees: (params = {}) => request(`/api/non-registered-evacuees?${new URLSearchParams(params)}`),
   getNonRegisteredGroup: (code, sensitive = false) => request(`/api/non-registered-evacuees/groups/${code}?include_sensitive=${sensitive}`),
   createNonRegisteredGroup: (payload) => request('/api/non-registered-evacuees', { method: 'POST', body: JSON.stringify(payload) }),
@@ -94,13 +112,38 @@ export const api = {
   // AUTH
   // -------------------------------------------------------
 
-  login: (email, password) =>
+  staffLogin: (email, password) =>
     request("/api/auth/login", {
       method: "POST",
       body: JSON.stringify({
         email,
         password,
       }),
+    }),
+
+  confirmStaffTotpEnrollment: (setupToken, code) =>
+    request("/api/auth/staff/totp/enroll/confirm", {
+      method: "POST",
+      body: JSON.stringify({ setup_token: setupToken, code }),
+    }),
+  verifyStaffTotp: (challengeToken, code) =>
+    request("/api/auth/staff/totp/verify", {
+      method: "POST",
+      body: JSON.stringify({ challenge_token: challengeToken, code }),
+    }),
+  requestStaffTotpRecovery: (challengeToken) =>
+    request("/api/auth/staff/totp/recovery", {
+      method: "POST",
+      body: JSON.stringify({ challenge_token: challengeToken }),
+    }),
+  getAdminMfaRecoveryRequests: () => request("/api/admin/mfa-recovery-requests"),
+  approveAdminMfaRecoveryRequest: (id) =>
+    request(`/api/admin/mfa-recovery-requests/${id}/approve`, { method: "POST" }),
+
+  residentLogin: (email, password) =>
+    request("/api/auth/resident-login", {
+      method: "POST",
+      body: JSON.stringify({ email, password }),
     }),
 
   submitResidentRegistration: (payload) =>
@@ -224,6 +267,9 @@ export const api = {
 
   getRoadSegments: () =>
     request("/api/road-segments"),
+
+  getPublicStatusSummary: () =>
+    request("/api/public-status-summary"),
 
   snapCoordinate: (lat, lng, { snapToIntersection = true } = {}) =>
     request(`/api/routing/snap?lat=${encodeURIComponent(lat)}&lng=${encodeURIComponent(lng)}&snap_intersection=${snapToIntersection}`),
@@ -502,22 +548,27 @@ export const api = {
 
   getPublicBarangays: () => request("/api/barangays/public"),
 
-  findMyEvacuationCenter: (param) => {
-    if (typeof param === "object" && param !== null) {
-      const cleanParams = {};
-      Object.entries(param).forEach(([k, v]) => {
-        if (v !== undefined && v !== null && v !== "") cleanParams[k] = v;
-      });
-      const q = new URLSearchParams(cleanParams).toString();
-      return request(`/api/residents/find-center?${q}`);
-    }
-    if (typeof param === "number") {
-      return request(`/api/residents/find-center?resident_id=${param}`);
-    }
-    return request(
-      `/api/residents/find-center?name=${encodeURIComponent(param || "")}`
-    );
-  },
+  lookupMyEvacuationCenter: (payload) =>
+    request("/api/residents/my-center-lookup", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  getMyEvacuationCenter: () => request("/api/residents/my-center"),
+
+  findSomeoneCenter: (fullName) =>
+    request("/api/residents/find-center", {
+      method: "POST",
+      body: JSON.stringify({ full_name: fullName }),
+    }),
+
+  getFindSomeonePrivacy: () => request("/api/residents/profile/find-someone"),
+
+  updateFindSomeonePrivacy: (findSomeoneOptOut) =>
+    request("/api/residents/profile/find-someone", {
+      method: "PATCH",
+      body: JSON.stringify({ find_someone_opt_out: findSomeoneOptOut }),
+    }),
 
   // -------------------------------------------------------
   // ROOMS

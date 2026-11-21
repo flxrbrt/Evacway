@@ -14,18 +14,33 @@ export function AuthProvider({ children }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
-  async function login(email, password) {
-    const data = await api.login(email, password);
-    const sameAccount = user && data.user && (
-      user.id != null && data.user.id != null
+  function saveLoginSession(data) {
+    const sameAccount = Boolean(
+      user &&
+      data.user &&
+      user.role === data.user.role &&
+      (user.id != null && data.user.id != null
         ? String(user.id) === String(data.user.id)
-        : user.email?.trim().toLowerCase() === data.user.email?.trim().toLowerCase()
+        : user.email?.trim().toLowerCase() === data.user.email?.trim().toLowerCase())
     );
     if (!sameAccount) queryClient.clear();
     localStorage.setItem("evacway_token", data.access_token);
     localStorage.setItem("evacway_user", JSON.stringify(data.user));
     setUser(data.user);
     return data.user;
+  }
+
+  async function loginResident(email, password) {
+    return saveLoginSession(await api.residentLogin(email, password));
+  }
+
+  async function loginStaff(email, password) {
+    const response = await api.staffLogin(email, password);
+    return response.access_token ? saveLoginSession(response) : response;
+  }
+
+  function completeStaffLogin(response) {
+    return saveLoginSession(response);
   }
 
   function logout() {
@@ -44,7 +59,7 @@ export function AuthProvider({ children }) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, login, logout, updateUser }}>
+    <AuthContext.Provider value={{ user, loginResident, loginStaff, completeStaffLogin, logout, updateUser }}>
       {children}
     </AuthContext.Provider>
   );

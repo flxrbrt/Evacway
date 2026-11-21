@@ -17,7 +17,7 @@ def run_tests():
 
         token = create_access_token(
             identity=str(admin.id),
-            additional_claims={"role": admin.role, "name": admin.name}
+            additional_claims={"role": admin.role, "name": admin.name, "account_type": "user", "mfa_verified": True, "mfa_version": int(admin.mfa_version or 0)}
         )
         headers = {
             'Authorization': f'Bearer {token}',
@@ -600,11 +600,12 @@ def run_tests():
             search_items = search_res.get_json().get('items', [])
             assert any(f['id'] == created_family3_id for f in search_items), "Expected family3 when searching by non-head member name"
 
-            # Public lookup /api/residents/find-center by non-head member name
-            pub_res = client.get(f'/api/residents/find-center?name=Carlos%20Reyes%20Mendoza%20{ts}')
-            assert pub_res.status_code == 200
-            pub_matches = pub_res.get_json().get('matches', [])
-            assert len(pub_matches) >= 1 and pub_matches[0]['room']['id'] == created_room2_id
+            # Guest lookups for another resident require authentication now.
+            pub_res = client.post(
+                '/api/residents/find-center',
+                json={'full_name': f'Carlos Reyes Mendoza {ts}'},
+            )
+            assert pub_res.status_code == 401
 
             # Verify Barangay counts: created_brgy_id has family3 (2 members) + single_fam (1 member) = 2 households, 3 residents
             b_detail = client.get(f'/api/barangays/{created_brgy_id}', headers=headers).get_json()
@@ -621,7 +622,7 @@ def run_tests():
             assert fam_agg.get('assigned_family_count') == 1
             assert fam_agg.get('unassigned_family_count') == 1
 
-            results[20] = ("PASS", "Member-name search, public center lookup, and independent Household (2) vs Resident (3) counts verified across /api/barangays and /api/families")
+            results[20] = ("PASS", "Guest lookup is blocked and independent family (2) vs resident (3) counts verified across /api/barangays and /api/families")
         except Exception as e:
             results[20] = ("FAIL", str(e))
         print(f"Test 20: {results[20][0]} - {results[20][1]}", flush=True)

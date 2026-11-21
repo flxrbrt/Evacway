@@ -30,6 +30,7 @@ from services.mailer import (
 )
 from services.notifications import create_staff_notifications, send_staff_push_notifications
 from services.password_setup import create_password_setup_token
+from services.registration_notifications import send_registration_decision_notifications
 from utils import role_required
 
 
@@ -327,6 +328,13 @@ def _send_decision_email(registration):
         return False
 
 
+def _send_decision_notifications(registration):
+    return send_registration_decision_notifications(
+        registration,
+        email_sender=send_resident_registration_email,
+    )
+
+
 @registrations_bp.route('/api/resident-registrations', methods=['POST'])
 def submit_resident_registration():
     client_ip = request.remote_addr or 'unknown'
@@ -336,6 +344,8 @@ def submit_resident_registration():
     data = request.get_json(silent=True) or {}
     if not isinstance(data, dict):
         return jsonify({'error': 'A JSON object is required.'}), 400
+    if data.get('privacy_consent') is not True:
+        return jsonify({'error': 'Consent to the Data Privacy Notice is required.'}), 400
     fields, error = _validate_registration(data)
     if error:
         return jsonify({'error': error}), 400
@@ -354,6 +364,9 @@ def submit_resident_registration():
         contact_number=fields['contact_number'],
         email=fields['email'],
         password_hash=generate_password_hash(fields['password']),
+        privacy_consent=True,
+        privacy_consent_at=philippines_now(),
+        privacy_notice_version=current_app.config.get('DATA_PRIVACY_NOTICE_VERSION', '1'),
         status='pending',
     )
     db.session.add(registration)
@@ -652,7 +665,8 @@ def approve_resident_registration(request_id):
             'error': 'The email or resident record was linked by another account. Refresh and review the request again.'
         }), 409
 
-    email_sent = _send_decision_email(registration)
+    delivery = _send_decision_notifications(registration)
+    email_sent = delivery['email_sent']
     req_payload = registration.to_dict()
     req_payload['has_account'] = True
     req_payload['account_email'] = account.email
@@ -670,8 +684,10 @@ def reject_resident_registration(request_id):
     data = request.get_json(silent=True) or {}
     if not isinstance(data, dict):
         return jsonify({'error': 'A JSON object is required.'}), 400
-    reason = str(data.get('reason') or '').strip() or None
-    if reason and len(reason) > 2000:
+    reason = str(data.get('reason') or '').strip()
+    if not reason:
+        return jsonify({'error': 'A rejection reason is required.'}), 400
+    if len(reason) > 2000:
         return jsonify({'error': 'Rejection reason must be 2000 characters or fewer.'}), 400
 
     registration = db.session.get(ResidentRegistrationRequest, request_id)
@@ -695,7 +711,8 @@ def reject_resident_registration(request_id):
     ))
     db.session.commit()
 
-    email_sent = _send_decision_email(registration)
+    delivery = _send_decision_notifications(registration)
+    email_sent = delivery['email_sent']
     return jsonify({
         'message': 'Resident registration rejected.' if email_sent else 'Resident registration rejected, but the email was not sent.',
         'request': registration.to_dict(),

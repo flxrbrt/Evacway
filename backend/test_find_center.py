@@ -1,4 +1,6 @@
 import unittest
+from datetime import date
+from unittest.mock import patch
 
 from flask import Flask
 from flask_jwt_extended import JWTManager, create_access_token
@@ -7,12 +9,13 @@ from sqlalchemy import event, text
 from models import (
     Barangay,
     EvacuationAssignment,
-    EvacuationCenter,
-    EvacuationCenterRoom,
     Family,
     Resident,
+    ResidentAccount,
+    ResidentLookupLog,
     db,
 )
+from routes import residents as residents_routes
 from routes.residents import residents_bp
 
 
@@ -41,43 +44,29 @@ class FindCenterRouteTests(unittest.TestCase):
 
         with db.engine.begin() as conn:
             conn.execute(text('CREATE TABLE roster_years (id INTEGER PRIMARY KEY, year INTEGER)'))
-            conn.execute(text('CREATE TABLE users (id INTEGER PRIMARY KEY, name VARCHAR(100), role VARCHAR(20))'))
+            conn.execute(text(
+                'CREATE TABLE users ('
+                'id INTEGER PRIMARY KEY, name VARCHAR(100), email VARCHAR(120), '
+                'password_hash VARCHAR(255), contact_number VARCHAR(20), resident_id INTEGER, '
+                'role VARCHAR(20), is_active BOOLEAN, created_at DATETIME, last_login_at DATETIME)'
+            ))
             conn.execute(
                 text(
                     'CREATE TABLE barangays ('
-                    'id INTEGER PRIMARY KEY, '
-                    'name VARCHAR(100), '
-                    'population INTEGER DEFAULT 0, '
-                    'geom BLOB)'
+                    'id INTEGER PRIMARY KEY, name VARCHAR(100), population INTEGER DEFAULT 0, geom BLOB)'
                 )
             )
             conn.execute(
                 text(
                     'CREATE TABLE evacuation_centers ('
-                    'id INTEGER PRIMARY KEY, '
-                    'name VARCHAR(150), '
-                    'center_type VARCHAR(50), '
-                    'owner_name VARCHAR(150))'
-                )
-            )
-            conn.execute(
-                text(
-                    'CREATE TABLE evacuation_center_buildings ('
-                    'id INTEGER PRIMARY KEY, '
-                    'evacuation_center_id INTEGER, '
-                    'name VARCHAR(100), '
-                    'geom BLOB)'
+                    'id INTEGER PRIMARY KEY, name VARCHAR(150), center_type VARCHAR(50), owner_name VARCHAR(150))'
                 )
             )
             conn.execute(
                 text(
                     'CREATE TABLE evacuation_center_rooms ('
-                    'id INTEGER PRIMARY KEY, '
-                    'evacuation_center_id INTEGER, '
-                    'building_id INTEGER, '
-                    'room_number VARCHAR(50), '
-                    'latitude FLOAT, '
-                    'longitude FLOAT)'
+                    'id INTEGER PRIMARY KEY, evacuation_center_id INTEGER, building_id INTEGER, '
+                    'room_number VARCHAR(50), latitude FLOAT, longitude FLOAT)'
                 )
             )
 
@@ -86,7 +75,9 @@ class FindCenterRouteTests(unittest.TestCase):
             tables=[
                 Family.__table__,
                 Resident.__table__,
+                ResidentAccount.__table__,
                 EvacuationAssignment.__table__,
+                ResidentLookupLog.__table__,
             ],
         )
         cls.client = cls.app.test_client()
@@ -97,26 +88,80 @@ class FindCenterRouteTests(unittest.TestCase):
 
     def setUp(self):
         db.session.remove()
+        residents_routes._lookup_limit_buckets.clear()
+        residents_routes._lookup_miss_counts.clear()
         with db.engine.begin() as conn:
-            conn.execute(text('DELETE FROM evacuation_assignments'))
-            conn.execute(text('DELETE FROM residents'))
-            conn.execute(text('DELETE FROM families'))
-            conn.execute(text('DELETE FROM barangays'))
+            for table in (
+                'resident_lookup_logs',
+                'evacuation_assignments',
+                'resident_accounts',
+                'residents',
+                'families',
+                'barangays',
+                'evacuation_centers',
+                'users',
+            ):
+                conn.execute(text(f'DELETE FROM {table}'))
 
-        self.brgy = Barangay(id=1, name='Poblacion')
-        db.session.add(self.brgy)
+        db.session.add_all([
+            Barangay(id=1, name='Poblacion'),
+            Barangay(id=2, name='Riverside'),
+        ])
+        db.session.flush()
+        db.session.execute(text(
+            "INSERT INTO evacuation_centers (id, name, center_type, owner_name) "
+            "VALUES (1, 'North Shelter', 'campus', NULL), (2, 'South Shelter', 'campus', NULL)"
+        ))
 
-        self.fam_a = Family(id=1, roster_year_id=1, barangay_id=1, head_name='Juan Reyes', family_code='FAM-001', member_count=1)
-        self.fam_b = Family(id=2, roster_year_id=1, barangay_id=1, head_name='Maria Santos', family_code='FAM-002', member_count=1)
-        db.session.add_all([self.fam_a, self.fam_b])
+        self.fam_a = Family(
+            id=1, roster_year_id=1, barangay_id=1, head_name='Juan Reyes',
+            family_code='FAM-001', member_count=1,
+        )
+        self.fam_b = Family(
+            id=2, roster_year_id=1, barangay_id=1, head_name='Maria Santos',
+            family_code='FAM-002', member_count=1,
+        )
+        self.fam_opted_out = Family(
+            id=3, roster_year_id=1, barangay_id=2, head_name='Pedro Cruz',
+            family_code='FAM-003', member_count=1, find_someone_opt_out=True,
+        )
+        db.session.add_all([self.fam_a, self.fam_b, self.fam_opted_out])
+        db.session.flush()
 
-        self.res_a = Resident(id=10, family_id=1, first_name='Juan', last_name='Reyes', is_head_of_family=True)
-        self.res_b = Resident(id=20, family_id=2, first_name='Maria', last_name='Santos', is_head_of_family=True)
-        db.session.add_all([self.res_a, self.res_b])
+        self.res_a = Resident(
+            id=10, family_id=1, first_name='Juan', last_name='Reyes',
+            is_head_of_family=True, date_of_birth=date(1980, 2, 3),
+        )
+        self.res_b = Resident(
+            id=20, family_id=2, first_name='Maria', last_name='Santos',
+            is_head_of_family=True, date_of_birth=date(1990, 4, 5),
+        )
+        self.res_opted_out = Resident(
+            id=30, family_id=3, first_name='Pedro', last_name='Cruz',
+            is_head_of_family=True, date_of_birth=date(1975, 8, 9),
+        )
+        db.session.add_all([self.res_a, self.res_b, self.res_opted_out])
+        db.session.flush()
+        self.resident_account = ResidentAccount(
+            id=7, resident_id=self.res_a.id, email='juan@example.test',
+            password_hash='test-hash', is_active=True,
+        )
+        db.session.add(self.resident_account)
+        with db.engine.begin() as conn:
+            conn.execute(text(
+                "INSERT INTO users (id, name, email, password_hash, role, is_active) VALUES "
+                "(1, 'LGU User', 'lgu@example.test', 'test-hash', 'lgu_personnel', 1), "
+                "(2, 'Admin User', 'admin@example.test', 'test-hash', 'admin', 1)"
+            ))
+        db.session.add_all([
+            EvacuationAssignment(resident_id=self.res_a.id, evacuation_center_id=1),
+            EvacuationAssignment(resident_id=self.res_b.id, evacuation_center_id=1),
+            EvacuationAssignment(resident_id=self.res_opted_out.id, evacuation_center_id=2),
+        ])
         db.session.commit()
 
         self.token_a = create_access_token(
-            identity='1',
+            identity=str(self.resident_account.id),
             additional_claims={
                 'role': 'resident',
                 'account_type': 'resident_account',
@@ -124,47 +169,221 @@ class FindCenterRouteTests(unittest.TestCase):
                 'name': 'Juan Reyes',
             },
         )
+        self.resident_headers = {'Authorization': f'Bearer {self.token_a}'}
+        self.lgu_headers = {
+            'Authorization': 'Bearer ' + create_access_token(identity='1')
+        }
+        self.admin_headers = {
+            'Authorization': 'Bearer ' + create_access_token(identity='2')
+        }
 
-    def test_logged_in_find_someone_by_name_returns_searched_resident(self):
-        resp = self.client.get(
-            '/api/residents/find-center?name=Maria+Santos',
-            headers={'Authorization': f'Bearer {self.token_a}'},
+    def _verify_center(self, full_name='Juan Reyes', barangay_id=1, birthdate='1980-02-03', headers=None):
+        return self.client.post(
+            '/api/residents/my-center-lookup',
+            headers=headers or {},
+            json={
+                'full_name': full_name,
+                'barangay_id': barangay_id,
+                'birthdate': birthdate,
+            },
         )
-        self.assertEqual(resp.status_code, 200)
-        matches = resp.get_json()['matches']
-        self.assertEqual(len(matches), 1)
-        self.assertEqual(matches[0]['resident_id'], self.res_b.id)
-        self.assertEqual(matches[0]['resident_name'], 'Maria Santos')
 
-    def test_logged_in_find_own_name_returns_own_record(self):
-        resp = self.client.get(
-            '/api/residents/find-center?name=Juan+Reyes',
-            headers={'Authorization': f'Bearer {self.token_a}'},
+    def test_my_center_requires_exact_name_barangay_and_birthdate(self):
+        exact = self._verify_center()
+        self.assertEqual(exact.status_code, 200)
+        self.assertEqual(exact.get_json(), {'center_name': 'North Shelter'})
+
+        failures = [
+            self._verify_center(full_name='Juan'),
+            self._verify_center(full_name='Juan Reyes', barangay_id=2),
+            self._verify_center(full_name='Juan Reyes', birthdate='1980-02-04'),
+            self._verify_center(full_name=''),
+        ]
+        for response in failures:
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.get_json(), {'message': 'No match found.'})
+
+        logs = ResidentLookupLog.query.order_by(ResidentLookupLog.id).all()
+        self.assertTrue(logs)
+        self.assertTrue(all(log.query_name_masked != 'Juan Reyes' for log in logs))
+        self.assertTrue(any(log.query_name_masked == 'J*** R****' for log in logs))
+        self.assertTrue(all(log.query_birthdate_masked == '****-**-**' for log in logs if log.query_birthdate_masked))
+
+        for role, headers in (
+            ('resident', self.resident_headers),
+            ('lgu_personnel', self.lgu_headers),
+            ('admin', self.admin_headers),
+        ):
+            with self.subTest(role=role):
+                response = self._verify_center(headers=headers)
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.get_json(), {'center_name': 'North Shelter'})
+                self.assertNotIn('Juan Reyes', response.get_data(as_text=True))
+
+        duplicate_family = Family(
+            id=4, roster_year_id=1, barangay_id=1, head_name='Juan Reyes',
+            family_code='FAM-004', member_count=1,
         )
-        self.assertEqual(resp.status_code, 200)
-        matches = resp.get_json()['matches']
-        self.assertEqual(len(matches), 1)
-        self.assertEqual(matches[0]['resident_id'], self.res_a.id)
-        self.assertEqual(matches[0]['resident_name'], 'Juan Reyes')
+        db.session.add(duplicate_family)
+        db.session.flush()
+        db.session.add(Resident(
+            id=40, family_id=4, first_name='Juan', last_name='Reyes',
+            is_head_of_family=True, date_of_birth=date(1980, 2, 3),
+        ))
+        db.session.commit()
+        duplicate = self._verify_center()
+        self.assertEqual(duplicate.get_json(), {'message': 'No match found.'})
 
-    def test_logged_in_without_name_uses_jwt_resident_id(self):
-        resp = self.client.get(
+    def test_find_someone_requires_resident_and_returns_center_name_only(self):
+        guest = self.client.post('/api/residents/find-center', json={'full_name': 'Maria Santos'})
+        self.assertEqual(guest.status_code, 401)
+
+        resident = self.client.post(
             '/api/residents/find-center',
-            headers={'Authorization': f'Bearer {self.token_a}'},
+            headers=self.resident_headers,
+            json={'full_name': 'Maria Santos'},
         )
-        self.assertEqual(resp.status_code, 200)
-        matches = resp.get_json()['matches']
-        self.assertEqual(len(matches), 1)
-        self.assertEqual(matches[0]['resident_id'], self.res_a.id)
-        self.assertEqual(matches[0]['resident_name'], 'Juan Reyes')
+        self.assertEqual(resident.status_code, 200)
+        self.assertEqual(resident.get_json(), {'matches': [{'center_name': 'North Shelter'}]})
+        self.assertNotIn('Maria Santos', resident.get_data(as_text=True))
+        self.assertNotIn('resident_id', resident.get_data(as_text=True))
+        find_logs = ResidentLookupLog.query.filter_by(lookup_type='find_someone').all()
+        self.assertTrue(find_logs)
+        self.assertTrue(all(log.query_name_masked != 'Maria Santos' for log in find_logs))
 
-    def test_logged_out_find_by_name_returns_searched_resident(self):
-        resp = self.client.get('/api/residents/find-center?name=Maria+Santos')
-        self.assertEqual(resp.status_code, 200)
-        matches = resp.get_json()['matches']
-        self.assertEqual(len(matches), 1)
-        self.assertEqual(matches[0]['resident_id'], self.res_b.id)
-        self.assertEqual(matches[0]['resident_name'], 'Maria Santos')
+        for role, headers in (
+            ('lgu_personnel', self.lgu_headers),
+            ('admin', self.admin_headers),
+        ):
+            with self.subTest(role=role):
+                response = self.client.post(
+                    '/api/residents/find-center', headers=headers,
+                    json={'full_name': 'Maria Santos'},
+                )
+                self.assertEqual(response.status_code, 403)
+                self.assertNotIn('Maria Santos', response.get_data(as_text=True))
+
+        for role, headers, expected_status in (
+            ('guest', {}, 401),
+            ('resident', self.resident_headers, 405),
+            ('lgu_personnel', self.lgu_headers, 403),
+            ('admin', self.admin_headers, 403),
+        ):
+            with self.subTest(legacy_get_role=role):
+                response = self.client.get(
+                    '/api/residents/find-center?name=Maria%20Santos', headers=headers,
+                )
+                self.assertEqual(response.status_code, expected_status)
+                self.assertNotIn('Maria Santos', response.get_data(as_text=True))
+
+    def test_my_center_room_endpoint_requires_login_and_returns_own_center(self):
+        for role, headers, expected_status in (
+            ('guest', {}, 401),
+            ('resident', self.resident_headers, 200),
+            ('lgu_personnel', self.lgu_headers, 403),
+            ('admin', self.admin_headers, 403),
+        ):
+            with self.subTest(role=role):
+                response = self.client.get('/api/residents/my-center', headers=headers)
+                self.assertEqual(response.status_code, expected_status)
+                self.assertNotIn('Maria Santos', response.get_data(as_text=True))
+                if role == 'resident':
+                    self.assertEqual(response.get_json()['center_name'], 'North Shelter')
+                    self.assertIsNone(response.get_json()['room'])
+
+    def test_opted_out_family_is_not_returned_or_suggested(self):
+        result = self.client.post(
+            '/api/residents/find-center',
+            headers=self.resident_headers,
+            json={'full_name': 'Pedro Cruz'},
+        )
+        self.assertEqual(result.status_code, 200)
+        self.assertEqual(result.get_json(), {'matches': []})
+
+        suggestions = self.client.get(
+            '/api/residents/autosuggest?q=Pedro',
+            headers=self.resident_headers,
+        )
+        self.assertEqual(suggestions.status_code, 200)
+        self.assertFalse(any(item['name'] == 'Pedro Cruz' for item in suggestions.get_json()['suggestions']))
+
+    def test_guest_autosuggest_is_rejected_and_find_someone_is_rate_limited(self):
+        self.assertEqual(self.client.get('/api/residents/autosuggest?q=Maria').status_code, 401)
+
+        with patch.object(residents_routes, 'LOOKUP_RATE_LIMIT_MAX_REQUESTS', 1):
+            first = self.client.post(
+                '/api/residents/find-center',
+                headers=self.resident_headers,
+                json={'full_name': 'Maria Santos'},
+            )
+            second = self.client.post(
+                '/api/residents/find-center',
+                headers=self.resident_headers,
+                json={'full_name': 'Maria Santos'},
+            )
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 429)
+        self.assertIn('wait', second.get_json()['error'].lower())
+
+    def test_my_center_rate_limits_by_ip_and_resident_account(self):
+        with patch.object(residents_routes, 'LOOKUP_RATE_LIMIT_MAX_REQUESTS', 1):
+            first_guest = self.client.post(
+                '/api/residents/my-center-lookup',
+                headers={'X-Real-IP': '192.0.2.10'},
+                json={'full_name': 'Unknown Person', 'barangay_id': 1, 'birthdate': '2000-01-01'},
+            )
+            second_guest = self.client.post(
+                '/api/residents/my-center-lookup',
+                headers={'X-Real-IP': '192.0.2.10'},
+                json={'full_name': 'Unknown Person', 'barangay_id': 1, 'birthdate': '2000-01-01'},
+            )
+        self.assertEqual(first_guest.get_json(), {'message': 'No match found.'})
+        self.assertEqual(second_guest.status_code, 429)
+
+        residents_routes._lookup_limit_buckets.clear()
+        with patch.object(residents_routes, 'LOOKUP_RATE_LIMIT_MAX_REQUESTS', 1):
+            first_resident = self.client.post(
+                '/api/residents/find-center', headers={
+                    **self.resident_headers, 'X-Real-IP': '192.0.2.11',
+                }, json={'full_name': 'Maria Santos'},
+            )
+            second_resident = self.client.post(
+                '/api/residents/find-center', headers={
+                    **self.resident_headers, 'X-Real-IP': '192.0.2.12',
+                }, json={'full_name': 'Maria Santos'},
+            )
+        self.assertEqual(first_resident.status_code, 200)
+        self.assertEqual(second_resident.status_code, 429)
+
+    def test_privacy_toggle_updates_only_signed_in_residents_family(self):
+        get_response = self.client.get(
+            '/api/residents/profile/find-someone',
+            headers=self.resident_headers,
+        )
+        self.assertEqual(get_response.get_json(), {'find_someone_opt_out': False})
+        update = self.client.patch(
+            '/api/residents/profile/find-someone',
+            headers=self.resident_headers,
+            json={'find_someone_opt_out': True},
+        )
+        self.assertEqual(update.status_code, 200)
+        self.assertTrue(db.session.get(Family, self.fam_a.id).find_someone_opt_out)
+
+        for role, headers in (
+            ('guest', {}),
+            ('lgu_personnel', self.lgu_headers),
+            ('admin', self.admin_headers),
+        ):
+            with self.subTest(role=role):
+                response = self.client.get(
+                    '/api/residents/profile/find-someone', headers=headers,
+                )
+                self.assertIn(response.status_code, (401, 403))
+                update_response = self.client.patch(
+                    '/api/residents/profile/find-someone', headers=headers,
+                    json={'find_someone_opt_out': False},
+                )
+                self.assertIn(update_response.status_code, (401, 403))
 
 
 if __name__ == '__main__':

@@ -4,11 +4,7 @@ import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faXmark } from "@fortawesome/free-solid-svg-icons";
 import { useAuth } from "../context/AuthContext"; // adjust the path to match where AuthContext lives
 import { api } from "../services/api";
-import {
-  useEvacuationCenters,
-  usePublicHazardReports,
-  useRoadSegments,
-} from "../hooks/useEvacuationQueries";
+import { usePublicStatusSummary } from "../hooks/useEvacuationQueries";
 import "./LandingPage.css";
 import "./LandingPage.motion.css";
 import { LoginDialog, ResidentSignUpDialog } from "../components/AuthModals/AuthModals"; // must come after LandingPage.css
@@ -611,9 +607,7 @@ function LiveStatusStrip({ prefersReducedMotion }) {
     () => typeof window === "undefined" || !("IntersectionObserver" in window)
   );
 
-  const centersQuery = useEvacuationCenters(false, { retry: false, staleTime: 60_000 });
-  const roadsQuery = useRoadSegments({ retry: false, staleTime: 60_000 });
-  const reportsQuery = usePublicHazardReports({ retry: false, staleTime: 60_000 });
+  const statusQuery = usePublicStatusSummary({ retry: false });
 
   useEffect(() => {
     const el = stripRef.current;
@@ -631,54 +625,20 @@ function LiveStatusStrip({ prefersReducedMotion }) {
     return () => observer.disconnect();
   }, [visible]);
 
-  const counts = useMemo(() => {
-    if (
-      centersQuery.isLoading ||
-      roadsQuery.isLoading ||
-      reportsQuery.isLoading ||
-      centersQuery.isError ||
-      roadsQuery.isError ||
-      reportsQuery.isError ||
-      !centersQuery.data ||
-      !roadsQuery.data ||
-      !reportsQuery.data
-    ) {
-      return null;
-    }
-    const centersList = Array.isArray(centersQuery.data)
-      ? centersQuery.data
-      : centersQuery.data?.features || [];
-    const roadFeatures = Array.isArray(roadsQuery.data)
-      ? roadsQuery.data
-      : roadsQuery.data?.features || [];
-    const closedCount = roadFeatures.filter((f) => Boolean(f?.properties?.is_closed)).length;
-    const reportsList = Array.isArray(reportsQuery.data) ? reportsQuery.data : [];
-
-    return {
-      centers: centersList.length,
-      closedRoads: closedCount,
-      activeReports: reportsList.length,
-    };
-  }, [
-    centersQuery.isLoading,
-    roadsQuery.isLoading,
-    reportsQuery.isLoading,
-    centersQuery.isError,
-    roadsQuery.isError,
-    reportsQuery.isError,
-    centersQuery.data,
-    roadsQuery.data,
-    reportsQuery.data,
-  ]);
-
-  if (centersQuery.isError || roadsQuery.isError || reportsQuery.isError) {
-    return null;
-  }
-
-  const isLoading = centersQuery.isLoading || roadsQuery.isLoading || reportsQuery.isLoading;
-  if (!isLoading && !counts) {
-    return null;
-  }
+  const counts = statusQuery.data?.counts;
+  const isLoading = statusQuery.isLoading;
+  const countKeys = ["open_centers", "closed_roads", "active_danger_reports"];
+  const countsAreValid = countKeys.every(
+    (key) => Number.isInteger(counts?.[key]) && counts[key] >= 0
+  );
+  const isUnavailable = statusQuery.isError || (!isLoading && !countsAreValid);
+  const lastUpdated = statusQuery.data?.last_updated;
+  const lastUpdatedDate = lastUpdated ? new Date(lastUpdated) : null;
+  const lastUpdatedLabel = isLoading
+    ? "Loading"
+    : lastUpdatedDate && !Number.isNaN(lastUpdatedDate.getTime())
+      ? lastUpdatedDate.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+      : "Unavailable";
 
   const shouldAnimate = visible && !prefersReducedMotion;
 
@@ -691,28 +651,44 @@ function LiveStatusStrip({ prefersReducedMotion }) {
             <div className="ew-status-item"><span className="ew-status-skel-num" /><span className="ew-status-skel-lbl" /></div>
             <div className="ew-status-item"><span className="ew-status-skel-num" /><span className="ew-status-skel-lbl" /></div>
           </div>
+        ) : isUnavailable ? (
+          <div className="ew-status-grid" role="status" aria-live="polite">
+            {[
+              ["open_centers", "Evacuation centers"],
+              ["closed_roads", "Closed roads"],
+              ["active_danger_reports", "Active danger reports"],
+            ].map(([key, label]) => (
+              <div className="ew-status-item" key={key}>
+                <strong className="ew-status-num">Unavailable</strong>
+                <span className="ew-status-label">{label}</span>
+              </div>
+            ))}
+          </div>
         ) : (
           <div className="ew-status-grid">
             <div className="ew-status-item">
               <strong className="ew-status-num">
-                {visible ? <CountUpValue target={counts.centers} animate={shouldAnimate} /> : counts.centers}
+                {visible ? <CountUpValue target={counts.open_centers} animate={shouldAnimate} /> : counts.open_centers}
               </strong>
               <span className="ew-status-label">Evacuation centers</span>
             </div>
             <div className="ew-status-item">
               <strong className="ew-status-num">
-                {visible ? <CountUpValue target={counts.closedRoads} animate={shouldAnimate} /> : counts.closedRoads}
+                {visible ? <CountUpValue target={counts.closed_roads} animate={shouldAnimate} /> : counts.closed_roads}
               </strong>
               <span className="ew-status-label">Closed roads</span>
             </div>
             <div className="ew-status-item">
               <strong className="ew-status-num">
-                {visible ? <CountUpValue target={counts.activeReports} animate={shouldAnimate} /> : counts.activeReports}
+                {visible ? <CountUpValue target={counts.active_danger_reports} animate={shouldAnimate} /> : counts.active_danger_reports}
               </strong>
               <span className="ew-status-label">Active danger reports</span>
             </div>
           </div>
         )}
+        <p className="ew-status-updated">
+          Last updated: {lastUpdatedLabel}{lastUpdatedDate && !Number.isNaN(lastUpdatedDate.getTime()) ? ` · server time` : ""}
+        </p>
       </div>
     </section>
   );

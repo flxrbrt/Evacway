@@ -1,4 +1,5 @@
 from flask import Blueprint, request, jsonify
+from flask_jwt_extended import get_jwt_identity
 from sqlalchemy import func
 from sqlalchemy.orm import joinedload
 from collections import defaultdict
@@ -13,14 +14,11 @@ from models import (
     EvacuationAssignment,
     Family,
     Resident,
-    User,
     SystemLog,
 )
 from geoalchemy2.shape import to_shape, from_shape
 from shapely.geometry import mapping, Polygon, shape, Point
-from flask_jwt_extended import verify_jwt_in_request, get_jwt_identity
-from flask_jwt_extended.exceptions import JWTExtendedException
-from utils import role_required
+from utils import get_optional_caller, public_room_payload, role_required
 
 buildings_bp = Blueprint('buildings', __name__)
 
@@ -87,17 +85,6 @@ def _format_room_range(rooms, building_name=None):
     return f"Rm {range_str}"
 
 
-def _get_caller_user():
-    try:
-        verify_jwt_in_request(optional=True)
-        identity = get_jwt_identity()
-        if identity:
-            return db.session.get(User, identity)
-    except Exception:
-        pass
-    return None
-
-
 # =========================================================
 # 1. LIST BUILDINGS OF A CENTER (GeoJSON FeatureCollection)
 # =========================================================
@@ -107,6 +94,9 @@ def get_center_buildings(center_id):
     if not center:
         return jsonify({"error": "Evacuation center not found"}), 404
 
+    caller = get_optional_caller()
+    is_staff = caller is not None and caller.get('role') in ('admin', 'lgu_personnel')
+    resident_id = caller.get('resident_id') if caller and caller.get('role') == 'resident' else None
     buildings = EvacuationCenterBuilding.query.filter_by(evacuation_center_id=center_id).order_by(EvacuationCenterBuilding.id.asc()).all()
     features = []
 
@@ -229,11 +219,33 @@ def get_center_buildings(center_id):
             for r in rooms
         ]
 
+        if not is_staff:
+            my_room_ids = set()
+            if resident_id and room_ids:
+                my_room_ids = {
+                    room_id for (room_id,) in db.session.query(EvacuationAssignment.room_id)
+                    .filter(
+                        EvacuationAssignment.resident_id == resident_id,
+                        EvacuationAssignment.room_id.in_(room_ids),
+                    )
+                    .all()
+                }
+            rooms_summary = [
+                public_room_payload(room, room.id in my_room_ids)
+                for room in rooms
+            ]
+
         features.append({
             "type": "Feature",
             "id": b.id,
             "geometry": geom_dict,
-            "properties": {
+            "properties": ({
+                "id": b.id,
+                "name": b.name or f"Building #{b.id}",
+                "status": b.status or "open",
+                "evacuation_center_id": center_id,
+                "rooms": rooms_summary,
+            } if not is_staff else {
                 "id": b.id,
                 "name": b.name,
                 "floors": b.floors,
@@ -264,7 +276,7 @@ def get_center_buildings(center_id):
                 "outline_color": outline_color,
                 "rooms": rooms_summary,
                 "is_mapped": b.geom is not None,
-            }
+            })
         })
 
     return jsonify({
@@ -597,7 +609,8 @@ def delete_building(building_id):
 
     bld_name = building.name or f"Building #{building_id}"
     db.session.delete(building)
-    user_id = get_jwt_identity()
+    raw_user_id = get_jwt_identity()
+    user_id = int(raw_user_id) if raw_user_id is not None else None
     db.session.add(SystemLog(user_id=user_id, action=f"Deleted building '{bld_name}' (ID: {building_id}). Rooms safely unlinked."))
     db.session.commit()
 
@@ -668,26 +681,27 @@ def get_building_details(building_id):
         return jsonify({"error": "Building not found"}), 404
 
     center = building.evacuation_center
-    caller = _get_caller_user()
-    is_staff = caller is not None and caller.is_active and caller.role in ('admin', 'lgu_personnel')
-
-    # Resident query parameters for own household lookup
-    resident_id_param = request.args.get('resident_id', type=int)
-    head_name_param = (request.args.get('head_name') or '').strip().lower()
+    caller = get_optional_caller()
+    is_staff = caller is not None and caller.get('role') in ('admin', 'lgu_personnel')
+    resident_id = caller.get('resident_id') if caller and caller.get('role') == 'resident' else None
 
     rooms = EvacuationCenterRoom.query.filter(
-        db.or_(
-            EvacuationCenterRoom.building_id == building.id,
-            db.and_(
-                EvacuationCenterRoom.evacuation_center_id == building.evacuation_center_id,
-                EvacuationCenterRoom.building_id.is_(None),
-                EvacuationCenterRoom.id == 29 if (building.id == 2 and bool(resident_id_param or head_name_param)) else False
-            )
-        ),
+        EvacuationCenterRoom.building_id == building.id,
         EvacuationCenterRoom.is_active == True
     ).order_by(EvacuationCenterRoom.room_number.asc()).all()
 
     room_ids = [r.id for r in rooms]
+
+    my_room_ids = set()
+    if resident_id and room_ids:
+        my_room_ids = {
+            room_id for (room_id,) in db.session.query(EvacuationAssignment.room_id)
+            .filter(
+                EvacuationAssignment.resident_id == resident_id,
+                EvacuationAssignment.room_id.in_(room_ids),
+            )
+            .all()
+        }
 
     # Pre-fetch assignments for this building's rooms
     assignments = []
@@ -782,68 +796,6 @@ def get_building_details(building_id):
             "is_my_room": False,
         }
 
-        # Check if caller's own household is in this room
-        my_household = None
-        if resident_id_param or head_name_param:
-            matched_family_id = None
-            matched_res = None
-            matched_fam = None
-            matched_checked_in = False
-            for a in r_assignments:
-                res = residents_by_id.get(a.resident_id)
-                if not res:
-                    continue
-                fam = families_by_id.get(res.family_id)
-                match_id = (resident_id_param and (res.id == resident_id_param or res.family_id == resident_id_param))
-                match_name = (head_name_param and (
-                    (fam and fam.head_name and fam.head_name.strip().lower() == head_name_param) or
-                    (res.get_full_name() and res.get_full_name().strip().lower() == head_name_param)
-                ))
-                if match_id or match_name:
-                    matched_res = res
-                    matched_fam = fam
-                    matched_family_id = res.family_id
-                    if a.checked_in_at is not None:
-                        matched_checked_in = True
-                    break
-
-            if matched_res is not None:
-                my_members_list = []
-                for a in r_assignments:
-                    r_mem = residents_by_id.get(a.resident_id)
-                    if not r_mem:
-                        continue
-                    is_same_hh = (
-                        (matched_family_id is not None and r_mem.family_id == matched_family_id)
-                        or (matched_family_id is None and r_mem.id == matched_res.id)
-                    )
-                    if is_same_hh:
-                        mem_checked_in = a.checked_in_at is not None
-                        if mem_checked_in:
-                            matched_checked_in = True
-                        my_members_list.append({
-                            "resident_id": r_mem.id,
-                            "full_name": r_mem.get_full_name(),
-                            "is_checked_in": mem_checked_in,
-                            "checked_in_at": a.checked_in_at.isoformat() if a.checked_in_at else None,
-                            "checkin_status": "Checked in" if mem_checked_in else "Not yet arrived",
-                        })
-                room_data["is_my_room"] = True
-                my_household = {
-                    "family_id": matched_family_id,
-                    "head_name": (matched_fam.head_name if matched_fam else None) or matched_res.household_head_name or matched_res.get_full_name(),
-                    "member_count": len(my_members_list) or (matched_fam.member_count if matched_fam else None) or matched_res.family_members or 1,
-                    "assigned_members": len(my_members_list),
-                    "checked_in_members": sum(1 for m in my_members_list if m["is_checked_in"]),
-                    "barangay": (matched_fam.barangay.name if matched_fam and matched_fam.barangay and hasattr(matched_fam.barangay, "name") else (str(matched_fam.barangay) if matched_fam and matched_fam.barangay else (str(matched_res.barangay) if matched_res.barangay else ""))),
-                    "is_checked_in": matched_checked_in,
-                    "checkin_status": "Checked in" if matched_checked_in else "Not yet arrived",
-                    "status": "Checked in" if matched_checked_in else "Reserved for your family",
-                    "members": my_members_list,
-                }
-
-        room_data["my_household"] = my_household
-
         # Group assignments by family (available for both staff and room overview)
         family_members_map = defaultdict(list)
         for a in r_assignments:
@@ -910,7 +862,10 @@ def get_building_details(building_id):
 
         # Sort families alphabetically by head_name
         families_list.sort(key=lambda x: (x["head_name"] or "").casefold())
-        room_data["families"] = families_list
+        if is_staff:
+            room_data["families"] = families_list
+        elif room_data["id"] in my_room_ids:
+            room_data["is_my_room"] = True
 
         detailed_rooms.append(room_data)
 
@@ -928,6 +883,17 @@ def get_building_details(building_id):
     else:
         b_status = "Available" if total_people_spaces > 0 else "Closed"
         b_status_color = "#16a34a" if total_people_spaces > 0 else "#94a3b8"
+
+    if not is_staff:
+        return jsonify({
+            "id": building.id,
+            "name": building.name or f"Building #{building.id}",
+            "status": building.status or "open",
+            "rooms": [
+                public_room_payload(room, room.id in my_room_ids)
+                for room in rooms
+            ],
+        })
 
     return jsonify({
         "floors": building.floors,

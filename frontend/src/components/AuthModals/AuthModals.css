@@ -552,6 +552,45 @@
   min-width: 0;
 }
 
+.ew-privacy-consent-label {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 1.5;
+  cursor: pointer;
+}
+
+.ew-signup .ew-privacy-consent-label input {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  min-height: 16px;
+  margin: 2px 0 0;
+  padding: 0;
+  border: 0;
+  accent-color: var(--primary);
+}
+
+.ew-privacy-consent-label a {
+  color: var(--primary-hover);
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.ew-signup .ew-privacy-consent-label input:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 3px;
+  box-shadow: none;
+}
+
+.ew-privacy-consent .ew-field-error {
+  display: block;
+  margin: 6px 0 0 26px;
+}
+
 .ew-password-guide-row {
   grid-column: 1 / -1;
   width: 100%;
@@ -824,6 +863,16 @@
   margin: 12px 0 18px;
 }
 
+.ew-signup-confirmation {
+  display: grid;
+  gap: 12px;
+  text-align: left;
+}
+
+.ew-signup-confirmation p {
+  margin: 0;
+}
+
 /* Mobile responsive (768px and below): single column, 16px padding, 16px min font size, safe area */
 @media (max-width: 768px) {
   .ew-signup-dialog {
@@ -869,4 +918,23 @@
     grid-template-columns: 1fr;
     gap: 4px;
   }
+}
+
+.ew-signup .ew-field.ew-privacy-consent .ew-privacy-consent-label > input[type="checkbox"] {
+  box-sizing: border-box;
+  flex: 0 0 16px;
+  width: 16px;
+  min-width: 16px;
+  max-width: 16px;
+  height: 16px;
+  min-height: 16px;
+  padding: 0;
+  border: 1px solid #94a3b8;
+  border-radius: 3px;
+  background: #ffffff;
+}
+
+.ew-signup .ew-privacy-consent-label > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }

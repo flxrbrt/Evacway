@@ -30,7 +30,6 @@ export default function BuildingDetailsModal({
   buildingId,
   initialBuildingData = null,
   onClose,
-  userHousehold = null,
   isStaff = false,
   onViewRoomAdmin = null,
   highlightedRoom = null,
@@ -134,44 +133,15 @@ export default function BuildingDetailsModal({
     setLoading(true);
     setError(null);
 
-    const queryParams = {};
-    if (userHousehold?.resident_id) {
-      queryParams.resident_id = userHousehold.resident_id;
-    }
-    if (userHousehold?.household_head_name) {
-      queryParams.head_name = userHousehold.household_head_name;
-    }
-
     api
-      .getBuildingDetails(buildingId, queryParams)
+      .getBuildingDetails(buildingId)
       .then((res) => {
         if (!isMounted) return;
         setData(res);
         setLoading(false);
         // Default selected room: resident's assigned room if in this building (expanded), else null (all collapsed)
         if (Array.isArray(res.rooms) && res.rooms.length > 0) {
-          const userAssignedBldgId = userHousehold?.room?.building_id;
-          const userBldgName = (userHousehold?.room?.building_name || "").trim().toLowerCase();
-          const currentBldgName = (res.name || "").trim().toLowerCase();
-          const bldgMatches =
-            userAssignedBldgId != null
-              ? String(userAssignedBldgId) === String(buildingId)
-              : (userBldgName && currentBldgName && userBldgName === currentBldgName);
-
-          let myRoom = null;
-          if (bldgMatches) {
-            const myRoomStr =
-              userHousehold?.room?.room_number || userHousehold?.room_number || "";
-            myRoom = res.rooms.find(
-              (r) =>
-                r.is_my_room ||
-                (userHousehold?.room?.id != null &&
-                  String(userHousehold.room.id) === String(r.id)) ||
-                (myRoomStr &&
-                  String(myRoomStr).replace(/^Room\s*/i, "").trim() ===
-                    String(r.room_number).replace(/^Room\s*/i, "").trim())
-            );
-          }
+          const myRoom = res.rooms.find((r) => r.is_my_room === true);
           const foundRoom = findAssignedRoom(res.rooms, highlightedRoom);
           setSelectedRoomId(foundRoom?.id ?? myRoom?.id ?? null);
         } else {
@@ -187,7 +157,7 @@ export default function BuildingDetailsModal({
     return () => {
       isMounted = false;
     };
-  }, [isOpen, buildingId, userHousehold, highlightedRoom, reloadNonce]);
+  }, [isOpen, buildingId, highlightedRoom, reloadNonce]);
 
   useEffect(() => {
     if (!isOpen || loading || !highlightedRoom || !data) return;
@@ -201,33 +171,10 @@ export default function BuildingDetailsModal({
     data?.building || (data?.id ? data : null) || initialBuildingData || {};
   const rooms = Array.isArray(data?.rooms) ? data.rooms : [];
 
-  const userAssignedBuildingId = userHousehold?.room?.building_id;
-  const userBldgName = (userHousehold?.room?.building_name || "").trim().toLowerCase();
-  const currentBldgName = (building?.name || "").trim().toLowerCase();
-  const isCurrentBuildingUserBuilding =
-    userAssignedBuildingId != null
-      ? String(userAssignedBuildingId) === String(buildingId)
-      : (userBldgName && currentBldgName && userBldgName === currentBldgName);
-
-  const myRoomStr =
-    userHousehold?.room?.room_number || userHousehold?.room_number || "";
-
-  const checkIsMine = (r) => {
-    if (!isCurrentBuildingUserBuilding) return false;
-    return Boolean(
-      r.is_my_room ||
-        (userHousehold?.room?.id != null &&
-          String(userHousehold.room.id) === String(r.id)) ||
-        (myRoomStr &&
-          String(myRoomStr).replace(/^Room\s*/i, "").trim() ===
-            String(r.room_number).replace(/^Room\s*/i, "").trim())
-    );
-  };
+  const checkIsMine = (r) => !isStaff && r.is_my_room === true;
 
   const sortedRooms = useMemo(() => {
     if (!rooms.length) return [];
-    if (!isCurrentBuildingUserBuilding) return rooms;
-
     const myRooms = [];
     const otherRooms = [];
     rooms.forEach((r) => {
@@ -239,7 +186,7 @@ export default function BuildingDetailsModal({
     });
 
     return [...myRooms, ...otherRooms];
-  }, [rooms, isCurrentBuildingUserBuilding, buildingId, userHousehold]);
+  }, [rooms, isStaff]);
 
   const buildingFloors = Number(data?.floors || data?.building?.floors || initialBuildingData?.floors || 1);
   const floorGroups = useMemo(() => {
@@ -314,6 +261,26 @@ export default function BuildingDetailsModal({
   const isBuildingFullyAssigned =
     totalCapacity > 0 && totalAssigned >= totalCapacity;
   const spacesLeft = Math.max(0, totalCapacity - totalOccupied);
+  const availableFamilySlots = rooms.reduce(
+    (total, room) => total + Number(room.available_slots || 0),
+    0
+  );
+  const availablePeopleSpaces = rooms.reduce(
+    (total, room) => total + Number(room.available_spaces || 0),
+    0
+  );
+  const publicBuildingStatusRaw = data?.status || "Available";
+  const publicBuildingStatus = publicBuildingStatusRaw
+    .replaceAll("_", " ")
+    .replace(/^\w/, (letter) => letter.toUpperCase());
+  const publicBuildingStatusVariant =
+    publicBuildingStatus.toLowerCase() === "closed"
+      ? "inactive"
+      : publicBuildingStatus.toLowerCase() === "under repair"
+        ? "warn"
+        : publicBuildingStatus.toLowerCase() === "full"
+          ? "full"
+          : "available";
 
   let statusLabel = "Available";
   let statusVariant = "available";
@@ -369,7 +336,10 @@ export default function BuildingDetailsModal({
                 <h2 id="bldg-modal-title" className="bldg-modal-title">
                   {buildingName}
                 </h2>
-                <StatusPill variant={statusVariant} label={statusLabel} />
+                <StatusPill
+                  variant={isStaff ? statusVariant : publicBuildingStatusVariant}
+                  label={isStaff ? statusLabel : publicBuildingStatus}
+                />
               </div>
               <button
                 ref={closeBtnRef}
@@ -389,9 +359,9 @@ export default function BuildingDetailsModal({
             </div>
           </div>
 
-          {/* Occupancy Card (bg #F8FAFC, 1px border) */}
-          <div className="bldg-modal-occ-wrapper">
-            <div className="bldg-occ-card">
+          {isStaff ? (
+            <div className="bldg-modal-occ-wrapper">
+              <div className="bldg-occ-card">
               <div className="bldg-occ-card-top">
                 <span className="bldg-occ-card-label">Building occupancy</span>
                 <div className="bldg-occ-figure">
@@ -418,8 +388,22 @@ export default function BuildingDetailsModal({
                   {spacesLeft === 1 ? "space" : "spaces"} left
                 </span>
               </div>
+              </div>
             </div>
-          </div>
+          ) : (
+            <div className="bldg-modal-occ-wrapper">
+              <div className="bldg-occ-card" aria-label="Building availability">
+                <div className="bldg-occ-card-bottom">
+                  <span className="bldg-occ-bottom-meta">
+                    {availableFamilySlots} free family {availableFamilySlots === 1 ? "slot" : "slots"}
+                  </span>
+                  <span className="bldg-occ-bottom-meta">
+                    {availablePeopleSpaces} free people {availablePeopleSpaces === 1 ? "space" : "spaces"}
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Loading Skeletons */}
@@ -478,7 +462,7 @@ export default function BuildingDetailsModal({
             <div className="bldg-modal-rooms-section">
               <div className="bldg-modal-rooms-header-row">
                 <span className="bldg-modal-subheading">
-                  Rooms ({sortedRooms.length})
+                  {isStaff ? `Rooms (${sortedRooms.length})` : "Rooms"}
                 </span>
                 <span className="bldg-modal-muted-hint">
                   Tap a room to view details
@@ -568,6 +552,8 @@ export default function BuildingDetailsModal({
                     const rOcc = r.occupied || 0;
                     const rAssigned = r.assigned ?? 0;
                     const rCap = r.capacity || 0;
+                    const rAvailableSlots = Number(r.available_slots || 0);
+                    const rAvailableSpaces = Number(r.available_spaces || 0);
                     const rPct =
                       rCap > 0
                         ? Math.min(100, Math.round((rOcc / rCap) * 100))
@@ -577,7 +563,16 @@ export default function BuildingDetailsModal({
                     let rStatusText = "Available";
                     let rStatusVariant = "available";
 
-                    if (rCap === 0) {
+                    if (!isStaff) {
+                      rStatusText = r.status || "Available";
+                      rStatusVariant = rStatusText.toLowerCase() === "closed"
+                        ? "inactive"
+                        : rStatusText.toLowerCase() === "under repair"
+                          ? "warn"
+                          : rStatusText.toLowerCase() === "full"
+                            ? "full"
+                            : "available";
+                    } else if (rCap === 0) {
                       rStatusText = "No data";
                       rStatusVariant = "neutral";
                     } else if (rOcc >= rCap) {
@@ -592,19 +587,7 @@ export default function BuildingDetailsModal({
                     }
 
                     const isMine = checkIsMine(r);
-                    const isMyFamilyCheckedIn = Boolean(
-                      r.my_household?.is_checked_in ||
-                        userHousehold?.is_checked_in ||
-                        userHousehold?.room?.is_checked_in
-                    );
-                    const myFamilyStatusLabel = isMyFamilyCheckedIn
-                      ? "Checked in"
-                      : "Reserved for your family";
-                    const entrance =
-                      (isMine &&
-                        (userHousehold?.room?.recommended_entrance ||
-                          userHousehold?.recommended_entrance)) ||
-                      r.recommended_entrance;
+                    const entrance = isStaff ? r.recommended_entrance : null;
 
                     const cleanRoomNum = String(r.room_number || "")
                       .replace(/^room\s*/i, "")
@@ -613,10 +596,9 @@ export default function BuildingDetailsModal({
                       ? `Room ${cleanRoomNum}`
                       : "Room";
 
-                    const unassignedSpaces = Math.max(
-                      0,
-                      rCap - Math.max(rOcc, rAssigned)
-                    );
+                    const unassignedSpaces = isStaff
+                      ? Math.max(0, rCap - Math.max(rOcc, rAssigned))
+                      : rAvailableSpaces;
 
                     return (
                       <div
@@ -648,10 +630,10 @@ export default function BuildingDetailsModal({
                                 <span className="bldg-room-name">
                                   {roomLabel}
                                 </span>
-                                {isMine && (
+                                  {isMine && (
                                   <span className="bldg-badge-yours">
                                     <CheckCircle2 size={11} strokeWidth={2.25} aria-hidden="true" />
-                                    <span>{myFamilyStatusLabel}</span>
+                                      <span>Your room</span>
                                   </span>
                                 )}
                                 {isFoundRoom && (
@@ -659,7 +641,9 @@ export default function BuildingDetailsModal({
                                 )}
                               </div>
                               <div className="bldg-room-subline">
-                                {rOcc} of {rCap} here · {rAssigned} assigned
+                                {isStaff
+                                  ? `${rOcc} of ${rCap} here · ${rAssigned} assigned`
+                                  : `${rAvailableSlots} free family ${rAvailableSlots === 1 ? "slot" : "slots"} · ${rAvailableSpaces} free people ${rAvailableSpaces === 1 ? "space" : "spaces"}`}
                                 {entrance ? ` · Enter via ${entrance}` : ""}
                               </div>
                             </div>
@@ -681,12 +665,14 @@ export default function BuildingDetailsModal({
                             </div>
                           </div>
 
-                          <ProgressBar
-                            value={rOcc}
-                            max={rCap}
-                            size={6}
-                            ariaLabel={`${roomLabel} occupancy: ${rPct}%`}
-                          />
+                          {isStaff && (
+                            <ProgressBar
+                              value={rOcc}
+                              max={rCap}
+                              size={6}
+                              ariaLabel={`${roomLabel} occupancy: ${rPct}%`}
+                            />
+                          )}
                         </button>
 
                         {/* Expanded room panel */}
@@ -697,6 +683,17 @@ export default function BuildingDetailsModal({
                             role="region"
                             aria-label={`Details for ${roomLabel}`}
                           >
+                            {!isStaff ? (
+                              <div className="bldg-resident-space-banner">
+                                <span className="bldg-space-big">
+                                  {rAvailableSlots} free family {rAvailableSlots === 1 ? "slot" : "slots"}
+                                </span>
+                                <span className="bldg-space-sub">
+                                  {rAvailableSpaces} free people {rAvailableSpaces === 1 ? "space" : "spaces"}
+                                </span>
+                                <StatusPill variant={rStatusVariant} label={rStatusText} />
+                              </div>
+                            ) : (
                             <div className="bldg-resident-space-wrap">
                               {/* Summary card */}
                               <div className="bldg-resident-space-banner">
@@ -732,7 +729,7 @@ export default function BuildingDetailsModal({
                               )}
 
                               {/* Families assigned to this room */}
-                              {!hideHouseholds &&
+                              {isStaff && !hideHouseholds &&
                                 (() => {
                                   const roomFamilies = Array.isArray(r.families)
                                     ? r.families
@@ -987,6 +984,7 @@ export default function BuildingDetailsModal({
                                   );
                                 })()}
                             </div>
+                            )}
                           </div>
                         )}
                       </div>

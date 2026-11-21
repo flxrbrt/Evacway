@@ -10,6 +10,7 @@ import RescueAlertModal from "../../components/RescueAlertModal/RescueAlertModal
 import { MapLegend } from "../../components/DashboardMap/MapOverlays";
 import { EVAC_SHELTER_ICON_HTML, EvacShelterIcon } from "../../components/DashboardMap/evacShelterIcon";
 import { getCenterCoordinates } from "../../utils/mapCenterCoordinates";
+import { getMappedBuildingsForCenter } from "../../utils/centerBuildings";
 import { resolveRoomBuilding } from "../../utils/resolveRoomBuilding";
 import { needsLocationConfirmation } from "../../utils/locationConfirmation";
 import { createReportPopup } from "../../components/mapReports/mapReports";
@@ -73,6 +74,7 @@ import {
   faCircleQuestion,
   faSpinner,
   faHouseFlag,
+  faDownload,
 } from "@fortawesome/free-solid-svg-icons";
 
 import "../../components_css/MyLocationMarker.css";
@@ -81,8 +83,36 @@ import "./ResidentHome.css";
 import "./ResidentHome.motion.css";
 import { useAuth } from "../../context/AuthContext";
 import { LoginDialog, ResidentSignUpDialog } from "../../components/AuthModals/AuthModals";
+import {
+  buildOfflineTileUrl,
+  getBasemapStyleUrl,
+  getOfflineMapDownloadProgress,
+  getSogodOfflineTileCoordinates,
+  OFFLINE_MAP_MAX_BYTES,
+  OPENFREEMAP_ALTERNATE_STYLE_URL,
+  OPENFREEMAP_STYLE_URL,
+  parseOpenFreeMapTileUrl,
+} from "../../config/offlineMap";
 
-mapboxgl.accessToken = import.meta.env.VITE_MAPBOX_TOKEN;
+const MAPBOX_ACCESS_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN;
+mapboxgl.accessToken = MAPBOX_ACCESS_TOKEN;
+
+function transformOpenFreeMapRequest(url) {
+  const tile = parseOpenFreeMapTileUrl(url);
+  if (tile) {
+    return {
+      url: new URL(buildOfflineTileUrl(tile), window.location.origin).href,
+    };
+  }
+  return { url };
+}
+
+function formatPublicCenterUpdateTime(value) {
+  const date = value ? new Date(value) : null;
+  return date && !Number.isNaN(date.getTime())
+    ? date.toLocaleString([], { dateStyle: "medium", timeStyle: "short" })
+    : "";
+}
 
 export const SOGOD_CENTER = [10.3932, 124.9886];
 
@@ -701,7 +731,7 @@ function generateRouteArrowPoints(coordinates, spacingMeters = 50) {
 }
 
 async function getWalkingDirections(start, destination) {
-  const accessToken = mapboxgl.accessToken;
+  const accessToken = MAPBOX_ACCESS_TOKEN;
   if (!accessToken) throw new Error("Walking directions require a Mapbox access token.");
 
   const [startLat, startLng] = start;
@@ -804,32 +834,9 @@ export function mapboxRouteMatchesBackend(mapboxRouteCoords, backendCoords, thre
   return true;
 }
 
-// --------------------------------------------------
-// Normalize the "find my center" response
-// --------------------------------------------------
-
-function normalizeMatches(result) {
-  if (Array.isArray(result)) return result;
-  if (Array.isArray(result?.matches)) return result.matches;
-  if (Array.isArray(result?.data)) return result.data;
-  return [];
-}
-
-function readSavedResident() {
+function clearSavedResident() {
   try {
-    return JSON.parse(localStorage.getItem(RESIDENT_STORAGE_KEY));
-  } catch {
-    return null;
-  }
-}
-
-function saveResident(value) {
-  try {
-    if (value) {
-      localStorage.setItem(RESIDENT_STORAGE_KEY, JSON.stringify(value));
-    } else {
-      localStorage.removeItem(RESIDENT_STORAGE_KEY);
-    }
+    localStorage.removeItem(RESIDENT_STORAGE_KEY);
   } catch {
     // storage unavailable: ignore
   }
@@ -1354,6 +1361,7 @@ const ResidentHome = () => {
   const isMobile = useIsMobile(1024);
   const navigate = useNavigate();
   const { user, logout } = useAuth();
+  const isLoggedInResident = user?.role === "resident";
   const queryClient = useQueryClient();
 
   const loginDialogRef = useRef(null);
@@ -1443,6 +1451,17 @@ const ResidentHome = () => {
   // --------------------------------------------------
 
   const [mapStyle, setMapStyle] = useState("street");
+  const [isOnline, setIsOnline] = useState(() => navigator.onLine);
+  const [offlineMapDownload, setOfflineMapDownload] = useState({
+    status: "idle",
+    completed: 0,
+    total: 0,
+    error: "",
+  });
+  const offlineMapProgress = getOfflineMapDownloadProgress(
+    offlineMapDownload.completed,
+    offlineMapDownload.total,
+  );
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
 
@@ -1478,6 +1497,10 @@ const ResidentHome = () => {
   const [assistanceSent, setAssistanceSent] = useState(false);
   const [profileDropdownOpen, setProfileDropdownOpen] = useState(false);
   const profileDropdownRef = useRef(null);
+  const [findSomeoneOptOut, setFindSomeoneOptOut] = useState(false);
+  const [findSomeonePrivacyLoading, setFindSomeonePrivacyLoading] = useState(false);
+  const [findSomeonePrivacySaving, setFindSomeonePrivacySaving] = useState(false);
+  const [findSomeonePrivacyError, setFindSomeonePrivacyError] = useState("");
 
   useEffect(() => {
     if (!profileDropdownOpen) return;
@@ -1504,6 +1527,41 @@ const ResidentHome = () => {
       document.removeEventListener("touchstart", handleClickOutside);
     };
   }, [profileDropdownOpen]);
+
+  useEffect(() => {
+    if (!profileDropdownOpen || !isLoggedInResident) return undefined;
+    let active = true;
+    setFindSomeonePrivacyLoading(true);
+    setFindSomeonePrivacyError("");
+    api.getFindSomeonePrivacy()
+      .then((result) => {
+        if (active) setFindSomeoneOptOut(Boolean(result.find_someone_opt_out));
+      })
+      .catch((error) => {
+        if (active) setFindSomeonePrivacyError(error.message || "Could not load this setting.");
+      })
+      .finally(() => {
+        if (active) setFindSomeonePrivacyLoading(false);
+      });
+    return () => { active = false; };
+  }, [profileDropdownOpen, isLoggedInResident]);
+
+  async function handleFindSomeonePrivacyChange(event) {
+    const nextValue = event.target.checked;
+    const previousValue = findSomeoneOptOut;
+    setFindSomeoneOptOut(nextValue);
+    setFindSomeonePrivacySaving(true);
+    setFindSomeonePrivacyError("");
+    try {
+      const result = await api.updateFindSomeonePrivacy(nextValue);
+      setFindSomeoneOptOut(Boolean(result.find_someone_opt_out));
+    } catch (error) {
+      setFindSomeoneOptOut(previousValue);
+      setFindSomeonePrivacyError(error.message || "Could not update this setting.");
+    } finally {
+      setFindSomeonePrivacySaving(false);
+    }
+  }
 
   const [locationPermission, setLocationPermission] = useState("unknown");
 
@@ -1563,9 +1621,11 @@ const ResidentHome = () => {
   const [roomCardExpanded, setRoomCardExpanded] = useState(false);
   const [myCenterOpen, setMyCenterOpen] = useState(false);
   const [lookupName, setLookupName] = useState("");
+  const [lookupBarangayId, setLookupBarangayId] = useState("");
+  const [lookupBirthdate, setLookupBirthdate] = useState("");
+  const [lookupBarangays, setLookupBarangays] = useState([]);
   const [lookupLoading, setLookupLoading] = useState(false);
   const [lookupError, setLookupError] = useState("");
-  const [lookupMatches, setLookupMatches] = useState([]);
 
   // "Find someone" state
   const [findSomeoneOpen, setFindSomeoneOpen] = useState(false);
@@ -1577,27 +1637,11 @@ const ResidentHome = () => {
   const [foundPersonLocation, setFoundPersonLocation] = useState(null);
   const [findSomeoneMapNotice, setFindSomeoneMapNotice] = useState("");
 
-  // Autosuggest for "Find someone"
-  const [findSomeoneAutosuggestList, setFindSomeoneAutosuggestList] = useState([]);
-  const [findSomeoneAutosuggestOpen, setFindSomeoneAutosuggestOpen] = useState(false);
-  const [findSomeoneAutosuggestLoading, setFindSomeoneAutosuggestLoading] = useState(false);
-  const [findSomeoneAutosuggestIndex, setFindSomeoneAutosuggestIndex] = useState(-1);
-  const findSomeoneAbortRef = useRef(null);
-  const findSomeoneInputWrapRef = useRef(null);
-  const selectingFindSomeoneRef = useRef(false);
-
   // Building details modal (independent of center card)
   const [buildingModalOpen, setBuildingModalOpen] = useState(false);
   const [selectedBuildingId, setSelectedBuildingId] = useState(null);
   const [selectedBuildingData, setSelectedBuildingData] = useState(null);
   const [privateBuildingView, setPrivateBuildingView] = useState(false);
-
-  // Autosuggest for "My evacuation center" lookup
-  const [autosuggestList, setAutosuggestList] = useState([]);
-  const [autosuggestOpen, setAutosuggestOpen] = useState(false);
-  const [autosuggestLoading, setAutosuggestLoading] = useState(false);
-  const [autosuggestIndex, setAutosuggestIndex] = useState(-1);
-  const autosuggestAbortRef = useRef(null);
 
   // --------------------------------------------------
   // Search (evacuation centers + barangays)
@@ -2168,130 +2212,60 @@ const ResidentHome = () => {
   }, [mapLoaded, hazardReports]);
 
   // --------------------------------------------------
-  // Auto-detect resident evacuation assignment when logged in
-  // --------------------------------------------------
-
+  // Remove lookup data saved by the earlier name-only flow.
   useEffect(() => {
-    if (!user) return;
-
-    const queryParam = user.resident_id
-      ? { resident_id: user.resident_id }
-      : { name: user.name };
-
-    api
-      .findMyEvacuationCenter(queryParam)
-      .then((result) => {
-        const matches = normalizeMatches(result);
-        const match =
-          matches.find(
-            (item) =>
-              user.resident_id != null &&
-              String(item.resident_id) === String(user.resident_id)
-          ) || (matches.length > 0 ? matches[0] : null);
-
-        if (match?.evacuation_center) {
-          setMyCenter(match);
-        }
-      })
-      .catch(() => { });
-  }, [user]);
-
-  // --------------------------------------------------
-  // Restore the resident saved on this device
-  // (re-checked so a changed assignment is picked up)
-  // --------------------------------------------------
-
-  useEffect(() => {
-    const saved = readSavedResident();
-    if (!saved) return;
-
-    if (saved.evacuation_center && (saved.room || saved.room_number)) {
-      setMyCenter(saved);
-    }
-
-    const queryName = saved.name || saved.household_head_name;
-    if (!queryName) return;
-
-    api
-      .findMyEvacuationCenter(queryName)
-      .then((result) => {
-        const matches = normalizeMatches(result);
-
-        const match =
-          matches.find(
-            (item) =>
-              saved.resident_id != null &&
-              String(item.resident_id) === String(saved.resident_id)
-          ) || (matches.length === 1 ? matches[0] : null);
-
-        if (match?.evacuation_center) {
-          setMyCenter(match);
-        }
-      })
-      .catch(() => { });
+    clearSavedResident();
   }, []);
 
-  // --------------------------------------------------
-  // Check location permission & auto-fetch user location
-  // --------------------------------------------------
+  // Load the signed-in resident's own assigned center and room.
+  useEffect(() => {
+    if (!isLoggedInResident) {
+      setMyCenter(null);
+      return undefined;
+    }
+    let active = true;
+    api.getMyEvacuationCenter()
+      .then((result) => {
+        if (!active) return;
+        if (!result.center_name) {
+          setMyCenter(null);
+          return;
+        }
+        setMyCenter({
+          evacuation_center: { name: result.center_name },
+          room: result.room || null,
+          resident_id: user?.resident_id,
+          is_checked_in: result.is_checked_in,
+        });
+      })
+      .catch(() => {
+        if (active) setMyCenter(null);
+      });
+    return () => { active = false; };
+  }, [user, isLoggedInResident]);
 
   useEffect(() => {
-    function fetchInitialUserLocation() {
-      if (!navigator.geolocation) return;
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          const loc = {
-            lat: pos.coords.latitude,
-            lng: pos.coords.longitude,
-            accuracy: pos.coords.accuracy,
-          };
-          setMyLocation(loc);
-          setLocationPermission("granted");
-          accuracyCircleStateRef.current = loc;
-        },
-        () => { },
-        { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
-      );
-    }
+    const centerName = myCenter?.evacuation_center?.name;
+    if (!centerName || myCenter.evacuation_center.id != null) return;
+    const feature = evacCenters?.features?.find((center) => {
+      const properties = center.properties || center;
+      return String(properties.name || "").trim().toLowerCase() ===
+        String(centerName).trim().toLowerCase();
+    });
+    const id = feature?.properties?.id ?? feature?.id;
+    if (id == null) return;
+    setMyCenter((previous) => previous ? {
+      ...previous,
+      evacuation_center: { ...previous.evacuation_center, id },
+    } : previous);
+  }, [myCenter, evacCenters]);
 
-    if (!navigator.permissions) {
-      fetchInitialUserLocation();
-      return;
-    }
-
-    navigator.permissions
-      .query({
-        name: "geolocation",
-      })
-      .then((result) => {
-        const updatePermission = () => {
-          const state =
-            result.state === "granted"
-              ? "granted"
-              : result.state === "denied"
-                ? "denied"
-                : "unknown";
-          setLocationPermission(state);
-          if (state === "granted") {
-            fetchInitialUserLocation();
-          }
-        };
-
-        updatePermission();
-
-        result.onchange = updatePermission;
-      })
-      .catch(() => { });
-  }, []);
-
-
-  // --------------------------------------------------
   // Automatic GPS arrival & check-in detection
   // --------------------------------------------------
   const autoCheckInAttemptedRef = useRef(false);
 
   useEffect(() => {
-    if (!myLocation || !myCenter || myCenter.is_checked_in) return;
+    if (!isLoggedInResident || !myLocation || !myCenter || myCenter.is_checked_in) return;
     if (autoCheckInAttemptedRef.current) return;
 
     const targetCenterId = myCenter.evacuation_center?.id;
@@ -2352,10 +2326,10 @@ const ResidentHome = () => {
           autoCheckInAttemptedRef.current = false;
         });
     }
-  }, [myLocation, myCenter, evacCenters]);
+  }, [myLocation, myCenter, evacCenters, isLoggedInResident]);
 
   // --------------------------------------------------
-  // Initialize Mapbox
+  // Initialize the online Mapbox map or the cached offline OpenFreeMap map.
   // --------------------------------------------------
 
   useEffect(() => {
@@ -2363,18 +2337,11 @@ const ResidentHome = () => {
       return;
     }
 
-    if (!mapboxgl.accessToken) {
-      console.error(
-        "Mapbox token is missing. Check VITE_MAPBOX_TOKEN in .env"
-      );
-      return;
-    }
-
     const map = new mapboxgl.Map({
       container: mapContainerRef.current,
 
-      // Street View is the default
-      style: "mapbox://styles/mapbox/streets-v12",
+      style: getBasemapStyleUrl(mapStyle, isOnline, MAPBOX_ACCESS_TOKEN),
+      transformRequest: transformOpenFreeMapRequest,
 
       center: [SOGOD_CENTER[1], SOGOD_CENTER[0]],
 
@@ -2564,6 +2531,41 @@ const ResidentHome = () => {
     };
   }, []);
 
+  useEffect(() => {
+    const updateBasemapForNetwork = () => {
+      const online = navigator.onLine;
+      setIsOnline(online);
+      const map = mapRef.current;
+      if (!map) return;
+
+      setMapLoaded(false);
+      const styleUrl = getBasemapStyleUrl(mapStyle, online, MAPBOX_ACCESS_TOKEN);
+      if (online) {
+        map.setStyle(styleUrl);
+        return;
+      }
+
+      let styleApplied = false;
+      const applyOfflineStyle = () => {
+        if (styleApplied) return;
+        styleApplied = true;
+        map.setStyle(styleUrl);
+      };
+      try {
+        mapboxgl.clearStorage(applyOfflineStyle);
+      } catch {
+        applyOfflineStyle();
+      }
+    };
+
+    window.addEventListener("online", updateBasemapForNetwork);
+    window.addEventListener("offline", updateBasemapForNetwork);
+    return () => {
+      window.removeEventListener("online", updateBasemapForNetwork);
+      window.removeEventListener("offline", updateBasemapForNetwork);
+    };
+  }, [mapStyle]);
+
   // --------------------------------------------------
   // Change map style
   // --------------------------------------------------
@@ -2578,10 +2580,7 @@ const ResidentHome = () => {
     setMapLoaded(false);
     setMapStyle(style);
 
-    const newStyle =
-      style === "satellite"
-        ? "mapbox://styles/mapbox/satellite-streets-v12"
-        : "mapbox://styles/mapbox/streets-v12";
+    const newStyle = getBasemapStyleUrl(style, navigator.onLine, MAPBOX_ACCESS_TOKEN);
 
     map.setStyle(newStyle);
 
@@ -2589,6 +2588,124 @@ const ResidentHome = () => {
       setMapLoaded(true);
       setStyleVersion((v) => v + 1);
     });
+  }
+
+  async function prefetchOpenFreeMapStyleAssets() {
+    const assetUrls = new Set();
+    for (const styleUrl of [OPENFREEMAP_STYLE_URL, OPENFREEMAP_ALTERNATE_STYLE_URL]) {
+      const styleResponse = await fetch(styleUrl, { credentials: "omit", cache: "no-store" });
+      if (!styleResponse.ok) throw new Error("Offline map style assets are temporarily unavailable.");
+      const style = await styleResponse.json();
+      Object.values(style.sources || {}).forEach((source) => {
+        if (source.url) assetUrls.add(source.url);
+      });
+      if (style.sprite) {
+        [".json", "@2x.json", ".png", "@2x.png"].forEach((suffix) => assetUrls.add(`${style.sprite}${suffix}`));
+      }
+      const fontStacks = new Set((style.layers || []).flatMap((layer) => (
+        Array.isArray(layer.layout?.["text-font"]) ? layer.layout["text-font"] : []
+      )));
+      if (style.glyphs) {
+        fontStacks.forEach((fontStack) => {
+          ["0-255", "8192-8447"].forEach((range) => {
+            assetUrls.add(style.glyphs
+              .replace("{fontstack}", encodeURIComponent(fontStack))
+              .replace("{range}", range));
+          });
+        });
+      }
+    }
+
+    const urls = [...assetUrls].filter((value) => {
+      try {
+        return new URL(value).hostname === "tiles.openfreemap.org";
+      } catch {
+        return false;
+      }
+    });
+    let nextAsset = 0;
+    let assetError = null;
+    const cacheAssetWorker = async () => {
+      while (nextAsset < urls.length && !assetError) {
+        const url = urls[nextAsset];
+        nextAsset += 1;
+        try {
+          const response = await fetch(url, { credentials: "omit", cache: "no-store" });
+          if (!response.ok) throw new Error("Offline map style assets are temporarily unavailable.");
+        } catch (error) {
+          assetError = error;
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(4, urls.length) }, cacheAssetWorker));
+    if (assetError) throw assetError;
+  }
+
+  async function handleSaveSogodOfflineMap() {
+    const tiles = getSogodOfflineTileCoordinates();
+    let completed = 0;
+    setOfflineMapDownload({ status: "downloading", completed, total: tiles.length, error: "" });
+    try {
+      await prefetchOpenFreeMapStyleAssets();
+      const tileCache = await caches.open("evacway-public-map-tiles-v1");
+      let downloadedBytes = 0;
+      let nextTile = 0;
+      let downloadError = null;
+      const downloadWorker = async () => {
+        while (nextTile < tiles.length && !downloadError) {
+          const tile = tiles[nextTile];
+          nextTile += 1;
+          const url = buildOfflineTileUrl(tile);
+          try {
+            if (await tileCache.match(url)) {
+              completed += 1;
+              setOfflineMapDownload({ status: "downloading", completed, total: tiles.length, error: "" });
+              continue;
+            }
+
+            let response;
+            for (let attempt = 0; attempt < 3; attempt += 1) {
+              try {
+                response = await fetch(url, { credentials: "omit", cache: "no-store" });
+                if (response.ok || response.status < 500) break;
+              } catch (error) {
+                if (attempt === 2) throw error;
+              }
+              if (attempt < 2) await new Promise((resolve) => window.setTimeout(resolve, 250 * (attempt + 1)));
+            }
+            if (!response?.ok) throw new Error("Map tiles are temporarily unavailable.");
+            const buffer = await response.clone().arrayBuffer();
+            downloadedBytes += buffer.byteLength;
+            if (downloadedBytes > OFFLINE_MAP_MAX_BYTES) {
+              throw new Error("The map download reached the 50 MB offline limit.");
+            }
+
+            if (!navigator.serviceWorker.controller) {
+              const headers = new Headers(response.headers);
+              headers.set("X-EvacWay-Tile-Bytes", buffer.byteLength);
+              headers.set("X-EvacWay-Saved-At", new Date().toISOString());
+              await tileCache.put(url, new Response(buffer, { status: 200, headers }));
+            }
+            completed += 1;
+            setOfflineMapDownload({ status: "downloading", completed, total: tiles.length, error: "" });
+          } catch (error) {
+            downloadError = error;
+          }
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(2, tiles.length) }, downloadWorker));
+      if (downloadError) throw downloadError;
+      const savedAt = new Date().toISOString();
+      localStorage.setItem("evacway_sogod_offline_map_saved_at", savedAt);
+      setOfflineMapDownload({ status: "saved", completed: tiles.length, total: tiles.length, error: "" });
+    } catch (error) {
+      setOfflineMapDownload({
+        status: "error",
+        completed,
+        total: tiles.length,
+        error: error.message || "Could not save the Sogod map. Try again when connected.",
+      });
+    }
   }
 
   // --------------------------------------------------
@@ -2980,14 +3097,14 @@ const ResidentHome = () => {
           map.setPaintProperty(
             casingLayerId,
             "line-color",
-            mapStyle === "satellite" ? "rgba(0, 0, 0, 0.65)" : "rgba(255, 255, 255, 0.85)"
+            mapStyle === "bright" ? "rgba(0, 0, 0, 0.65)" : "rgba(255, 255, 255, 0.85)"
           );
         }
         if (map.getLayer(layerId)) {
           map.setPaintProperty(
             layerId,
             "line-color",
-            mapStyle === "satellite" ? "#38bdf8" : "#1e3a8a"
+            mapStyle === "bright" ? "#38bdf8" : "#1e3a8a"
           );
         }
       } else {
@@ -3003,7 +3120,7 @@ const ResidentHome = () => {
           type: "line",
           source: sourceId,
           paint: {
-            "line-color": mapStyle === "satellite" ? "rgba(0, 0, 0, 0.65)" : "rgba(255, 255, 255, 0.85)",
+            "line-color": mapStyle === "bright" ? "rgba(0, 0, 0, 0.65)" : "rgba(255, 255, 255, 0.85)",
             "line-width": 4.5,
           },
         });
@@ -3019,7 +3136,7 @@ const ResidentHome = () => {
             "line-join": "round",
           },
           paint: {
-            "line-color": mapStyle === "satellite" ? "#38bdf8" : "#1e3a8a",
+            "line-color": mapStyle === "bright" ? "#38bdf8" : "#1e3a8a",
             "line-width": 2.5,
             "line-dasharray": [4, 3],
           },
@@ -5129,247 +5246,84 @@ const ResidentHome = () => {
   }
 
   // --------------------------------------------------
-  // "My evacuation center" form
+  // "My evacuation center" verification form
   // --------------------------------------------------
 
-  function openMyCenter() {
+  function centerView(centerName, room = null, details = {}) {
+    const feature = evacCenters?.features?.find((center) => {
+      const properties = center.properties || center;
+      return String(properties.name || "").trim().toLowerCase() ===
+        String(centerName || "").trim().toLowerCase();
+    });
+    const properties = feature?.properties || feature || {};
+    return {
+      evacuation_center: {
+        ...(properties.id != null ? { id: properties.id } : {}),
+        name: centerName,
+      },
+      room,
+      ...details,
+    };
+  }
+
+  async function openMyCenter() {
     setLookupError("");
-    setLookupMatches([]);
     setMyCenterOpen(true);
-
-    if (user && !myCenter) {
-      const queryParam = user.resident_id
-        ? { resident_id: user.resident_id }
-        : { name: user.name || (user.first_name ? `${user.first_name} ${user.last_name || ""}`.trim() : "") };
-      if (queryParam.resident_id || queryParam.name) {
-        api
-          .findMyEvacuationCenter(queryParam)
-          .then((result) => {
-            const matches = normalizeMatches(result);
-            const match =
-              matches.find(
-                (item) =>
-                  user.resident_id != null &&
-                  String(item.resident_id) === String(user.resident_id)
-              ) || (matches.length > 0 ? matches[0] : null);
-
-            if (match?.evacuation_center) {
-              setMyCenter(match);
-            }
-          })
-          .catch(() => { });
+    api.getPublicBarangays()
+      .then((barangays) => setLookupBarangays(Array.isArray(barangays) ? barangays : []))
+      .catch(() => setLookupBarangays([]));
+    if (user?.role === "resident") {
+      try {
+        const result = await api.getMyEvacuationCenter();
+        if (result.center_name) {
+          setMyCenter(centerView(result.center_name, result.room || null, {
+            resident_id: user?.resident_id,
+            is_checked_in: result.is_checked_in,
+          }));
+        } else {
+          setMyCenter(null);
+          setLookupError("No match found.");
+        }
+      } catch (error) {
+        setMyCenter(null);
+        setLookupError(error.status === 429 ? error.message : "No match found.");
       }
+      return;
     }
+
+    setMyCenter(null);
   }
 
   function closeMyCenter() {
     setMyCenterOpen(false);
     setLookupError("");
-    setLookupMatches([]);
-  }
-
-  function chooseMatch(match) {
-    if (!match?.evacuation_center) {
-      setLookupError(
-        "We found your family, but no evacuation center has been assigned yet. Please contact your barangay."
-      );
-
-      setLookupMatches([]);
-
-      return;
-    }
-
-    setMyCenter(match);
-    if (match.room || match.evacuation_center) {
-      setRoomCardExpanded(true);
-    }
-
-    saveResident({
-      name: match.household_head_name || lookupName.trim(),
-      resident_id: match.resident_id ?? null,
-    });
-
-    setLookupMatches([]);
-    setLookupError("");
-    setMyCenterOpen(false);
-
-    setReportConfirmation(
-      `Your evacuation center: ${match.evacuation_center.name}`
-    );
-
-    setTimeout(() => setReportConfirmation(""), 4000);
-
-    // Zoom and route to assigned center
-    if (evacCenters?.features && match.evacuation_center?.id) {
-      const targetCenter = evacCenters.features.find(
-        (c) => String(c.properties?.id ?? c.id) === String(match.evacuation_center.id)
-      );
-      if (targetCenter) {
-        setSelectedCenter(null);
-      }
-    }
-  }
-
-  // --------------------------------------------------
-  // AUTOSUGGEST LOGIC FOR "MY EVACUATION CENTER"
-  // --------------------------------------------------
-
-  useEffect(() => {
-    const trimmed = lookupName.trim();
-    if (trimmed.length < 3) {
-      setAutosuggestList([]);
-      setAutosuggestOpen(false);
-      setAutosuggestLoading(false);
-      return;
-    }
-
-    if (autosuggestAbortRef.current) {
-      autosuggestAbortRef.current.abort();
-    }
-    const controller = new AbortController();
-    autosuggestAbortRef.current = controller;
-
-    setAutosuggestLoading(true);
-    setAutosuggestOpen(true);
-
-    const timer = setTimeout(() => {
-      api
-        .autosuggestResidents(trimmed, controller.signal)
-        .then((res) => {
-          setAutosuggestList(res.suggestions || []);
-          setAutosuggestIndex(-1);
-          setAutosuggestLoading(false);
-        })
-        .catch((err) => {
-          if (err.name !== "AbortError") {
-            setAutosuggestList([]);
-            setAutosuggestLoading(false);
-          }
-        });
-    }, 250);
-
-    return () => {
-      clearTimeout(timer);
-      controller.abort();
-    };
-  }, [lookupName]);
-
-  async function handleSelectSuggestion(selectedName) {
-    setLookupName(selectedName);
-    setAutosuggestOpen(false);
-    setLookupLoading(true);
-    setLookupError("");
-    setLookupMatches([]);
-
-    try {
-      const result = await api.findMyEvacuationCenter(selectedName);
-      const matches = normalizeMatches(result);
-
-      if (matches.length === 0) {
-        setLookupError(
-          "We couldn't find an assigned evacuation center for this family. Check with your barangay."
-        );
-      } else if (matches.length === 1) {
-        chooseMatch(matches[0]);
-      } else {
-        setLookupMatches(matches);
-      }
-    } catch (err) {
-      setLookupError(err.message || "Something went wrong. Please try again.");
-    } finally {
-      setLookupLoading(false);
-    }
-  }
-
-  function handleAutosuggestKeyDown(e) {
-    if (!autosuggestOpen) {
-      if (e.key === "ArrowDown" && autosuggestList.length > 0) {
-        setAutosuggestOpen(true);
-      }
-      return;
-    }
-
-    if (e.key === "ArrowDown") {
-      e.preventDefault();
-      setAutosuggestIndex((prev) =>
-        prev < autosuggestList.length - 1 ? prev + 1 : 0
-      );
-    } else if (e.key === "ArrowUp") {
-      e.preventDefault();
-      setAutosuggestIndex((prev) =>
-        prev > 0 ? prev - 1 : autosuggestList.length - 1
-      );
-    } else if (e.key === "Enter") {
-      if (autosuggestIndex >= 0 && autosuggestList[autosuggestIndex]) {
-        e.preventDefault();
-        handleSelectSuggestion(autosuggestList[autosuggestIndex].name);
-      }
-    } else if (e.key === "Escape") {
-      e.preventDefault();
-      setAutosuggestOpen(false);
-    }
-  }
-
-  function renderHighlightedText(text, query) {
-    if (!text || !query) return text;
-    const cleanQ = query.trim();
-    if (!cleanQ) return text;
-    const regex = new RegExp(
-      `(${cleanQ.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`,
-      "gi"
-    );
-    const parts = text.split(regex);
-    return parts.map((part, i) =>
-      regex.test(part) ? <strong key={i}>{part}</strong> : part
-    );
+    setLookupName("");
+    setLookupBarangayId("");
+    setLookupBirthdate("");
   }
 
   async function handleLookupSubmit(event) {
     event.preventDefault();
-
-    const name = lookupName.trim();
-
-    if (name.length < 3) {
-      setLookupError("Enter your full name (at least 3 letters).");
-      return;
-    }
-
     setLookupLoading(true);
     setLookupError("");
-    setLookupMatches([]);
+    setMyCenter(null);
+    clearSavedResident();
 
     try {
-      const result = await api.findMyEvacuationCenter(name);
-
-      const matches = normalizeMatches(result);
-
-      if (matches.length === 0) {
-        setLookupError(
-          "We couldn't find a family with that name. Check the spelling, or ask your barangay."
-        );
-      } else if (matches.length === 1) {
-        chooseMatch(matches[0]);
+      const result = await api.lookupMyEvacuationCenter({
+        full_name: lookupName.trim(),
+        barangay_id: lookupBarangayId,
+        birthdate: lookupBirthdate,
+      });
+      if (!result.center_name) {
+        setLookupError("No match found.");
       } else {
-        // Several households share this name: let the resident pick
-        setLookupMatches(matches);
+        setMyCenter(centerView(result.center_name));
       }
-    } catch (err) {
-      setLookupError(err.message || "Something went wrong. Please try again.");
+    } catch (error) {
+      setLookupError(error.status === 429 ? error.message : "No match found.");
     } finally {
       setLookupLoading(false);
-    }
-  }
-
-  function handleForgetMe() {
-    saveResident(null);
-
-    setMyCenter(null);
-    setLookupName("");
-    setLookupMatches([]);
-    setLookupError("");
-
-    if (routeIsMine) {
-      handleClearRoute();
     }
   }
 
@@ -5382,220 +5336,21 @@ const ResidentHome = () => {
   // "Find someone" handlers
   // --------------------------------------------------
 
+  // Search for a resident's evacuation center. The server returns center names only.
   const closeFindSomeone = () => {
     setFindSomeoneOpen(false);
+    setFindSomeoneName("");
     setFindSomeoneHint("");
-    setFindSomeoneAutosuggestOpen(false);
-    setFindSomeoneAutosuggestList([]);
-    setFindSomeoneAutosuggestIndex(-1);
-  };
-
-  // --------------------------------------------------
-  // AUTOSUGGEST LOGIC FOR "FIND SOMEONE"
-  // --------------------------------------------------
-
-  function normalizeForMatch(str) {
-    return (str || "")
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "")
-      .toLowerCase()
-      .trim();
-  }
-
-  function matchAndRankResident(query, name) {
-    const q = normalizeForMatch(query);
-    const n = normalizeForMatch(name);
-    if (!q || !n) return { matches: false, score: 999 };
-
-    // Rank names that start with the typed text first
-    if (n.startsWith(q)) {
-      return { matches: true, score: 0 };
-    }
-
-    const words = n.split(/\s+/).filter(Boolean);
-
-    // Start of first name
-    if (words.length > 0 && words[0].startsWith(q)) {
-      return { matches: true, score: 1 };
-    }
-
-    // Start of last name
-    if (words.length > 1 && words[words.length - 1].startsWith(q)) {
-      return { matches: true, score: 2 };
-    }
-
-    // Start of any word in full name
-    const idx = words.findIndex((w) => w.startsWith(q));
-    if (idx !== -1) {
-      return { matches: true, score: 3 + idx };
-    }
-
-    return { matches: false, score: 999 };
-  }
-
-  // Autosuggest lookup debounce for "Find someone" (triggers on 1 character, 200ms debounce)
-  useEffect(() => {
-    if (!findSomeoneOpen) {
-      setFindSomeoneAutosuggestList([]);
-      setFindSomeoneAutosuggestOpen(false);
-      setFindSomeoneAutosuggestLoading(false);
-      return;
-    }
-
-    if (selectingFindSomeoneRef.current) {
-      selectingFindSomeoneRef.current = false;
-      return;
-    }
-
-    const trimmed = findSomeoneName.trim();
-    if (trimmed.length < 1) {
-      setFindSomeoneAutosuggestList([]);
-      setFindSomeoneAutosuggestOpen(false);
-      setFindSomeoneAutosuggestLoading(false);
-      return;
-    }
-
-    if (findSomeoneAbortRef.current) {
-      findSomeoneAbortRef.current.abort();
-    }
-    const controller = new AbortController();
-    findSomeoneAbortRef.current = controller;
-
-    setFindSomeoneAutosuggestLoading(true);
-    setFindSomeoneAutosuggestOpen(true);
-
-    const timer = setTimeout(() => {
-      api
-        .autosuggestResidents(trimmed, controller.signal)
-        .then((res) => {
-          const suggestions = res.suggestions || [];
-          const ranked = suggestions
-            .map((item) => ({ item, ...matchAndRankResident(trimmed, item.name) }))
-            .filter((entry) => entry.matches)
-            .sort((a, b) => a.score - b.score || a.item.name.localeCompare(b.item.name))
-            .map((entry) => entry.item);
-
-          setFindSomeoneAutosuggestList(
-            (ranked.length > 0 ? ranked : suggestions).slice(0, 5)
-          );
-          setFindSomeoneAutosuggestIndex(-1);
-          setFindSomeoneAutosuggestLoading(false);
-        })
-        .catch((err) => {
-          if (err.name !== "AbortError") {
-            setFindSomeoneAutosuggestList([]);
-            setFindSomeoneAutosuggestLoading(false);
-          }
-        });
-    }, 200);
-
-    return () => {
-      clearTimeout(timer);
-      controller.abort();
-    };
-  }, [findSomeoneName, findSomeoneOpen]);
-
-  // Dismiss Find Someone autosuggest when clicking outside
-  useEffect(() => {
-    if (!findSomeoneAutosuggestOpen) return;
-    function handleClickOutside(e) {
-      if (
-        findSomeoneInputWrapRef.current &&
-        !findSomeoneInputWrapRef.current.contains(e.target)
-      ) {
-        setFindSomeoneAutosuggestOpen(false);
-        setFindSomeoneAutosuggestIndex(-1);
-      }
-    }
-    document.addEventListener("mousedown", handleClickOutside);
-    document.addEventListener("touchstart", handleClickOutside);
-    return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
-      document.removeEventListener("touchstart", handleClickOutside);
-    };
-  }, [findSomeoneAutosuggestOpen]);
-
-  const handleSelectFindSomeoneSuggestion = async (item) => {
-    clearFoundPersonLocation();
-    selectingFindSomeoneRef.current = true;
-    const name = item.name;
-    setFindSomeoneName(name);
-    setFindSomeoneAutosuggestOpen(false);
-    setFindSomeoneAutosuggestList([]);
-    setFindSomeoneAutosuggestIndex(-1);
-    setFindSomeoneHint("");
-    setFindSomeoneLoading(true);
-    setFindSomeoneSearched(true);
     setFindSomeoneResults([]);
-
-    try {
-      const lookupParam =
-        item?.resident_id != null
-          ? { resident_id: item.resident_id }
-          : { name };
-      const result = await api.findMyEvacuationCenter(lookupParam);
-      const matches = normalizeMatches(result);
-      let bestMatches = matches;
-      if (item.barangay) {
-        const filtered = matches.filter(
-          (m) =>
-            m.barangay?.toLowerCase() === item.barangay.toLowerCase() ||
-            m.address?.toLowerCase().includes(item.barangay.toLowerCase())
-        );
-        if (filtered.length > 0) bestMatches = filtered;
-      }
-      setFindSomeoneResults(bestMatches.slice(0, 5));
-    } catch {
-      setFindSomeoneResults([]);
-    } finally {
-      setFindSomeoneLoading(false);
-    }
+    setFindSomeoneSearched(false);
   };
 
-  function handleFindSomeoneKeyDown(e) {
-    if (!findSomeoneAutosuggestOpen) {
-      if (e.key === "ArrowDown" && findSomeoneAutosuggestList.length > 0) {
-        setFindSomeoneAutosuggestOpen(true);
-      }
-      return;
-    }
-
-    if (e.key === "ArrowDown") {
-      e.preventDefault();
-      setFindSomeoneAutosuggestIndex((prev) =>
-        prev < findSomeoneAutosuggestList.length - 1 ? prev + 1 : 0
-      );
-    } else if (e.key === "ArrowUp") {
-      e.preventDefault();
-      setFindSomeoneAutosuggestIndex((prev) =>
-        prev > 0 ? prev - 1 : findSomeoneAutosuggestList.length - 1
-      );
-    } else if (e.key === "Enter") {
-      if (
-        findSomeoneAutosuggestIndex >= 0 &&
-        findSomeoneAutosuggestList[findSomeoneAutosuggestIndex]
-      ) {
-        e.preventDefault();
-        handleSelectFindSomeoneSuggestion(
-          findSomeoneAutosuggestList[findSomeoneAutosuggestIndex]
-        );
-      }
-    } else if (e.key === "Escape") {
-      e.preventDefault();
-      setFindSomeoneAutosuggestOpen(false);
-      setFindSomeoneAutosuggestIndex(-1);
-    }
-  }
-
-  const handleFindSomeoneSubmit = async (e) => {
-    e.preventDefault();
+  const handleFindSomeoneSubmit = async (event) => {
+    event.preventDefault();
     clearFoundPersonLocation();
-    setFindSomeoneAutosuggestOpen(false);
     const query = findSomeoneName.trim();
-    const words = query.split(/\s+/).filter(Boolean);
-
-    if (words.length < 2) {
-      setFindSomeoneHint("Please enter at least two words (first and last name).");
+    if (query.split(/\s+/).filter(Boolean).length < 2) {
+      setFindSomeoneHint("Enter the person's full name.");
       return;
     }
 
@@ -5603,80 +5358,48 @@ const ResidentHome = () => {
     setFindSomeoneLoading(true);
     setFindSomeoneSearched(true);
     setFindSomeoneResults([]);
-
     try {
-      const result = await api.findMyEvacuationCenter({ name: query });
-      const matches = normalizeMatches(result);
-      setFindSomeoneResults(matches.slice(0, 5));
-    } catch {
+      const result = await api.findSomeoneCenter(query);
+      setFindSomeoneResults((result.matches || []).slice(0, 5));
+    } catch (error) {
       setFindSomeoneResults([]);
+      setFindSomeoneHint(error.status === 429 ? error.message : "No match found.");
     } finally {
       setFindSomeoneLoading(false);
     }
   };
 
-  const handleViewPersonCenterOnMap = (person) => {
-    clearFoundPersonLocation();
-    setFindSomeoneMapNotice("");
+  const handleViewPersonCenterOnMap = (match) => {
+    const centerName = match?.center_name;
+    if (!centerName) return;
     setFindSomeoneOpen(false);
-    const centerInfo = person?.evacuation_center;
-    if (!centerInfo) return;
-
-    let feature = null;
-    if (evacCenters?.features) {
-      feature = evacCenters.features.find((c) => {
-        const cId = c.properties?.id ?? c.id;
-        if (centerInfo.id && String(cId) === String(centerInfo.id)) return true;
-        const cName = c.properties?.name ?? c.name;
-        if (
-          centerInfo.name &&
-          cName &&
-          cName.toLowerCase() === centerInfo.name.toLowerCase()
-        ) {
-          return true;
-        }
-        return false;
-      });
-    }
-
-    const map = mapRef.current;
-    const centerFeature = feature || { type: "Feature", properties: centerInfo, geometry: null };
-    const centerId = centerFeature.properties?.id ?? centerFeature.id;
-    const building = centerInfo.center_type === "single_venue" ? null :
-      resolveRoomBuilding(person.room, buildingsGeoJSON, centerId);
-    // Ignore absent coordinates rather than interpreting null latitude/longitude as 0.
-    const centerProps = centerFeature.properties;
-    const mappedCenter = (centerFeature.geometry?.coordinates ||
-      (centerProps.longitude != null && centerProps.latitude != null)) ? centerFeature : null;
-    const coords = (building?.feature?.geometry && getCenterCoordinates(building.feature)) ||
-      getCenterCoordinates(mappedCenter, buildingsGeoJSON);
-    if (!coords) {
-      setFindSomeoneMapNotice("This center isn’t on the map yet.");
+    setFindSomeoneMapNotice("");
+    const feature = evacCenters?.features?.find((center) => {
+      const properties = center.properties || center;
+      return String(properties.name || "").trim().toLowerCase() ===
+        String(centerName).trim().toLowerCase();
+    });
+    if (!feature) {
+      setFindSomeoneMapNotice("This center is not on the map yet.");
       return;
     }
-    setSelectedCenter(centerFeature);
-    const room = person.room ? { id: person.room.id, room_number: person.room.room_number, floor: person.room.floor, building_name: person.room.building_name || building?.name } : null;
-    setFoundPersonLocation({ centerId, buildingId: building?.id ?? null, room });
-    if (building) {
-      setPrivateBuildingView(true);
-      setSelectedBuildingId(building.id);
-      setSelectedBuildingData(building.feature?.properties || { id: building.id, name: building.name });
-      setBuildingModalOpen(true);
-      setUserBuilding(map, building.id, "found");
-      pulseBuilding(map, building.id, "found");
+    const coords = getCenterCoordinates(feature, buildingsGeoJSON);
+    if (!coords) {
+      setFindSomeoneMapNotice("This center is not on the map yet.");
+      return;
     }
-    const target = getCenterCoordinates(building?.feature) || coords;
+    setSelectedCenter(feature);
+    const map = mapRef.current;
     if (map) {
       map.flyTo({
-        center: [target.longitude, target.latitude],
-        zoom: building?.feature ? 18 : 16.5,
+        center: [coords.longitude, coords.latitude],
+        zoom: 16.5,
         duration: 1200,
         essential: false,
       });
     }
   };
 
-  // --------------------------------------------------
   // Search (evacuation centers)
   // --------------------------------------------------
 
@@ -5889,14 +5612,7 @@ const ResidentHome = () => {
         );
 
   const selectedCenterBuildings = useMemo(() => {
-    if (!selectedCenterId || !buildingsGeoJSON?.features) return [];
-    return buildingsGeoJSON.features
-      .filter(
-        (f) =>
-          String(f.properties?.evacuation_center_id) === String(selectedCenterId)
-      )
-      .map((f) => f.properties)
-      .sort((a, b) => (a.id || 0) - (b.id || 0));
+    return getMappedBuildingsForCenter(buildingsGeoJSON, selectedCenterId);
   }, [selectedCenterId, buildingsGeoJSON]);
 
   const handleShowMyRoomOnMap = () => {
@@ -6152,12 +5868,17 @@ const ResidentHome = () => {
       className={`resident-home ${isRoomCardVisible ? "has-room-card" : ""} ${isRoomCardExpanded ? "has-room-card-expanded" : ""
         } ${isHazardPopupOpen ? "has-hazard-popup" : ""} ${pickingLocation && pickingPurposeRef.current === "hazard" ? "picking-hazard-mode" : ""}`}
     >
-      {/* Mapbox map */}
+      {/* Public map */}
       <div
         ref={mapContainerRef}
         className={`map-container ${pickingLocation && pickingPurposeRef.current === "hazard" ? "is-picking-hazard" : ""
           }`}
       />
+      {formatPublicCenterUpdateTime(evacCenters?.last_updated) && (
+        <div className="public-centers-updated" aria-label={`Evacuation center list last updated ${formatPublicCenterUpdateTime(evacCenters.last_updated)}`}>
+          Center data updated {formatPublicCenterUpdateTime(evacCenters.last_updated)}
+        </div>
+      )}
 
       {/* Header (slim 48px bar on phones) */}
       <header className="top-bar">
@@ -6306,6 +6027,25 @@ const ResidentHome = () => {
                     </div>
                   </div>
                   <div className="profile-dropdown-divider" aria-hidden="true" />
+                  {isLoggedInResident && (
+                    <div className="profile-dropdown-privacy">
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={findSomeoneOptOut}
+                          disabled={findSomeonePrivacyLoading || findSomeonePrivacySaving}
+                          onChange={handleFindSomeonePrivacyChange}
+                        />
+                        <span>Hide my family from Find someone</span>
+                      </label>
+                      {findSomeonePrivacyError && (
+                        <span className="profile-dropdown-privacy-error" role="status">
+                          {findSomeonePrivacyError}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                  {isLoggedInResident && <div className="profile-dropdown-divider" aria-hidden="true" />}
                   <button
                     type="button"
                     className="profile-dropdown-logout-btn"
@@ -6580,23 +6320,65 @@ const ResidentHome = () => {
         <button
           type="button"
           onClick={() =>
-            handleMapStyleChange(mapStyle === "street" ? "satellite" : "street")
+            handleMapStyleChange(mapStyle === "street" ? "bright" : "street")
           }
-          className={`control-stack-btn ${mapStyle === "satellite" ? "active" : ""}`}
+          className={`control-stack-btn ${mapStyle === "bright" ? "active" : ""}`}
           title={
             mapStyle === "street"
-              ? "Switch to Satellite View"
-              : "Switch to Street View"
+              ? (isOnline ? "Switch to Satellite Map" : "Switch to Bright Map")
+              : "Switch to Street Map"
           }
           aria-label={
             mapStyle === "street"
-              ? "Switch to Satellite View"
-              : "Switch to Street View"
+              ? (isOnline ? "Switch to Satellite Map" : "Switch to Bright Map")
+              : "Switch to Street Map"
           }
-          aria-pressed={mapStyle === "satellite"}
+          aria-pressed={mapStyle === "bright"}
         >
           <FontAwesomeIcon icon={faSatelliteDish} />
         </button>
+
+        <button
+          type="button"
+          onClick={handleSaveSogodOfflineMap}
+          disabled={offlineMapDownload.status === "downloading"}
+          className={`control-stack-btn offline-map-download-btn ${offlineMapDownload.status === "saved" ? "active" : ""}`}
+          title={offlineMapDownload.status === "downloading"
+            ? `Saving Sogod map: ${offlineMapDownload.completed} of ${offlineMapDownload.total} tiles`
+            : "Save the Sogod map for offline use"}
+          aria-label={offlineMapDownload.status === "downloading"
+            ? `Saving Sogod map, ${offlineMapDownload.completed} of ${offlineMapDownload.total} tiles`
+            : "Save the Sogod map for offline use"}
+        >
+          {offlineMapDownload.status === "downloading" ? (
+            <span className="offline-map-download-icon" aria-hidden="true">
+              <FontAwesomeIcon icon={faDownload} className="offline-map-download-icon-base" />
+              <span
+                className="offline-map-download-icon-fill"
+                style={{ clipPath: `inset(${100 - offlineMapProgress}% 0 0 0)` }}
+              >
+                <FontAwesomeIcon icon={faDownload} />
+              </span>
+            </span>
+          ) : (
+            <FontAwesomeIcon icon={offlineMapDownload.status === "saved" ? faCircleCheck : faDownload} />
+          )}
+        </button>
+        {(offlineMapDownload.status === "downloading"
+          || offlineMapDownload.status === "saved"
+          || offlineMapDownload.status === "error") && (
+          <div
+            className={`offline-map-download-status ${offlineMapDownload.status === "saved" ? "is-saved" : ""}`}
+            role="status"
+            aria-live="polite"
+          >
+            {offlineMapDownload.status === "downloading"
+              ? `Saving Sogod map: ${offlineMapDownload.completed} of ${offlineMapDownload.total} tiles`
+              : offlineMapDownload.status === "saved"
+                ? "Sogod map saved for offline use."
+                : offlineMapDownload.error}
+          </div>
+        )}
 
         <button
           type="button"
@@ -7154,6 +6936,7 @@ const ResidentHome = () => {
           </span>
         </button>
 
+        {isLoggedInResident && (
         <button
           type="button"
           onClick={() => {
@@ -7183,6 +6966,7 @@ const ResidentHome = () => {
             Find someone
           </span>
         </button>
+        )}
 
         <button
           type="button"
@@ -7536,7 +7320,7 @@ const ResidentHome = () => {
         <div className="toast-success">{reportConfirmation}</div>
       )}
 
-      {/* My evacuation center form */}
+      {/* My evacuation center verification */}
       {myCenterOpen && (
         <div className="mc-overlay" onClick={closeMyCenter}>
           <div
@@ -7544,258 +7328,126 @@ const ResidentHome = () => {
             role="dialog"
             aria-modal="true"
             aria-labelledby="mc-title"
-            onClick={(e) => e.stopPropagation()}
+            onClick={(event) => event.stopPropagation()}
           >
             <div className="mc-header">
               <h3 id="mc-title">My evacuation center</h3>
-
-              <button
-                type="button"
-                className="mc-close"
-                onClick={closeMyCenter}
-                aria-label="Close"
-              >
+              <button type="button" className="mc-close" onClick={closeMyCenter} aria-label="Close">
                 <FontAwesomeIcon icon={faXmark} />
               </button>
             </div>
 
-            {Boolean(user) || myCenter ? (
+            {myCenter ? (
               <div className="mc-body">
                 <div className="mc-result">
-                  <div className="mc-result-name">
-                    <FontAwesomeIcon icon={faCircleCheck} />
-
-                    {myCenter?.household_head_name ||
-                      (user?.first_name
-                        ? `${user.first_name} ${user.last_name || ""}`.trim()
-                        : user?.name || "Resident")}
-                  </div>
-
-                  {(myCenter?.address || myCenter?.barangay || user?.barangay || user?.address) && (
-                    <div className="mc-result-sub">
-                      {myCenter?.address ||
-                        myCenter?.barangay ||
-                        [user?.address, user?.barangay ? `Barangay ${user.barangay}` : ""]
-                          .filter(Boolean)
-                          .join(", ")}
-                    </div>
-                  )}
-
                   <div className="mc-result-row">
                     <span>Evacuation center</span>
-
-                    <strong>
-                      {myCenter?.evacuation_center?.name ||
-                        user?.evacuation_center?.name ||
-                        user?.assigned_center_name ||
-                        "Assigned Evacuation Center"}
-                    </strong>
+                    <strong>{myCenter.evacuation_center?.name}</strong>
                   </div>
-
-                  {(myCenter?.room?.building_name ||
-                    user?.building_name ||
-                    user?.room?.building_name) && (
-                      <div className="mc-result-row">
-                        <span>Building</span>
-                        <strong>
-                          {myCenter?.room?.building_name ||
-                            user?.building_name ||
-                            user?.room?.building_name}
-                        </strong>
-                      </div>
-                    )}
-
-                  {(myCenter?.room?.room_number ||
-                    user?.room_number ||
-                    user?.room?.room_number) && (
-                      <div className="mc-result-row">
-                        <span>Assigned room</span>
-                        <strong>
-                          {myCenter?.room?.room_number ||
-                            user?.room_number ||
-                            user?.room?.room_number}
-                        </strong>
-                      </div>
-                    )}
+                  {isLoggedInResident && myCenter.room && (
+                    <>
+                      {myCenter.room.building_name && (
+                        <div className="mc-result-row">
+                          <span>Building</span>
+                          <strong>{myCenter.room.building_name}</strong>
+                        </div>
+                      )}
+                      {myCenter.room.room_number && (
+                        <div className="mc-result-row">
+                          <span>Assigned room</span>
+                          <strong>{myCenter.room.room_number}</strong>
+                        </div>
+                      )}
+                    </>
+                  )}
                 </div>
-
+                {lookupError && <div className="mc-error" role="status">{lookupError}</div>}
                 <div className="mc-actions">
                   <button
                     type="button"
-                    className={`mc-btn mc-btn-primary ${user ? "mc-btn-full" : ""}`}
-                    style={user ? { width: "100%", justifyContent: "center" } : undefined}
+                    className="mc-btn mc-btn-primary"
                     onClick={handleFindMyCenterFromModal}
                     disabled={locationPermission === "denied"}
                   >
                     <FontAwesomeIcon icon={faRoute} />
                     Find My Center
                   </button>
-
-                  {!user && (
+                  {!isLoggedInResident && (
                     <button
                       type="button"
                       className="mc-btn"
-                      onClick={handleForgetMe}
+                      onClick={() => {
+                        setMyCenter(null);
+                        setLookupName("");
+                        setLookupBarangayId("");
+                        setLookupBirthdate("");
+                        setLookupError("");
+                      }}
                     >
-                      Not me
+                      Search again
                     </button>
                   )}
                 </div>
-
-                {locationPermission === "denied" && (
-                  <div className="mc-error">
-                    Location access is blocked. Allow it in your browser's site
-                    settings to get directions.
-                  </div>
-                )}
               </div>
             ) : (
-              <form className="mc-body" onSubmit={handleLookupSubmit}>
-                {!user && (
-                  <div style={{ marginBottom: "14px", padding: "10px 14px", background: "#eff6ff", borderRadius: "10px", border: "1px solid #bfdbfe", fontSize: "13px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "10px" }}>
-                    <span style={{ color: "#1e40af", fontWeight: "500" }}>Have an account? Log in to auto-detect your center and room.</span>
-                    <button type="button" className="ds-btn ds-btn--primary" style={{ height: "32px", fontSize: "12px", padding: "0 12px", flexShrink: 0 }} onClick={() => { closeMyCenter(); openLoginDialog(); }}>
-                      Log In
-                    </button>
-                  </div>
-                )}
+              <form className="mc-body" onSubmit={handleLookupSubmit} noValidate>
                 <p className="mc-hint">
-                  Enter the full name of the head of your family to find the
-                  evacuation center assigned to you.
+                  Enter the family head's full name, barangay, and birthdate.
                 </p>
 
-                <label className="mc-label" htmlFor="mc-name">
-                  Full name
-                </label>
+                <label className="mc-label" htmlFor="mc-name">Family head's full name</label>
+                <input
+                  id="mc-name"
+                  type="text"
+                  className="mc-input"
+                  value={lookupName}
+                  onChange={(event) => {
+                    setLookupName(event.target.value);
+                    setLookupError("");
+                  }}
+                  placeholder="Full name"
+                  autoComplete="name"
+                  required
+                  autoFocus
+                />
 
-                <div className="mc-autosuggest-wrap">
-                  <input
-                    id="mc-name"
-                    type="text"
-                    className="mc-input"
-                    value={lookupName}
-                    onChange={(e) => {
-                      setLookupName(e.target.value);
-                      setLookupError("");
-                    }}
-                    onKeyDown={handleAutosuggestKeyDown}
-                    placeholder="e.g. Juan Dela Cruz"
-                    autoComplete="off"
-                    role="combobox"
-                    aria-autocomplete="list"
-                    aria-expanded={autosuggestOpen}
-                    aria-controls="mc-autosuggest-listbox"
-                    aria-activedescendant={
-                      autosuggestIndex >= 0
-                        ? `mc-suggest-item-${autosuggestIndex}`
-                        : undefined
-                    }
-                    autoFocus
-                  />
+                <label className="mc-label" htmlFor="mc-barangay">Barangay</label>
+                <select
+                  id="mc-barangay"
+                  className="mc-input"
+                  value={lookupBarangayId}
+                  onChange={(event) => {
+                    setLookupBarangayId(event.target.value);
+                    setLookupError("");
+                  }}
+                  required
+                >
+                  <option value="">Select barangay</option>
+                  {lookupBarangays.map((barangay) => (
+                    <option key={barangay.id} value={barangay.id}>{barangay.name}</option>
+                  ))}
+                </select>
 
-                  {/* Accessible screen reader announcement */}
-                  <div className="sr-only" aria-live="polite">
-                    {autosuggestOpen && autosuggestList.length > 0
-                      ? `${autosuggestList.length} suggestions available.`
-                      : ""}
-                  </div>
+                <label className="mc-label" htmlFor="mc-birthdate">Birthdate</label>
+                <input
+                  id="mc-birthdate"
+                  type="date"
+                  className="mc-input"
+                  value={lookupBirthdate}
+                  onChange={(event) => {
+                    setLookupBirthdate(event.target.value);
+                    setLookupError("");
+                  }}
+                  required
+                />
 
-                  {/* Autosuggest Dropdown */}
-                  {autosuggestOpen && (
-                    <div
-                      id="mc-autosuggest-listbox"
-                      className="mc-autosuggest-dropdown"
-                      role="listbox"
-                      aria-label="Name suggestions"
-                    >
-                      {autosuggestLoading ? (
-                        <div className="mc-autosuggest-loading" role="status">
-                          <FontAwesomeIcon
-                            icon={faSpinner}
-                            spin
-                            className="mc-autosuggest-spinner"
-                          />
-                          <span>Searching families...</span>
-                        </div>
-                      ) : autosuggestList.length === 0 ? (
-                        <div className="mc-autosuggest-empty">
-                          <span>No matches found</span>
-                        </div>
-                      ) : (
-                        autosuggestList.map((item, idx) => {
-                          const isSelected = idx === autosuggestIndex;
-                          return (
-                            <button
-                              type="button"
-                              key={`${item.name}-${item.barangay}-${idx}`}
-                              id={`mc-suggest-item-${idx}`}
-                              role="option"
-                              aria-selected={isSelected}
-                              className={`mc-autosuggest-item ${isSelected ? "is-active" : ""
-                                }`}
-                              onClick={() => handleSelectSuggestion(item.name)}
-                              onMouseEnter={() => setAutosuggestIndex(idx)}
-                            >
-                              <span className="mc-autosuggest-name">
-                                {renderHighlightedText(item.name, lookupName)}
-                              </span>
-                              {item.barangay && (
-                                <span className="mc-autosuggest-sub">
-                                  Barangay {item.barangay}
-                                </span>
-                              )}
-                            </button>
-                          );
-                        })
-                      )}
-                    </div>
-                  )}
-                </div>
-
-                {lookupError && <div className="mc-error">{lookupError}</div>}
-
-                {lookupMatches.length > 0 && (
-                  <div className="mc-matches">
-                    <div className="mc-hint">
-                      More than one family matches. Which one is yours?
-                    </div>
-
-                    {lookupMatches.map((match, index) => (
-                      <button
-                        type="button"
-                        key={match.resident_id ?? `${match.address}-${index}`}
-                        className="mc-match"
-                        onClick={() => chooseMatch(match)}
-                      >
-                        <strong>{match.household_head_name}</strong>
-
-                        <span>
-                          {[match.address, match.barangay]
-                            .filter(Boolean)
-                            .join(", ") || "No address on file"}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                )}
-
+                {lookupError && <div className="mc-error" role="status">{lookupError}</div>}
                 <div className="mc-actions">
-                  <button
-                    type="submit"
-                    className="mc-btn mc-btn-primary"
-                    disabled={lookupLoading}
-                  >
-                    <FontAwesomeIcon
-                      icon={faMagnifyingGlass}
-                      spin={lookupLoading}
-                    />
-
+                  <button type="submit" className="mc-btn mc-btn-primary" disabled={lookupLoading}>
+                    <FontAwesomeIcon icon={faMagnifyingGlass} spin={lookupLoading} />
                     {lookupLoading ? "Checking..." : "Find my center"}
                   </button>
-
-                  <button type="button" className="mc-btn" onClick={closeMyCenter}>
-                    Cancel
-                  </button>
+                  <button type="button" className="mc-btn" onClick={closeMyCenter}>Cancel</button>
                 </div>
               </form>
             )}
@@ -7803,14 +7455,12 @@ const ResidentHome = () => {
         </div>
       )}
 
-      {/* "Find someone" Modal */}
-      {findSomeoneOpen && (
+      {/* Find someone: resident access only */}
+      {findSomeoneOpen && isLoggedInResident && (
         <div
           className="mc-overlay"
-          onClick={(e) => {
-            if (e.target === e.currentTarget) {
-              closeFindSomeone();
-            }
+          onClick={(event) => {
+            if (event.target === event.currentTarget) closeFindSomeone();
           }}
         >
           <div
@@ -7818,143 +7468,45 @@ const ResidentHome = () => {
             role="dialog"
             aria-modal="true"
             aria-labelledby="fs-modal-title"
-            onClick={(e) => e.stopPropagation()}
+            onClick={(event) => event.stopPropagation()}
           >
             <div className="mc-header">
               <h3 id="fs-modal-title">Find someone</h3>
-
-              <button
-                type="button"
-                className="mc-close"
-                onClick={closeFindSomeone}
-                aria-label="Close"
-              >
+              <button type="button" className="mc-close" onClick={closeFindSomeone} aria-label="Close">
                 <FontAwesomeIcon icon={faXmark} />
               </button>
             </div>
 
             <div className="mc-body">
               <p className="mc-hint">
-                Looking for a family member or neighbor? Enter their full name to see where they were assigned.
+                Enter a person's full name to see the evacuation center they were assigned to.
               </p>
-
               <form onSubmit={handleFindSomeoneSubmit}>
-                <label className="mc-label" htmlFor="fs-name">
-                  Full name
-                </label>
-
-                <div className="find-someone-input-wrap" ref={findSomeoneInputWrapRef}>
-                  <input
-                    id="fs-name"
-                    type="text"
-                    className="mc-input"
-                    value={findSomeoneName}
-                    onChange={(e) => {
-                      setFindSomeoneName(e.target.value);
-                      if (findSomeoneHint) setFindSomeoneHint("");
-                      if (!e.target.value.trim() || e.target.value.trim().length < 1) {
-                        setFindSomeoneAutosuggestOpen(false);
-                        setFindSomeoneAutosuggestList([]);
-                      }
-                    }}
-                    onKeyDown={handleFindSomeoneKeyDown}
-                    placeholder="e.g. Juan Dela Cruz"
-                    autoComplete="off"
-                    role="combobox"
-                    aria-autocomplete="list"
-                    aria-expanded={findSomeoneAutosuggestOpen}
-                    aria-controls="fs-autosuggest-listbox"
-                    aria-activedescendant={
-                      findSomeoneAutosuggestIndex >= 0
-                        ? `fs-suggest-item-${findSomeoneAutosuggestIndex}`
-                        : undefined
-                    }
-                    autoFocus
-                  />
-
-                  {/* Accessible screen reader announcement */}
-                  <div className="sr-only" aria-live="polite">
-                    {findSomeoneAutosuggestOpen && findSomeoneAutosuggestList.length > 0
-                      ? `${findSomeoneAutosuggestList.length} suggestions available.`
-                      : ""}
-                  </div>
-
-                  {/* Autosuggest Dropdown */}
-                  {findSomeoneAutosuggestOpen && (
-                    <div
-                      id="fs-autosuggest-listbox"
-                      className="find-someone-autosuggest-dropdown"
-                      role="listbox"
-                      aria-label="Resident suggestions"
-                    >
-                      {findSomeoneAutosuggestLoading ? (
-                        <div className="find-someone-suggest-status" role="status">
-                          <FontAwesomeIcon
-                            icon={faSpinner}
-                            spin
-                            className="find-someone-suggest-spinner"
-                          />
-                          <span>Searching…</span>
-                        </div>
-                      ) : findSomeoneAutosuggestList.length === 0 ? (
-                        <div className="find-someone-suggest-status find-someone-suggest-empty">
-                          <span>No resident found.</span>
-                        </div>
-                      ) : (
-                        findSomeoneAutosuggestList.map((item, idx) => {
-                          const isSelected = idx === findSomeoneAutosuggestIndex;
-                          return (
-                            <button
-                              type="button"
-                              key={`${item.name}-${item.barangay}-${idx}`}
-                              id={`fs-suggest-item-${idx}`}
-                              role="option"
-                              aria-selected={isSelected}
-                              className={`find-someone-suggest-item ${isSelected ? "is-active" : ""
-                                }`}
-                              onClick={() => handleSelectFindSomeoneSuggestion(item)}
-                              onMouseEnter={() => setFindSomeoneAutosuggestIndex(idx)}
-                            >
-                              <span className="find-someone-suggest-name">
-                                {renderHighlightedText(item.name, findSomeoneName)}
-                              </span>
-                              {item.barangay && (
-                                <span className="find-someone-suggest-sub">
-                                  Barangay {item.barangay}
-                                </span>
-                              )}
-                            </button>
-                          );
-                        })
-                      )}
-                    </div>
-                  )}
-                </div>
-
+                <label className="mc-label" htmlFor="fs-name">Full name</label>
+                <input
+                  id="fs-name"
+                  type="text"
+                  className="mc-input"
+                  value={findSomeoneName}
+                  onChange={(event) => {
+                    setFindSomeoneName(event.target.value);
+                    if (findSomeoneHint) setFindSomeoneHint("");
+                  }}
+                  placeholder="Full name"
+                  autoComplete="off"
+                  autoFocus
+                />
                 {findSomeoneHint && (
-                  <div className="mc-error" style={{ marginTop: "8px" }}>
+                  <div className="mc-error" role="status" style={{ marginTop: "8px" }}>
                     {findSomeoneHint}
                   </div>
                 )}
-
                 <div className="mc-actions find-someone-actions">
-                  <button
-                    type="submit"
-                    className="mc-btn mc-btn-primary"
-                    disabled={findSomeoneLoading}
-                  >
-                    <FontAwesomeIcon
-                      icon={faMagnifyingGlass}
-                      spin={findSomeoneLoading}
-                    />
+                  <button type="submit" className="mc-btn mc-btn-primary" disabled={findSomeoneLoading}>
+                    <FontAwesomeIcon icon={faMagnifyingGlass} spin={findSomeoneLoading} />
                     {findSomeoneLoading ? "Searching..." : "Search"}
                   </button>
-
-                  <button
-                    type="button"
-                    className="mc-btn find-someone-cancel-btn"
-                    onClick={closeFindSomeone}
-                  >
+                  <button type="button" className="mc-btn find-someone-cancel-btn" onClick={closeFindSomeone}>
                     Cancel
                   </button>
                 </div>
@@ -7964,33 +7516,12 @@ const ResidentHome = () => {
                 findSomeoneResults.length > 0 ? (
                   <div className="find-someone-results">
                     <div className="find-someone-count">
-                      Matching residents ({findSomeoneResults.length})
+                      Matching evacuation centers ({findSomeoneResults.length})
                     </div>
-                    {findSomeoneResults.map((item, idx) => (
-                      <div
-                        key={item.resident_id ?? `${item.household_head_name || item.name}-${idx}`}
-                        className="find-someone-card"
-                      >
+                    {findSomeoneResults.map((item, index) => (
+                      <div key={`${item.center_name}-${index}`} className="find-someone-card">
                         <div className="find-someone-info">
-                          <div className="find-someone-name">
-                            {item.household_head_name || item.name || "Resident"}
-                          </div>
-                          {item.barangay && (
-                            <div className="find-someone-meta">
-                              <span>Barangay:</span> {item.barangay}
-                            </div>
-                          )}
-                          <div className="find-someone-meta">
-                            <span>Evacuation center:</span>{" "}
-                            <strong>
-                              {item.evacuation_center?.name || item.center_name || "Assigned Center"}
-                            </strong>
-                          </div>
-                          {(item.room?.building_name || item.room?.room_number) && (
-                            <div className="find-someone-meta find-someone-room-location">
-                              {[item.room.building_name, item.room.room_number && `Room ${String(item.room.room_number).replace(/^room\s*/i, "")}`].filter(Boolean).join(" · ")}
-                            </div>
-                          )}
+                          <div className="find-someone-name">{item.center_name}</div>
                         </div>
                         <button
                           type="button"
@@ -8003,9 +7534,7 @@ const ResidentHome = () => {
                     ))}
                   </div>
                 ) : (
-                  <div className="find-someone-empty">
-                    No resident found. Check the spelling or ask your barangay.
-                  </div>
+                  <div className="find-someone-empty">No match found.</div>
                 )
               )}
             </div>
@@ -8055,7 +7584,6 @@ const ResidentHome = () => {
           clearFoundPersonLocation();
           setPrivateBuildingView(false);
         }}
-        userHousehold={foundPersonLocation?.buildingId != null ? null : myCenter}
         highlightedRoom={foundPersonLocation?.buildingId != null ? foundPersonLocation.room : null}
         hideHouseholds={privateBuildingView}
         isStaff={false}

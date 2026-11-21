@@ -26,8 +26,9 @@ from models import (
     SystemLog,
     User,
 )
-from routes.auth import auth_bp
+from routes.auth import _login_rate_buckets, auth_bp
 from routes.families import families_bp
+from routes.evacuation_centers import centers_bp
 from routes.resident_registrations import _registration_rate_limits, registrations_bp
 from routes.residents import residents_bp
 from routes.users import users_bp
@@ -44,6 +45,11 @@ class ResidentRegistrationApiTests(unittest.TestCase):
             SQLALCHEMY_DATABASE_URI='sqlite://',
             SQLALCHEMY_TRACK_MODIFICATIONS=False,
             JWT_SECRET_KEY='resident-registration-test-key-long-enough',
+            LOGIN_MAX_FAILED_ATTEMPTS=5,
+            LOGIN_FAILURE_WINDOW_MINUTES=15,
+            LOGIN_LOCK_MINUTES=15,
+            LOGIN_RATE_LIMIT_MAX_REQUESTS=20,
+            LOGIN_RATE_LIMIT_WINDOW_SECONDS=900,
         )
         db.init_app(cls.app)
         JWTManager(cls.app)
@@ -53,6 +59,7 @@ class ResidentRegistrationApiTests(unittest.TestCase):
         cls.app.register_blueprint(registrations_bp)
         cls.app.register_blueprint(users_bp)
         cls.app.register_blueprint(families_bp)
+        cls.app.register_blueprint(centers_bp)
         cls.app_context = cls.app.app_context()
         cls.app_context.push()
         @event.listens_for(db.engine, 'connect')
@@ -112,6 +119,7 @@ class ResidentRegistrationApiTests(unittest.TestCase):
         Barangay.query.delete(synchronize_session=False)
         db.session.commit()
         _registration_rate_limits.clear()
+        _login_rate_buckets.clear()
         self.client = self.app.test_client()
         self.staff = self._create_user('admin', 'staff@example.com')
         self.lgu = self._create_user('lgu_personnel', 'lgu@example.com')
@@ -131,7 +139,7 @@ class ResidentRegistrationApiTests(unittest.TestCase):
         db.session.commit()
         token = create_access_token(
             identity=str(user.id),
-            additional_claims={'role': role, 'name': user.name},
+            additional_claims={'role': role, 'name': user.name, 'account_type': 'user', 'mfa_verified': role == 'admin', 'mfa_version': 0},
         )
         return {'user': user, 'headers': {'Authorization': f'Bearer {token}'}}
 
@@ -167,6 +175,7 @@ class ResidentRegistrationApiTests(unittest.TestCase):
             'contact_number': '09181234567',
             'email': 'jose@example.com',
             'password': 'Secret123!',
+            'privacy_consent': True,
         }
         payload.update(overrides)
         return payload
@@ -295,6 +304,22 @@ class ResidentRegistrationApiTests(unittest.TestCase):
         self.assertNotEqual(registration.password_hash, 'Secret123!')
         self.assertEqual(User.query.filter_by(email='jose@example.com').count(), 0)
         self.assertNotIn('password_hash', response.get_json()['registration'])
+
+    def test_registration_requires_and_records_privacy_consent(self):
+        rejected = self._submit(privacy_consent=False)
+        self.assertEqual(rejected.status_code, 400)
+        self.assertEqual(
+            rejected.get_json()['error'],
+            'Consent to the Data Privacy Notice is required.',
+        )
+        self.assertEqual(ResidentRegistrationRequest.query.count(), 0)
+
+        accepted = self._submit()
+        self.assertEqual(accepted.status_code, 201, accepted.get_json())
+        registration = ResidentRegistrationRequest.query.one()
+        self.assertTrue(registration.privacy_consent)
+        self.assertIsNotNone(registration.privacy_consent_at)
+        self.assertEqual(registration.privacy_notice_version, '1')
 
     def test_decision_email_includes_outcome_but_never_password(self):
         self._submit()
@@ -443,7 +468,7 @@ class ResidentRegistrationApiTests(unittest.TestCase):
         self.assertEqual(registration.status, 'approved')
         send_email.assert_called_once()
 
-        login = self.client.post('/api/auth/login', json={
+        login = self.client.post('/api/auth/resident-login', json={
             'email': 'jose@example.com',
             'password': 'Secret123!',
         })
@@ -482,32 +507,86 @@ class ResidentRegistrationApiTests(unittest.TestCase):
         self.assertEqual(resent.status_code, 200)
         self.assertFalse(resent.get_json()['email_sent'])
 
-    def test_rejection_allows_optional_reason_and_keeps_request(self):
+    def test_rejection_requires_reason_and_keeps_request(self):
         resident = self._create_roster_resident()
-        self._submit(email='noreason@example.com', contact_number='09171112233')
-        req_no_reason = ResidentRegistrationRequest.query.filter_by(email='noreason@example.com').one()
+        self._submit(email='reason-required@example.com', contact_number='09171112233')
+        req = ResidentRegistrationRequest.query.filter_by(email='reason-required@example.com').one()
         headers = self._staff_headers()
         with patch('routes.resident_registrations.send_resident_registration_email') as send_email:
             empty_res = self.client.post(
-                f'/api/resident-registrations/{req_no_reason.id}/reject',
+                f'/api/resident-registrations/{req.id}/reject',
                 headers=headers,
                 json={},
             )
-        self.assertEqual(empty_res.status_code, 200, empty_res.get_json())
-        self.assertEqual(req_no_reason.status, 'rejected')
-        self.assertIsNone(req_no_reason.rejection_reason)
+        self.assertEqual(empty_res.status_code, 400, empty_res.get_json())
+        self.assertEqual(req.status, 'pending')
+        send_email.assert_not_called()
+
+        with patch('routes.resident_registrations.send_resident_registration_email') as send_email:
+            rejected = self.client.post(
+                f'/api/resident-registrations/{req.id}/reject',
+                headers=headers,
+                json={'reason': 'Please verify your details.'},
+            )
+        self.assertEqual(rejected.status_code, 200, rejected.get_json())
+        self.assertEqual(req.status, 'rejected')
+        self.assertEqual(req.rejection_reason, 'Please verify your details.')
         send_email.assert_called_once()
 
+
+    def test_resident_login_statuses_require_the_correct_password(self):
         self._submit()
+        pending = self.client.post('/api/auth/resident-login', json={
+            'email': 'jose@example.com', 'password': 'wrong-password',
+        })
+        self.assertEqual(pending.status_code, 401)
+        self.assertEqual(pending.get_json(), {'error': 'Incorrect email or password'})
+        pending = self.client.post('/api/auth/resident-login', json={
+            'email': 'jose@example.com', 'password': 'Secret123!',
+        })
+        self.assertEqual(pending.status_code, 403)
+        self.assertEqual(pending.get_json()['status'], 'awaiting_verification')
+        self.assertEqual(pending.get_json()['error'], 'Awaiting verification.')
+
         registration = ResidentRegistrationRequest.query.filter_by(email='jose@example.com').one()
-        path = f'/api/resident-registrations/{registration.id}/reject'
-        with patch('routes.resident_registrations.send_resident_registration_email') as send_email2:
-            response = self.client.post(path, headers=headers, json={'reason': 'Please verify your details.'})
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(registration.status, 'rejected')
-        self.assertEqual(registration.rejection_reason, 'Please verify your details.')
-        self.assertEqual(User.query.filter_by(email='jose@example.com').count(), 0)
-        send_email2.assert_called_once()
+        registration.status = 'rejected'
+        registration.rejection_reason = 'Please verify your details.'
+        db.session.commit()
+        rejected_wrong_password = self.client.post('/api/auth/resident-login', json={
+            'email': 'jose@example.com', 'password': 'wrong-password',
+        })
+        self.assertEqual(rejected_wrong_password.status_code, 401)
+        self.assertEqual(rejected_wrong_password.get_json(), {'error': 'Incorrect email or password'})
+        rejected = self.client.post('/api/auth/resident-login', json={
+            'email': 'jose@example.com', 'password': 'Secret123!',
+        })
+        self.assertEqual(rejected.status_code, 403)
+        self.assertEqual(rejected.get_json()['status'], 'rejected')
+        self.assertEqual(
+            rejected.get_json()['error'],
+            'Your registration was rejected: Please verify your details.',
+        )
+
+        resident = self._create_roster_resident(first_name='Inactive', last_name='Resident')
+        inactive = ResidentAccount(
+            resident_id=resident.id,
+            email='inactive@example.com',
+            password_hash=generate_password_hash('Secret123!'),
+            is_active=False,
+        )
+        db.session.add(inactive)
+        db.session.commit()
+        inactive_wrong_password = self.client.post('/api/auth/resident-login', json={
+            'email': inactive.email, 'password': 'wrong-password',
+        })
+        self.assertEqual(inactive_wrong_password.status_code, 401)
+        self.assertEqual(inactive_wrong_password.get_json(), {'error': 'Incorrect email or password'})
+        inactive_correct_password = self.client.post('/api/auth/resident-login', json={
+            'email': inactive.email, 'password': 'Secret123!',
+        })
+        self.assertEqual(inactive_correct_password.status_code, 403)
+        self.assertEqual(inactive_correct_password.get_json()['error'], 'Your account is inactive.')
+
 
     def test_submission_rate_limit(self):
         statuses = [
@@ -562,7 +641,7 @@ class ResidentRegistrationApiTests(unittest.TestCase):
             )
 
         # Login with the resident account
-        login = self.client.post('/api/auth/login', json={
+        login = self.client.post('/api/auth/resident-login', json={
             'email': 'jose@example.com',
             'password': 'Secret123!',
         })
@@ -571,6 +650,137 @@ class ResidentRegistrationApiTests(unittest.TestCase):
         self.assertEqual(data['user']['role'], 'resident')
         self.assertEqual(data['user']['resident_id'], resident.id)
         self.assertIn('access_token', data)
+
+    def test_login_forms_reject_the_other_account_type_with_the_same_error(self):
+        resident = self._create_roster_resident()
+        self._create_resident_account(resident.id, 'jose@example.com')
+
+        resident_on_staff_form = self.client.post('/api/auth/login', json={
+            'email': 'jose@example.com', 'password': 'Secret123!',
+        })
+        wrong_staff_password = self.client.post('/api/auth/login', json={
+            'email': 'jose@example.com', 'password': 'wrong-password',
+        })
+        self.assertEqual(resident_on_staff_form.status_code, 401)
+        self.assertEqual(resident_on_staff_form.get_json(), {'error': 'Incorrect email or password'})
+        self.assertEqual(resident_on_staff_form.get_json(), wrong_staff_password.get_json())
+        self.assertEqual(resident_on_staff_form.status_code, wrong_staff_password.status_code)
+
+        staff_on_resident_form = self.client.post('/api/auth/resident-login', json={
+            'email': self.staff['user'].email, 'password': 'Secret123!',
+        })
+        wrong_resident_password = self.client.post('/api/auth/resident-login', json={
+            'email': self.staff['user'].email, 'password': 'wrong-password',
+        })
+        self.assertEqual(staff_on_resident_form.status_code, 401)
+        self.assertEqual(staff_on_resident_form.get_json(), {'error': 'Incorrect email or password'})
+        self.assertEqual(staff_on_resident_form.get_json(), wrong_resident_password.get_json())
+        self.assertEqual(staff_on_resident_form.status_code, wrong_resident_password.status_code)
+
+        staff_login = self.client.post('/api/auth/login', json={
+            'email': self.staff['user'].email, 'password': 'Secret123!',
+        })
+        self.assertEqual(staff_login.status_code, 200)
+        self.assertTrue(staff_login.get_json()['totp_enrollment_required'])
+        lgu_login = self.client.post('/api/auth/login', json={
+            'email': self.lgu['user'].email, 'password': 'Secret123!',
+        })
+        self.assertEqual(lgu_login.status_code, 200)
+        self.assertEqual(lgu_login.get_json()['user']['role'], 'lgu_personnel')
+
+    def test_resident_login_token_cannot_access_staff_routes_after_role_claim_edit(self):
+        resident = self._create_roster_resident()
+        account = self._create_resident_account(resident.id, 'jose@example.com')['account']
+        login = self.client.post('/api/auth/resident-login', json={
+            'email': account.email, 'password': 'Secret123!',
+        })
+        self.assertEqual(login.status_code, 200)
+        resident_token = login.get_json()['access_token']
+        edited_role_token = create_access_token(
+            identity=str(account.id),
+            additional_claims={
+                'role': 'admin',
+                'account_type': 'resident_account',
+                'resident_id': resident.id,
+            },
+        )
+
+        for token in (resident_token, edited_role_token):
+            headers = {'Authorization': f'Bearer {token}'}
+            for path in ('/api/users', '/api/families', '/api/residents'):
+                with self.subTest(path=path, edited_role=token == edited_role_token):
+                    response = self.client.get(path, headers=headers)
+                    self.assertEqual(response.status_code, 403, response.get_data(as_text=True))
+
+    def test_automatic_check_in_requires_resident_and_uses_own_identity(self):
+        resident = self._create_roster_resident()
+        account = self._create_resident_account(resident.id, 'jose@example.com')['account']
+        login = self.client.post('/api/auth/resident-login', json={
+            'email': account.email, 'password': 'Secret123!',
+        })
+        headers = {'Authorization': f"Bearer {login.get_json()['access_token']}"}
+
+        guest = self.client.post('/api/evacuation-centers/check-in/auto', json={})
+        self.assertEqual(guest.status_code, 401)
+        forged_target = self.client.post(
+            '/api/evacuation-centers/check-in/auto',
+            headers=headers,
+            json={'resident_id': resident.id + 100, 'center_id': 1},
+        )
+        self.assertEqual(forged_target.status_code, 403)
+
+    def test_both_login_endpoints_rate_limit_by_ip_and_email(self):
+        resident = self._create_roster_resident()
+        self._create_resident_account(resident.id, 'jose@example.com')
+        self.app.config['LOGIN_RATE_LIMIT_MAX_REQUESTS'] = 1
+
+        cases = (
+            ('/api/auth/login', self.staff['user'].email),
+            ('/api/auth/resident-login', 'jose@example.com'),
+        )
+        for endpoint, email in cases:
+            with self.subTest(endpoint=endpoint):
+                _login_rate_buckets.clear()
+                first = self.client.post(endpoint, json={'email': email, 'password': 'wrong'})
+                second = self.client.post(endpoint, json={'email': email, 'password': 'wrong'})
+                self.assertEqual(first.status_code, 401)
+                self.assertEqual(second.status_code, 429)
+        self.app.config['LOGIN_RATE_LIMIT_MAX_REQUESTS'] = 20
+
+    def test_repeated_failures_lock_staff_and_resident_accounts_and_log_for_admins(self):
+        resident = self._create_roster_resident()
+        resident_account = self._create_resident_account(resident.id, 'jose@example.com')['account']
+        cases = (
+            ('/api/auth/login', self.staff['user']),
+            ('/api/auth/resident-login', resident_account),
+        )
+        self.app.config.update(
+            LOGIN_MAX_FAILED_ATTEMPTS=5,
+            LOGIN_FAILURE_WINDOW_MINUTES=15,
+            LOGIN_LOCK_MINUTES=15,
+        )
+
+        for endpoint, account in cases:
+            with self.subTest(endpoint=endpoint):
+                _login_rate_buckets.clear()
+                for _ in range(5):
+                    response = self.client.post(endpoint, json={
+                        'email': account.email, 'password': 'wrong-password',
+                    })
+                    self.assertEqual(response.status_code, 401)
+                    self.assertEqual(response.get_json(), {'error': 'Incorrect email or password'})
+                db.session.refresh(account)
+                self.assertEqual(account.login_failed_attempts, 5)
+                self.assertIsNotNone(account.login_locked_until)
+                locked_login = self.client.post(endpoint, json={
+                    'email': account.email, 'password': 'Secret123!',
+                })
+                self.assertEqual(locked_login.status_code, 401)
+                self.assertEqual(locked_login.get_json(), {'error': 'Incorrect email or password'})
+
+        admin_logs = self.client.get('/api/logs', headers=self._staff_headers())
+        lock_entries = [entry for entry in admin_logs.get_json() if 'Login locked after repeated failures' in entry['action']]
+        self.assertEqual(len(lock_entries), 2)
 
     def test_resident_token_contains_account_type_and_resident_id(self):
         """JWT token should include account_type=resident_account and resident_id."""
@@ -585,7 +795,7 @@ class ResidentRegistrationApiTests(unittest.TestCase):
                 json={'matched_resident_id': resident.id},
             )
 
-        login = self.client.post('/api/auth/login', json={
+        login = self.client.post('/api/auth/resident-login', json={
             'email': 'jose@example.com',
             'password': 'Secret123!',
         })
@@ -671,7 +881,7 @@ class ResidentRegistrationApiTests(unittest.TestCase):
                 json={'matched_resident_id': resident.id},
             )
 
-        login = self.client.post('/api/auth/login', json={
+        login = self.client.post('/api/auth/resident-login', json={
             'email': 'jose@example.com',
             'password': 'Secret123!',
         })
@@ -1054,7 +1264,7 @@ class ResidentRegistrationApiTests(unittest.TestCase):
         self.assertEqual(reuse_res.status_code, 400, reuse_res.get_json())
 
         # New password works for login
-        login_res = self.client.post('/api/auth/login', json={
+        login_res = self.client.post('/api/auth/resident-login', json={
             'email': 'gesulga63@gmail.com',
             'password': 'NewPassword123!',
         })

@@ -44,3 +44,10 @@ class Config:
     PASSWORD_SETUP_TOKEN_MAX_AGE = int(
         os.environ.get("PASSWORD_SETUP_TOKEN_MAX_AGE", "3600")
     )
+    LOGIN_MAX_FAILED_ATTEMPTS = int(os.environ.get("LOGIN_MAX_FAILED_ATTEMPTS", "5"))
+    LOGIN_FAILURE_WINDOW_MINUTES = int(os.environ.get("LOGIN_FAILURE_WINDOW_MINUTES", "15"))
+    LOGIN_LOCK_MINUTES = int(os.environ.get("LOGIN_LOCK_MINUTES", "15"))
+    LOGIN_RATE_LIMIT_MAX_REQUESTS = int(os.environ.get("LOGIN_RATE_LIMIT_MAX_REQUESTS", "20"))
+    LOGIN_RATE_LIMIT_WINDOW_SECONDS = int(os.environ.get("LOGIN_RATE_LIMIT_WINDOW_SECONDS", "900"))
+    LGU_TOTP_REQUIRED = os.environ.get("LGU_TOTP_REQUIRED", "false").strip().lower() in {"1", "true", "yes", "on"}
+    DATA_PRIVACY_NOTICE_VERSION = os.environ.get("DATA_PRIVACY_NOTICE_VERSION", "1").strip() or "1"

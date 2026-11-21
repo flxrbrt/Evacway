@@ -110,7 +110,7 @@ class ShelterMetadataApiTests(unittest.TestCase):
         self.client = self.app.test_client()
         token = create_access_token(
             identity=str(self.admin_id),
-            additional_claims={'role': 'admin'},
+            additional_claims={'role': 'admin', 'account_type': 'user', 'mfa_verified': True, 'mfa_version': 0},
         )
         self.headers = {'Authorization': f'Bearer {token}'}
 

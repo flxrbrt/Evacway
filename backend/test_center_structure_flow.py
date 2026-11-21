@@ -17,6 +17,7 @@ from models import (
     EvacuationOperation,
     Family,
     Resident,
+    ResidentAccount,
     RosterYear,
     SystemLog,
     User,
@@ -27,6 +28,7 @@ from routes.buildings import buildings_bp
 from routes.evacuation_centers import centers_bp
 from routes.families import families_bp
 from routes.rooms import rooms_bp
+from routes.residents import residents_bp
 
 
 class CenterStructureFlowTests(unittest.TestCase):
@@ -45,6 +47,7 @@ class CenterStructureFlowTests(unittest.TestCase):
         cls.app.register_blueprint(rooms_bp)
         cls.app.register_blueprint(buildings_bp)
         cls.app.register_blueprint(families_bp)
+        cls.app.register_blueprint(residents_bp)
         cls.app_context = cls.app.app_context()
         cls.app_context.push()
 
@@ -66,6 +69,7 @@ class CenterStructureFlowTests(unittest.TestCase):
             RosterYear.__table__,
             Family.__table__,
             Resident.__table__,
+            ResidentAccount.__table__,
             EvacuationOperation.__table__,
             EvacuationAssignment.__table__,
             EvacuationCheckInRecord.__table__,
@@ -137,6 +141,9 @@ class CenterStructureFlowTests(unittest.TestCase):
                     'building_id INTEGER, '
                     'room_number VARCHAR(50) NOT NULL, '
                     'capacity INTEGER NOT NULL, '
+                    'family_slots INTEGER NOT NULL DEFAULT 5, '
+                    'people_spaces INTEGER NOT NULL DEFAULT 25, '
+                    'floor INTEGER, '
                     'is_active BOOLEAN NOT NULL DEFAULT 1, '
                     'created_at DATETIME)'
                 )
@@ -174,6 +181,7 @@ class CenterStructureFlowTests(unittest.TestCase):
                 'evacuation_check_in_records',
                 'residents',
                 'families',
+                'resident_accounts',
                 'evacuation_center_rooms',
                 'evacuation_center_buildings',
                 'center_barangays',
@@ -182,6 +190,7 @@ class CenterStructureFlowTests(unittest.TestCase):
             ):
                 conn.execute(text(f'DELETE FROM {tbl}'))
         SystemLog.query.delete()
+        User.query.filter(User.role == 'lgu_personnel').delete()
         CenterType.query.delete()
         db.session.commit()
 
@@ -196,9 +205,25 @@ class CenterStructureFlowTests(unittest.TestCase):
         self.client = self.app.test_client()
         token = create_access_token(
             identity=str(self.admin_id),
-            additional_claims={'role': 'admin'},
+            additional_claims={'role': 'admin', 'account_type': 'user', 'mfa_verified': True, 'mfa_version': 0},
         )
         self.headers = {'Authorization': f'Bearer {token}'}
+        lgu = User(
+            name='LGU Personnel',
+            email='lgu@evacway.test',
+            password_hash='test-password-fingerprint',
+            role='lgu_personnel',
+            is_active=True,
+        )
+        db.session.add(lgu)
+        db.session.flush()
+        self.lgu_id = lgu.id
+        lgu_token = create_access_token(
+            identity=str(lgu.id),
+            additional_claims={'role': 'lgu_personnel'},
+        )
+        self.lgu_headers = {'Authorization': f'Bearer {lgu_token}'}
+        db.session.commit()
 
     def _create_family(self, head_name, member_count):
         res = self.client.post(
@@ -220,6 +245,217 @@ class CenterStructureFlowTests(unittest.TestCase):
         )
         self.assertEqual(res.status_code, 201, res.get_data(as_text=True))
         return res.get_json()['family']['id']
+
+    def _create_privacy_fixture(self):
+        center_response = self.client.post(
+            '/api/evacuation-centers',
+            headers=self.headers,
+            json={
+                'name': 'Privacy Test Center',
+                'center_type': 'campus',
+                'barangay_ids': [1],
+            },
+        )
+        self.assertEqual(center_response.status_code, 201, center_response.get_data(as_text=True))
+        center_id = center_response.get_json()['properties']['id']
+
+        building_response = self.client.post(
+            f'/api/evacuation-centers/{center_id}/buildings',
+            headers=self.headers,
+            json={'name': 'Privacy Test Building', 'floors': 1},
+        )
+        self.assertEqual(building_response.status_code, 201, building_response.get_data(as_text=True))
+        building_id = building_response.get_json()['building']['id']
+
+        room_response = self.client.post(
+            f'/api/evacuation-centers/{center_id}/rooms',
+            headers=self.headers,
+            json={
+                'room_number': '101',
+                'family_slots': 5,
+                'people_spaces': 25,
+                'building_id': building_id,
+                'floor': 1,
+            },
+        )
+        self.assertEqual(room_response.status_code, 201, room_response.get_data(as_text=True))
+        room_id = room_response.get_json()['room']['id']
+
+        own_family_id = self._create_family('Privacy Leak Head', 2)
+        other_family_id = self._create_family('Other Private Family', 1)
+        own_family = db.session.get(Family, own_family_id)
+        own_family.contact_number = '09001234567'
+        own_members = Resident.query.filter_by(family_id=own_family_id).order_by(Resident.id.asc()).all()
+        other_members = Resident.query.filter_by(family_id=other_family_id).all()
+        db.session.add_all([
+            EvacuationAssignment(resident_id=resident.id, room_id=room_id, evacuation_center_id=center_id)
+            for resident in [*own_members, *other_members]
+        ])
+        resident_account = ResidentAccount(
+            resident_id=own_members[0].id,
+            email='privacy-resident@evacway.test',
+            password_hash='test-password-fingerprint',
+            is_active=True,
+        )
+        db.session.add(resident_account)
+        db.session.commit()
+
+        resident_token = create_access_token(
+            identity=str(resident_account.id),
+            additional_claims={
+                'role': 'resident',
+                'account_type': 'resident_account',
+                'resident_id': own_members[0].id,
+                'name': 'Privacy Leak Head',
+            },
+        )
+        self.resident_headers = {'Authorization': f'Bearer {resident_token}'}
+        return {
+            'center_id': center_id,
+            'building_id': building_id,
+            'room_id': room_id,
+            'own_resident_id': own_members[0].id,
+            'own_family_id': own_family_id,
+            'other_resident_id': other_members[0].id,
+        }
+
+    def _assert_no_private_roster(self, response):
+        body = response.get_json()
+        serialized = response.get_data(as_text=True)
+        for value in (
+            'Privacy Leak Head',
+            'Member1 Head',
+            'Other Private Family',
+            '09001234567',
+            'family_id',
+        ):
+            self.assertNotIn(value, serialized)
+        return body
+
+    def _assert_public_room_fields(self, room, allow_my_room=False):
+        allowed = {
+            'id',
+            'building_name',
+            'room_number',
+            'available_slots',
+            'available_spaces',
+            'status',
+        }
+        if allow_my_room:
+            allowed.add('is_my_room')
+        self.assertTrue(set(room).issubset(allowed), room)
+
+    def test_public_building_room_and_center_views_do_not_leak_rosters(self):
+        fixture = self._create_privacy_fixture()
+        requests = [
+            f"/api/evacuation-centers/{fixture['center_id']}/buildings",
+            f"/api/evacuation-centers/{fixture['center_id']}/rooms",
+            f"/api/buildings/{fixture['building_id']}/details",
+            f"/api/evacuation-centers/{fixture['center_id']}",
+            f"/api/evacuation-centers?search=Privacy%20Test",
+        ]
+        roles = [
+            ('guest', None),
+            ('resident', self.resident_headers),
+            ('lgu_personnel', self.lgu_headers),
+            ('admin', self.headers),
+        ]
+
+        for endpoint in requests:
+            for role, headers in roles:
+                with self.subTest(endpoint=endpoint, role=role):
+                    response = self.client.get(endpoint, headers=headers or {})
+                    self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+                    body = response.get_json()
+                    if role in ('guest', 'resident'):
+                        self._assert_no_private_roster(response)
+                        if endpoint.endswith('/buildings'):
+                            self.assertTrue(body['features'])
+                            self.assertEqual(
+                                body['features'][0]['properties']['evacuation_center_id'],
+                                fixture['center_id'],
+                            )
+                        public_rooms = []
+                        if isinstance(body, list):
+                            public_rooms = body
+                        elif endpoint.endswith('/buildings'):
+                            public_rooms = [
+                                room
+                                for feature in body['features']
+                                for room in feature['properties']['rooms']
+                            ]
+                        elif isinstance(body, dict) and isinstance(body.get('rooms'), list):
+                            public_rooms = body['rooms']
+                        for room in public_rooms:
+                            self._assert_public_room_fields(
+                                room,
+                                allow_my_room=(role == 'resident'),
+                            )
+                    if endpoint.endswith('/details') and role == 'resident':
+                        self.assertTrue(body['rooms'][0].get('is_my_room'))
+                    if endpoint.endswith('/details') and role == 'guest':
+                        self.assertNotIn('is_my_room', body['rooms'][0])
+                    if endpoint == f"/api/evacuation-centers/{fixture['center_id']}":
+                        if role in ('guest', 'resident'):
+                            self.assertEqual(body['assigned_families'], [])
+                        else:
+                            self.assertTrue(body['assigned_families'])
+
+    def test_roster_endpoints_enforce_staff_access_and_sanitize_search(self):
+        fixture = self._create_privacy_fixture()
+        roles = [
+            ('guest', None),
+            ('resident', self.resident_headers),
+            ('lgu_personnel', self.lgu_headers),
+            ('admin', self.headers),
+        ]
+
+        for role, headers in roles:
+            with self.subTest(endpoint='room-families', role=role):
+                response = self.client.get(
+                    f"/api/rooms/{fixture['room_id']}/families",
+                    headers=headers or {},
+                )
+                if role in ('guest', 'resident'):
+                    self.assertIn(response.status_code, (401, 403))
+                    self._assert_no_private_roster(response)
+                else:
+                    self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+                    self.assertIn('Privacy Leak Head', response.get_data(as_text=True))
+
+            with self.subTest(endpoint='autosuggest', role=role):
+                response = self.client.get(
+                    '/api/residents/autosuggest?q=Privacy',
+                    headers=headers or {},
+                )
+                if role in ('guest', 'resident'):
+                    self.assertIn(response.status_code, (401, 403))
+                    self._assert_no_private_roster(response)
+                else:
+                    self.assertEqual(response.status_code, 200)
+                    suggestions = response.get_json()['suggestions']
+                    self.assertTrue(any(item['name'] == 'Privacy Leak Head' for item in suggestions))
+
+    def test_public_room_error_payloads_do_not_include_roster_data(self):
+        self._create_privacy_fixture()
+        missing_endpoints = [
+            '/api/evacuation-centers/999999/buildings',
+            '/api/evacuation-centers/999999/rooms',
+            '/api/evacuation-centers/999999',
+            '/api/buildings/999999/details',
+        ]
+        roles = [
+            ('guest', None),
+            ('resident', self.resident_headers),
+            ('lgu_personnel', self.lgu_headers),
+            ('admin', self.headers),
+        ]
+        for endpoint in missing_endpoints:
+            for role, headers in roles:
+                with self.subTest(endpoint=endpoint, role=role):
+                    response = self.client.get(endpoint, headers=headers or {})
+                    self.assertEqual(response.status_code, 404)
+                    self._assert_no_private_roster(response)
 
     def test_open_area_capacity_and_direct_assignment_and_blocks(self):
         # Missing capacity for open_area must be rejected

@@ -115,7 +115,7 @@ class BarangayImportApiTests(unittest.TestCase):
         db.session.add_all([admin, self.brgy_poblacion, self.brgy_san_jose])
         db.session.commit()
 
-        token = create_access_token(identity=str(admin.id), additional_claims={'role': 'admin'})
+        token = create_access_token(identity=str(admin.id), additional_claims={'role': 'admin', 'account_type': 'user', 'mfa_verified': True, 'mfa_version': 0})
         self.headers = {'Authorization': f'Bearer {token}'}
         self.client = self.app.test_client()
 

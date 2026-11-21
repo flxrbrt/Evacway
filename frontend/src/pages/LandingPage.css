@@ -636,6 +636,13 @@ body:has(.ew) {
   color: var(--ew-text-muted);
 }
 
+.ew-status-updated {
+  margin: 12px 0 0;
+  color: var(--ew-text-muted);
+  font-size: 12px;
+  text-align: center;
+}
+
 .ew-status-skel-num,
 .ew-status-skel-lbl {
   display: block;

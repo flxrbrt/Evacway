@@ -1,11 +1,11 @@
 import {
-  useEvacuationCenters,
+  usePublicOfflineCenters,
   useRoomsForCenters,
   useBuildingsForCenters,
 } from "./useEvacuationQueries";
 
 export function useEvacuationData() {
-  const centersQuery = useEvacuationCenters();
+  const centersQuery = usePublicOfflineCenters();
   const roomsQuery = useRoomsForCenters(centersQuery.data);
   const buildingsQuery = useBuildingsForCenters(centersQuery.data);
 

@@ -109,6 +109,18 @@ class User(BaseModel):
         nullable=True
     )
 
+    login_failed_attempts = db.Column(db.Integer, nullable=False, default=0, server_default='0')
+    login_failure_window_started_at = db.Column(db.DateTime, nullable=True)
+    login_locked_until = db.Column(db.DateTime, nullable=True)
+
+    totp_enabled = db.Column(db.Boolean, nullable=False, default=False, server_default=db.false())
+    totp_secret_encrypted = db.Column(db.Text, nullable=True)
+    totp_pending_secret_encrypted = db.Column(db.Text, nullable=True)
+    totp_setup_expires_at = db.Column(db.DateTime, nullable=True)
+    totp_last_used_step = db.Column(db.BigInteger, nullable=True)
+    totp_backup_codes_hashes = db.Column(db.JSON, nullable=True)
+    mfa_version = db.Column(db.Integer, nullable=False, default=0, server_default='0')
+
 
     def to_dict(self):
         return {
@@ -871,6 +883,46 @@ class SystemLog(BaseModel):
         return f"<SystemLog {self.action} @ {self.timestamp}>"
 
 
+class ResidentLookupLog(BaseModel):
+    __tablename__ = 'resident_lookup_logs'
+
+    id = db.Column(db.Integer, primary_key=True)
+    lookup_type = db.Column(db.String(32), nullable=False, index=True)
+    resident_account_id = db.Column(
+        db.Integer,
+        db.ForeignKey('resident_accounts.id', ondelete='SET NULL'),
+        nullable=True,
+        index=True,
+    )
+    client_ip = db.Column(db.String(64), nullable=True)
+    query_name_masked = db.Column(db.String(150), nullable=True)
+    query_barangay_masked = db.Column(db.String(100), nullable=True)
+    query_birthdate_masked = db.Column(db.String(16), nullable=True)
+    found = db.Column(db.Boolean, nullable=False)
+    timestamp = db.Column(db.DateTime, nullable=False, default=philippines_now, index=True)
+
+
+class AdminMfaRecoveryRequest(BaseModel):
+    __tablename__ = 'admin_mfa_recovery_requests'
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(
+        db.Integer,
+        db.ForeignKey('users.id', ondelete='CASCADE'),
+        nullable=False,
+        index=True,
+    )
+    status = db.Column(db.String(20), nullable=False, default='pending', server_default='pending', index=True)
+    requested_at = db.Column(db.DateTime, nullable=False, default=philippines_now)
+    expires_at = db.Column(db.DateTime, nullable=False, index=True)
+    approved_by_user_id = db.Column(
+        db.Integer,
+        db.ForeignKey('users.id', ondelete='SET NULL'),
+        nullable=True,
+    )
+    approved_at = db.Column(db.DateTime, nullable=True)
+
+
 # ---------------------------------------------------------
 # STAFF NOTIFICATIONS
 # ---------------------------------------------------------
@@ -1060,6 +1112,13 @@ class Family(BaseModel):
 
     remarks = db.Column(
         db.Text
+    )
+
+    find_someone_opt_out = db.Column(
+        db.Boolean,
+        nullable=False,
+        default=False,
+        server_default=db.false(),
     )
 
     uploaded_by = db.Column(
@@ -1407,6 +1466,10 @@ class ResidentAccount(BaseModel):
         nullable=True
     )
 
+    login_failed_attempts = db.Column(db.Integer, nullable=False, default=0, server_default='0')
+    login_failure_window_started_at = db.Column(db.DateTime, nullable=True)
+    login_locked_until = db.Column(db.DateTime, nullable=True)
+
     resident = db.relationship(
         'Resident',
         backref=db.backref('account', uselist=False, lazy=True)
@@ -1461,6 +1524,9 @@ class ResidentRegistrationRequest(BaseModel):
     contact_number = db.Column(db.String(20), nullable=False)
     email = db.Column(db.String(120), nullable=False, index=True)
     password_hash = db.Column(db.String(255), nullable=False)
+    privacy_consent = db.Column(db.Boolean, nullable=False, default=False, server_default=db.false())
+    privacy_consent_at = db.Column(db.DateTime, nullable=True)
+    privacy_notice_version = db.Column(db.String(40), nullable=True)
     status = db.Column(db.String(20), nullable=False, default='pending', index=True)
     matched_resident_id = db.Column(
         db.Integer,
@@ -1488,6 +1554,9 @@ class ResidentRegistrationRequest(BaseModel):
             "address": self.address,
             "contact_number": self.contact_number,
             "email": self.email,
+            "privacy_consent": self.privacy_consent,
+            "privacy_consent_at": self.privacy_consent_at.isoformat() if self.privacy_consent_at else None,
+            "privacy_notice_version": self.privacy_notice_version,
             "status": self.status,
             "matched_resident_id": self.matched_resident_id,
             "reviewed_by": self.reviewed_by,

@@ -1,8 +1,18 @@
 import { useEffect, useState } from "react";
 
+const SAVED_DATA_TIME_KEY = "evacway_saved_public_data_at";
+
+function formatSavedTime(value) {
+  const date = value ? new Date(value) : null;
+  return date && !Number.isNaN(date.getTime())
+    ? date.toLocaleString([], { dateStyle: "medium", timeStyle: "short" })
+    : "the last time you were online";
+}
+
 export default function NetworkStatus() {
   const [offline, setOffline] = useState(!navigator.onLine);
   const [restored, setRestored] = useState(false);
+  const [savedAt, setSavedAt] = useState(() => localStorage.getItem(SAVED_DATA_TIME_KEY));
 
   useEffect(() => {
     let restoreTimer;
@@ -22,10 +32,17 @@ export default function NetworkStatus() {
 
     window.addEventListener("offline", handleOffline);
     window.addEventListener("online", handleOnline);
+    const handleServiceWorkerMessage = (event) => {
+      if (event.data?.type !== "evacway-saved-data" || !event.data.savedAt) return;
+      localStorage.setItem(SAVED_DATA_TIME_KEY, event.data.savedAt);
+      setSavedAt(event.data.savedAt);
+    };
+    navigator.serviceWorker?.addEventListener("message", handleServiceWorkerMessage);
     return () => {
       window.clearTimeout(restoreTimer);
       window.removeEventListener("offline", handleOffline);
       window.removeEventListener("online", handleOnline);
+      navigator.serviceWorker?.removeEventListener("message", handleServiceWorkerMessage);
     };
   }, []);
 
@@ -33,7 +50,9 @@ export default function NetworkStatus() {
 
   return (
     <div className={`network-status ${offline ? "is-offline" : "is-online"}`} role="status">
-      {offline ? "Offline. Live reports and requests are unavailable." : "Connection restored."}
+      {offline
+        ? `You're offline. Showing saved data from ${formatSavedTime(savedAt)}`
+        : "Connection restored."}
     </div>
   );
 }

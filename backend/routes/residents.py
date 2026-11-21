@@ -1,13 +1,14 @@
 import re
 import time
 from collections import defaultdict
+from threading import Lock
 
 from datetime import date, datetime
 
 import pandas as pd
 
 from flask import Blueprint, request, jsonify
-from flask_jwt_extended import get_jwt_identity, jwt_required, get_jwt
+from flask_jwt_extended import get_jwt_identity
 from sqlalchemy import func
 from sqlalchemy.orm import joinedload
 
@@ -22,14 +23,95 @@ from models import (
     EvacuationAssignment,
     CenterBarangay,
     SystemLog,
+    ResidentLookupLog,
     User,
     RosterYear,
 )
 
-from utils import role_required
+from utils import get_optional_caller, public_room_payload, role_required
 
 
 residents_bp = Blueprint('residents', __name__)
+
+_lookup_limit_buckets = defaultdict(list)
+_lookup_miss_counts = defaultdict(int)
+_lookup_limit_lock = Lock()
+LOOKUP_RATE_LIMIT_MAX_REQUESTS = 10
+LOOKUP_RATE_LIMIT_WINDOW_SECONDS = 900
+
+
+def _lookup_rate_keys(scope, caller):
+    client_ip = (
+        request.headers.get('X-Real-IP')
+        or request.remote_addr
+        or 'unknown'
+    ).strip()
+    keys = [f"{scope}:ip:{client_ip}"]
+    account_id = caller.get('account_id') if caller else None
+    if account_id is not None:
+        keys.append(f"{scope}:account:{account_id}")
+    return keys
+
+
+def _is_lookup_rate_limited(scope, caller, max_requests=None, window_seconds=None):
+    max_requests = max_requests or LOOKUP_RATE_LIMIT_MAX_REQUESTS
+    window_seconds = window_seconds or LOOKUP_RATE_LIMIT_WINDOW_SECONDS
+    now = time.monotonic()
+    keys = _lookup_rate_keys(scope, caller)
+    with _lookup_limit_lock:
+        for key in keys:
+            _lookup_limit_buckets[key] = [
+                timestamp for timestamp in _lookup_limit_buckets[key]
+                if now - timestamp < window_seconds
+            ]
+        if any(len(_lookup_limit_buckets[key]) >= max_requests for key in keys):
+            return True
+        for key in keys:
+            _lookup_limit_buckets[key].append(now)
+    return False
+
+
+def _mask_lookup_value(value):
+    if value is None or str(value).strip() == '':
+        return None
+    words = str(value).strip().split()
+    return ' '.join(word[:1] + '*' * max(len(word) - 1, 1) for word in words)[:150]
+
+
+def _record_resident_lookup(scope, caller, name=None, barangay=None, birthdate=None, found=False):
+    db.session.add(ResidentLookupLog(
+        lookup_type=scope,
+        resident_account_id=caller.get('account_id') if caller else None,
+        client_ip=_lookup_rate_keys(scope, caller)[0].split(':ip:', 1)[-1],
+        query_name_masked=_mask_lookup_value(name),
+        query_barangay_masked=(_mask_lookup_value(barangay) or '')[:100] or None,
+        query_birthdate_masked='****-**-**' if birthdate else None,
+        found=bool(found),
+    ))
+    db.session.commit()
+
+
+def _apply_lookup_miss_delay(scope, caller, found):
+    keys = _lookup_rate_keys(scope, caller)
+    delay = 0
+    with _lookup_limit_lock:
+        for key in keys:
+            if found:
+                _lookup_miss_counts.pop(key, None)
+            else:
+                _lookup_miss_counts[key] += 1
+                if _lookup_miss_counts[key] >= 3:
+                    delay = max(delay, min(0.75, 0.25 * (_lookup_miss_counts[key] - 2)))
+    if delay:
+        time.sleep(delay)
+
+
+def _lookup_rate_limit_response():
+    return jsonify({"error": "Too many attempts. Please wait a moment and try again."}), 429
+
+
+def _no_center_match_response():
+    return jsonify({"message": "No match found."}), 200
 
 
 # =========================================================
@@ -2181,284 +2263,186 @@ def list_residents():
 
 
 # =========================================================
-# FIND MY EVACUATION CENTER (public resident lookup)
-# =========================================================
-#
-# Used by the public map (ResidentHome.jsx) so a resident can
-# type their household head's name and see which evacuation
-# center / room they're assigned to. Intentionally NOT behind
-# @role_required: residents using this page are not logged in.
-#
+# FIND MY EVACUATION CENTER (verified public lookup)
 # =========================================================
 
-@residents_bp.route(
-    '/api/residents/find-center',
-    methods=['GET']
-)
-@jwt_required(optional=True)
-def find_my_evacuation_center():
+def _resident_family_assignment(family_id):
+    assignment = (
+        db.session.query(EvacuationAssignment)
+        .join(Resident, EvacuationAssignment.resident_id == Resident.id)
+        .filter(Resident.family_id == family_id)
+        .order_by(EvacuationAssignment.id.asc())
+        .first()
+    )
+    if not assignment:
+        return None, None
+    center_id = assignment.evacuation_center_id
+    if assignment.room_id:
+        center_id = db.session.query(EvacuationCenterRoom.evacuation_center_id).filter_by(
+            id=assignment.room_id
+        ).scalar()
+    center = db.session.query(
+        EvacuationCenter.id, EvacuationCenter.name
+    ).filter_by(id=center_id).first() if center_id else None
+    return assignment, center
 
-    jwt_claims = get_jwt() or {}
-    explicit_resident_id = request.args.get('resident_id', type=int)
-    name = (request.args.get('name', '') or '').strip()
 
-    if explicit_resident_id is not None:
-        resident_id = explicit_resident_id
-    elif not name:
-        resident_id = jwt_claims.get('resident_id')
-    else:
-        resident_id = None
+@residents_bp.route('/api/residents/my-center-lookup', methods=['POST'])
+def lookup_my_evacuation_center():
+    caller = get_optional_caller()
+    payload = request.get_json(silent=True) or {}
+    full_name = str(payload.get('full_name') or '').strip()
+    barangay_id = payload.get('barangay_id')
+    barangay_value = str(barangay_id or '').strip()
+    birthdate_value = str(payload.get('birthdate') or '').strip()
+    birthdate = None
+    try:
+        barangay_id = int(barangay_id)
+        birthdate = date.fromisoformat(birthdate_value)
+    except (TypeError, ValueError):
+        barangay_id = None
 
-    if not resident_id and len(name) < 3:
-
-        return jsonify({
-            "error": (
-                "Enter your full name "
-                "(at least 3 letters)."
-            )
-        }), 400
-
-    query_normalized = normalize_name(name) if name else ""
-
-    if resident_id:
-        target_res = Resident.query.get(resident_id)
-        if target_res and target_res.family_id:
-            families = [Family.query.get(target_res.family_id)]
-        else:
-            families = []
-    else:
-        target_res = None
-        families = Family.query.all()
-
-    matches = []
-
-    for family in families:
-        if not family:
-            continue
-
-        residents = Resident.query.filter_by(
-            family_id=family.id
-        ).all()
-
-        if not residents:
-
-            continue
-
-        head_normalized = normalize_name(
-            family.head_name
+    if _is_lookup_rate_limited('my_center', caller):
+        _record_resident_lookup(
+            'my_center', caller, full_name, barangay_value, birthdate_value, False
         )
+        return _lookup_rate_limit_response()
 
-        if resident_id and target_res:
-            matched_resident = target_res
-        else:
-            matched_resident = next(
-                (
-                    r for r in residents
-                    if _name_matches(query_normalized, normalize_name(r.get_full_name()))
-                    or _name_matches(query_normalized, normalize_name(f"{r.first_name} {r.last_name}"))
-                ),
-                None
-            )
-
-            if not _name_matches(
-                query_normalized,
-                head_normalized
-            ) and matched_resident is None:
-
+    matching_families = []
+    normalized_name = normalize_name(full_name)
+    if normalized_name and barangay_id and birthdate:
+        for family in Family.query.filter_by(barangay_id=barangay_id).all():
+            if normalize_name(family.head_name) != normalized_name:
                 continue
+            heads = Resident.query.filter_by(
+                family_id=family.id,
+                is_head_of_family=True,
+            ).all()
+            if any(head.date_of_birth == birthdate for head in heads):
+                matching_families.append(family)
+                if len(matching_families) > 1:
+                    break
 
-        barangay = Barangay.query.get(
-            family.barangay_id
-        )
+    center = None
+    if len(matching_families) == 1:
+        _, center = _resident_family_assignment(matching_families[0].id)
+    found = bool(len(matching_families) == 1 and center)
+    _record_resident_lookup(
+        'my_center', caller, full_name, barangay_value, birthdate_value, found
+    )
+    _apply_lookup_miss_delay('my_center', caller, found)
+    if not found:
+        return _no_center_match_response()
+    return jsonify({'center_name': center.name}), 200
 
-        representative = (
-            matched_resident
-            or next((r for r in residents if r.is_head_of_family), None)
-            or residents[0]
-        )
 
-        # -----------------------------------------------------
-        # Find this family's evacuation assignment, if any.
-        # A family may have multiple residents; any assigned
-        # resident is enough to identify the family's room.
-        # -----------------------------------------------------
+@residents_bp.route('/api/residents/my-center', methods=['GET'])
+def get_my_evacuation_center():
+    caller = get_optional_caller()
+    if _is_lookup_rate_limited('my_center', caller):
+        _record_resident_lookup('my_center_self', caller, found=False)
+        return _lookup_rate_limit_response()
+    if caller is None:
+        _record_resident_lookup('my_center_self', None, found=False)
+        return jsonify({'error': 'Authentication required.'}), 401
+    if caller.get('role') != 'resident':
+        _record_resident_lookup('my_center_self', caller, found=False)
+        return jsonify({'error': 'Resident access required.'}), 403
 
-        assignment = (
-            db.session.query(
-                EvacuationAssignment
-            )
-            .join(
-                Resident,
-                EvacuationAssignment.resident_id
-                == Resident.id
-            )
-            .filter(
-                Resident.family_id
-                == family.id
-            )
-            .first()
-        )
+    assignment = EvacuationAssignment.query.filter_by(
+        resident_id=caller['resident_id']
+    ).order_by(EvacuationAssignment.id.asc()).first()
+    room = db.session.get(EvacuationCenterRoom, assignment.room_id) if assignment and assignment.room_id else None
+    center_id = room.evacuation_center_id if room else (
+        assignment.evacuation_center_id if assignment else None
+    )
+    center = db.session.query(
+        EvacuationCenter.id, EvacuationCenter.name
+    ).filter_by(id=center_id).first() if center_id else None
+    _record_resident_lookup('my_center_self', caller, found=bool(center))
+    _apply_lookup_miss_delay('my_center', caller, bool(center))
+    if not center:
+        return _no_center_match_response()
 
-        evacuation_center_data = None
-        room_data = None
-        is_checked_in = False
-        household_members_list = []
-
-        if assignment:
-            fam_assignments = (
-                db.session.query(EvacuationAssignment, Resident)
-                .join(Resident, EvacuationAssignment.resident_id == Resident.id)
-                .filter(Resident.family_id == family.id)
-                .all()
-            )
-            for a_row, res_row in fam_assignments:
-                mem_checked_in = a_row.checked_in_at is not None
-                if mem_checked_in:
-                    is_checked_in = True
-                household_members_list.append({
-                    "resident_id": res_row.id,
-                    "full_name": res_row.get_full_name(),
-                    "is_checked_in": mem_checked_in,
-                    "checked_in_at": a_row.checked_in_at.isoformat() if a_row.checked_in_at else None,
-                    "checkin_status": "Checked in" if mem_checked_in else "Not yet arrived",
-                })
-
-            room = (
-                EvacuationCenterRoom.query.get(assignment.room_id)
-                if assignment.room_id
-                else None
-            )
-            center = None
-            if room:
-                center = EvacuationCenter.query.get(room.evacuation_center_id)
-            elif assignment.evacuation_center_id:
-                center = EvacuationCenter.query.get(assignment.evacuation_center_id)
-
-            if room:
-                building = room.building
-                building_id = room.building_id
-                building_name = building.name if building else None
-                building_floors = building.floors if building else None
-
-                # If building not linked, find nearest building in the center
-                from geoalchemy2.shape import to_shape
-                from shapely.geometry import Point
-
-                if not building_name and center:
-                    center_buildings = EvacuationCenterBuilding.query.filter_by(
-                        evacuation_center_id=center.id
-                    ).all()
-                    if center_buildings:
-                        if room.latitude and room.longitude:
-                            rpt = Point(float(room.longitude), float(room.latitude))
-                            closest_b = min(
-                                center_buildings,
-                                key=lambda b: to_shape(b.geom).distance(rpt)
-                            )
-                            building_id = closest_b.id
-                            building_name = closest_b.name
-                            building_floors = closest_b.floors
-                        else:
-                            closest_b = center_buildings[0]
-                            building_id = closest_b.id
-                            building_name = closest_b.name
-                            building_floors = closest_b.floors
-
-                # Determine recommended entrance
-                recommended_entrance = "Entrance 1"
-                if center and center.entrance_geom is not None:
-                    try:
-                        entrances_shape = to_shape(center.entrance_geom)
-                        pts = (
-                            list(entrances_shape.geoms)
-                            if hasattr(entrances_shape, 'geoms')
-                            else [entrances_shape]
-                        )
-                        ref_pt = None
-                        if building_id:
-                            target_b = EvacuationCenterBuilding.query.get(building_id)
-                            if target_b:
-                                ref_pt = to_shape(target_b.geom).centroid
-                        if not ref_pt and room.latitude and room.longitude:
-                            ref_pt = Point(float(room.longitude), float(room.latitude))
-                        if ref_pt and pts:
-                            best_idx = 0
-                            min_d = float('inf')
-                            for idx, pt in enumerate(pts):
-                                d = pt.distance(ref_pt)
-                                if d < min_d:
-                                    min_d = d
-                                    best_idx = idx
-                            recommended_entrance = f"Entrance {best_idx + 1}"
-                        if building_id == 2 or (building_name and "south" in building_name.lower()):
-                            recommended_entrance = "Entrance 3"
-                    except Exception:
-                        if building_id == 2 or (building_name and "south" in building_name.lower()):
-                            recommended_entrance = "Entrance 3"
-
-                room_data = {
-                    "id": room.id,
-                    "room_number": room.room_number,
-                    "building_id": building_id,
-                    "building_name": building_name,
-                    "building_floors": building_floors,
-                    "floor": room.floor,
-                    "floor_area": None,
-                    "recommended_entrance": recommended_entrance,
-                    "latitude": float(room.latitude) if room.latitude is not None else None,
-                    "longitude": float(room.longitude) if room.longitude is not None else None,
-                    "is_checked_in": is_checked_in,
-                    "checkin_status": "Checked in" if is_checked_in else "Reserved for your family",
-                    "members": household_members_list,
-                }
-
-            if center:
-                evacuation_center_data = {
-                    "id": center.id,
-                    "name": center.name,
-                    "center_type": center.center_type or "campus",
-                    "owner_name": center.owner_name,
-                }
-
-        matches.append({
-
-            "resident_id": representative.id,
-            "family_id": family.id,
-
-            "resident_name": representative.get_full_name(),
-
-            "household_head_name": family.head_name,
-
-            "family_code": family.family_code,
-
-            "family_members": len(household_members_list) or family.member_count or representative.family_members or 1,
-
-            "members": household_members_list,
-
-            "address": representative.address or family.address,
-
-            "barangay": (
-                barangay.name
-                if barangay
-                else None
-            ),
-
-            "is_checked_in": is_checked_in,
-
-            "checkin_status": (
-                ("Checked in" if is_checked_in else "Reserved for your family")
-                if assignment
-                else None
-            ),
-
-            "evacuation_center": evacuation_center_data,
-
-            "room": room_data
-        })
-
+    room_payload = public_room_payload(room, is_my_room=True) if room else None
     return jsonify({
-        "matches": matches
+        'center_name': center.name,
+        'room': room_payload,
+        'is_checked_in': bool(assignment and assignment.checked_in_at),
     }), 200
+
+
+@residents_bp.route('/api/residents/find-center', methods=['GET', 'POST'])
+def find_evacuation_center_for_resident():
+    caller = get_optional_caller()
+    if request.method == 'GET':
+        full_name = str(request.args.get('name') or '').strip()
+        if _is_lookup_rate_limited('find_someone', caller):
+            _record_resident_lookup('find_someone', caller, full_name, found=False)
+            return _lookup_rate_limit_response()
+        _record_resident_lookup('find_someone', caller, full_name, found=False)
+        if caller is None:
+            return jsonify({'error': 'Authentication required.'}), 401
+        if caller.get('role') != 'resident':
+            return jsonify({'error': 'Resident access required.'}), 403
+        return jsonify({'error': 'Send the full name in a protected search request.'}), 405
+
+    payload = request.get_json(silent=True) or {}
+    full_name = str(payload.get('full_name') or '').strip()
+    if _is_lookup_rate_limited('find_someone', caller):
+        _record_resident_lookup('find_someone', caller, full_name, found=False)
+        return _lookup_rate_limit_response()
+    if caller is None:
+        _record_resident_lookup('find_someone', None, full_name, found=False)
+        return jsonify({'error': 'Authentication required.'}), 401
+    if caller.get('role') != 'resident':
+        _record_resident_lookup('find_someone', caller, full_name, found=False)
+        return jsonify({'error': 'Resident access required.'}), 403
+
+    normalized_name = normalize_name(full_name)
+    center_names = {}
+    if normalized_name:
+        families = Family.query.filter_by(find_someone_opt_out=False).all()
+        for family in families:
+            residents = Resident.query.filter_by(family_id=family.id).all()
+            if not any(
+                normalize_name(resident.get_full_name()) == normalized_name
+                for resident in residents
+            ):
+                continue
+            _, center = _resident_family_assignment(family.id)
+            if center:
+                center_names[center.id] = center.name
+
+    found = bool(center_names)
+    _record_resident_lookup('find_someone', caller, full_name, found=found)
+    _apply_lookup_miss_delay('find_someone', caller, found)
+    return jsonify({'matches': [{'center_name': name} for name in center_names.values()]}), 200
+
+
+@residents_bp.route('/api/residents/profile/find-someone', methods=['GET', 'PATCH'])
+def resident_find_someone_privacy():
+    caller = get_optional_caller()
+    if caller is None:
+        return jsonify({'error': 'Authentication required.'}), 401
+    if caller.get('role') != 'resident':
+        return jsonify({'error': 'Resident access required.'}), 403
+
+    resident = db.session.get(Resident, caller['resident_id'])
+    family = db.session.get(Family, resident.family_id) if resident and resident.family_id else None
+    if not family:
+        return jsonify({'error': 'Family profile not found.'}), 404
+
+    if request.method == 'GET':
+        return jsonify({'find_someone_opt_out': bool(family.find_someone_opt_out)}), 200
+
+    payload = request.get_json(silent=True) or {}
+    value = payload.get('find_someone_opt_out')
+    if not isinstance(value, bool):
+        return jsonify({'error': 'Choose whether your family can appear in Find someone.'}), 400
+    family.find_someone_opt_out = value
+    db.session.commit()
+    return jsonify({'find_someone_opt_out': bool(family.find_someone_opt_out)}), 200
 
 
 # =========================================================
@@ -2479,6 +2463,17 @@ def _is_autosuggest_rate_limited(ip, max_requests=30, window_seconds=60):
 
 @residents_bp.route('/api/residents/autosuggest', methods=['GET'])
 def autosuggest_residents():
+    caller = get_optional_caller()
+    query = request.args.get('q', '').strip() or request.args.get('name', '').strip()
+    if caller is None or caller.get('role') not in ('admin', 'lgu_personnel'):
+        if _is_lookup_rate_limited('find_someone', caller, max_requests=30, window_seconds=60):
+            _record_resident_lookup('find_someone', caller, query, found=False)
+            return _lookup_rate_limit_response()
+        _record_resident_lookup('find_someone', caller, query, found=False)
+        status = 401 if caller is None else 403
+        error = 'Authentication required.' if caller is None else 'Resident access required.'
+        return jsonify({"error": error}), status
+
     client_ip = (
         request.headers.get('X-Forwarded-For', '')
         .split(',')[0]
@@ -2492,7 +2487,6 @@ def autosuggest_residents():
             "error": "Rate limit exceeded. Please wait a moment before trying again."
         }), 429
 
-    query = request.args.get('q', '').strip() or request.args.get('name', '').strip()
     query_normalized = normalize_name(query)
 
     if not query_normalized or len(query_normalized) < 1:

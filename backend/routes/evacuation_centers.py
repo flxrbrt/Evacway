@@ -5,6 +5,7 @@ from sqlalchemy import func, or_
 from sqlalchemy.orm import joinedload
 from collections import defaultdict
 from datetime import date, datetime, time as dtime, timedelta
+from datetime import timezone
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
@@ -24,12 +25,13 @@ from models import (
     SystemLog,
     EvacuationOperation,
     EvacuationCheckInRecord,
+    ResidentAccount,
     philippines_now,
 )
 from geoalchemy2.shape import to_shape, from_shape
 from shapely.geometry import mapping, Polygon, MultiPoint, Point
 from flask_jwt_extended import get_jwt_identity
-from utils import role_required
+from utils import get_optional_caller, public_room_payload, role_required
 from services.non_registered_evacuees import center_occupancy, present_counts, table_ready
 
 centers_bp = Blueprint('centers', __name__)
@@ -1067,6 +1069,41 @@ def get_evacuation_centers():
     })
 
 
+@centers_bp.route('/api/public/offline-centers', methods=['GET'])
+def get_public_offline_centers():
+    centers = (
+        EvacuationCenter.query
+        .filter(EvacuationCenter.is_active.is_(True), EvacuationCenter.geom.is_not(None))
+        .order_by(EvacuationCenter.name.asc())
+        .all()
+    )
+    features = []
+    for center in centers:
+        try:
+            geometry = mapping(to_shape(center.geom))
+        except (TypeError, ValueError):
+            continue
+        features.append({
+            "type": "Feature",
+            "id": center.id,
+            "geometry": geometry,
+            "properties": {
+                "id": center.id,
+                "name": center.name,
+                "is_active": True,
+                "evacuation_status": (center.evacuation_status or "standby").lower(),
+            },
+        })
+
+    response = jsonify({
+        "type": "FeatureCollection",
+        "features": features,
+        "last_updated": datetime.now(timezone.utc).isoformat(),
+    })
+    response.headers["Cache-Control"] = "public, max-age=0, must-revalidate"
+    return response
+
+
 @centers_bp.route('/api/evacuation-centers/<int:center_id>', methods=['GET'])
 def get_evacuation_center_details(center_id):
     center = EvacuationCenter.query.get(center_id)
@@ -1117,6 +1154,30 @@ def get_evacuation_center_details(center_id):
         room_dict["barangay_id"] = room_bid
         room_dict["barangay"] = linked_by_id.get(room_bid) if room_bid else None
         rooms_data.append(room_dict)
+
+    caller = get_optional_caller()
+    is_staff = caller is not None and caller.get('role') in ('admin', 'lgu_personnel')
+    if not is_staff:
+        resident_id = caller.get('resident_id') if caller and caller.get('role') == 'resident' else None
+        active_rooms = [room for room in rooms if room.is_active]
+        my_room_ids = set()
+        if resident_id and active_rooms:
+            my_room_ids = {
+                room_id for (room_id,) in db.session.query(EvacuationAssignment.room_id)
+                .filter(
+                    EvacuationAssignment.resident_id == resident_id,
+                    EvacuationAssignment.room_id.in_([room.id for room in active_rooms]),
+                )
+                .all()
+            }
+        return jsonify({
+            **feature,
+            "rooms": [
+                public_room_payload(room, room.id in my_room_ids)
+                for room in active_rooms
+            ],
+            "assigned_families": [],
+        })
 
     # Load distinct assigned families across all rooms or direct assignments of this center
     center_assignment_filter = or_(
@@ -2045,10 +2106,27 @@ def update_evacuee_check_in(center_id):
 
 
 @centers_bp.route('/api/evacuation-centers/check-in/auto', methods=['POST'])
+@role_required('resident')
 def auto_geofence_check_in():
-    data = request.get_json() or {}
-    resident_id = data.get('resident_id')
-    family_id = data.get('family_id')
+    data = request.get_json(silent=True)
+    data = data if isinstance(data, dict) else {}
+    account = db.session.get(ResidentAccount, int(get_jwt_identity()))
+    resident = db.session.get(Resident, account.resident_id) if account else None
+    if not resident:
+        return jsonify({"error": "Resident access required."}), 403
+
+    requested_resident_id = data.get('resident_id')
+    requested_family_id = data.get('family_id')
+    try:
+        if requested_resident_id is not None and int(requested_resident_id) != resident.id:
+            return jsonify({"error": "Resident access required."}), 403
+        if requested_family_id is not None and int(requested_family_id) != resident.family_id:
+            return jsonify({"error": "Resident access required."}), 403
+    except (TypeError, ValueError):
+        return jsonify({"error": "Resident access required."}), 403
+
+    resident_id = resident.id if requested_resident_id is not None else None
+    family_id = resident.family_id if requested_family_id is not None else None
     center_id = data.get('center_id')
     lat = data.get('latitude')
     lng = data.get('longitude')

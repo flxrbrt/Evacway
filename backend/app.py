@@ -24,6 +24,7 @@ from routes.buildings import buildings_bp
 from routes.resident_registrations import registrations_bp
 from routes.reference_options import reference_options_bp
 from routes.non_registered_evacuees import nre_bp
+from routes.offline_map import offline_map_bp
 
 
 app = Flask(__name__)
@@ -132,6 +133,7 @@ app.register_blueprint(buildings_bp)
 app.register_blueprint(registrations_bp)
 app.register_blueprint(reference_options_bp)
 app.register_blueprint(nre_bp)
+app.register_blueprint(offline_map_bp)
 
 
 # =========================================================
@@ -154,7 +156,7 @@ def handle_unhandled_exception(e):
         resp.status_code = e.code or 500
         return resp
     app.logger.exception("Unhandled server exception: %s", e)
-    resp = jsonify({"error": str(e) or "Internal server error"})
+    resp = jsonify({"error": "Internal server error"})
     resp.status_code = 500
     return resp
 

@@ -263,16 +263,18 @@ function CenterArrivalList({
 /* -------------------------------------------------------------
    STATUS GROUPING HELPERS
    ------------------------------------------------------------- */
-function getHazardStatusGroup(status) {
-  const s = String(status || "").toLowerCase().trim();
-  if (s === "validated" || s === "active") return "active";
-  if (s === "pending") return "pending";
-  if (s === "resolved" || s === "cleared" || s === "rejected") return "cleared";
+function getHazardStatusGroup(report) {
+  const serverGroup = String(report?.status_group || "").toLowerCase();
+  if (["active", "pending", "cleared"].includes(serverGroup)) return serverGroup;
+  const status = String(report?.status || "").toLowerCase().trim();
+  if (status === "pending") return "pending";
+  if (["resolved", "cleared", "rejected"].includes(status)) return "cleared";
   return "active";
 }
 
 function getRescueStatusGroup(status) {
-  const s = String(status || "").toLowerCase().trim();
+  const rawStatus = typeof status === "object" ? status?.status : status;
+  const s = String(rawStatus || "").toLowerCase().trim();
   if (s === "pending" || s === "open") return "open";
   if (s === "acknowledged" || s === "responding" || s === "in_progress") return "in_progress";
   if (s === "resolved" || s === "closed" || s === "cleared") return "resolved";
@@ -400,7 +402,7 @@ function IncidentTrendsCard({
       counts[s.key] = 0;
     });
     monthItems.forEach((item) => {
-      const grp = statusExtractor ? statusExtractor(item.status) : item.status;
+      const grp = statusExtractor ? statusExtractor(item) : item.status;
       if (counts[grp] !== undefined) {
         counts[grp] += 1;
       }
@@ -455,7 +457,7 @@ function IncidentTrendsCard({
       if (!isNaN(d.getTime())) {
         const dayNum = d.getDate();
         if (dayNum >= 1 && dayNum <= totalDays) {
-          const grp = statusExtractor ? statusExtractor(item.status) : item.status;
+          const grp = statusExtractor ? statusExtractor(item) : item.status;
           if (list[dayNum - 1] && list[dayNum - 1].counts[grp] !== undefined) {
             list[dayNum - 1].counts[grp] += 1;
           }

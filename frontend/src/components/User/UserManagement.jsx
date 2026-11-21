@@ -29,6 +29,7 @@ import { api } from "../../services/api";
 import { useAuth } from "../../context/AuthContext";
 import { queryKeys, useUsers } from "../../hooks/useEvacuationQueries";
 import { Button, RoleChip, StatCard, StatusPill } from "../ui";
+import AdminMfaRecoveryApprovals from "./AdminMfaRecoveryApprovals";
 import "./UserManagement.css";
 
 function initials(name = "") {
@@ -550,6 +551,7 @@ function UserManagement() {
   return (
     <div className="um-page">
       <div className="um-root">
+        {currentUser?.role === "admin" && <AdminMfaRecoveryApprovals />}
         {/* PAGE HEADER */}
         <header className="um-header">
           <div className="um-header-copy">

@@ -631,6 +631,10 @@ export default function ResidentRegistrations({ focusRegistrationId = null }) {
     if (event) event.preventDefault();
     if (!selectedRequest || actionLockRef.current || decisionResult) return;
     const reason = rejectionReason.trim();
+    if (!reason) {
+      setActionError("A rejection reason is required.");
+      return;
+    }
     actionLockRef.current = true;
     setActionLoading(true);
     setActionError("");
@@ -1688,15 +1692,19 @@ export default function ResidentRegistrations({ focusRegistrationId = null }) {
                       <strong>{selectedRequest.full_name || joinName(selectedRequest)}</strong> as rejected.
                     </p>
                     <label className="resident-confirm-label" htmlFor="resident-rejection-reason">
-                      Reason (optional)
+                      Reason <span aria-hidden="true">*</span>
                     </label>
                     <textarea
                       id="resident-rejection-reason"
                       value={rejectionReason}
-                      onChange={(event) => setRejectionReason(event.target.value)}
-                      placeholder="Add an optional note to include in the email..."
+                      onChange={(event) => {
+                        setRejectionReason(event.target.value);
+                        if (event.target.value.trim()) setActionError("");
+                      }}
+                      placeholder="Enter the reason to include in the decision message..."
                       maxLength={2000}
                       rows={3}
+                      required
                       disabled={actionLoading}
                     />
                     <div className="resident-confirm-actions">
@@ -1710,7 +1718,7 @@ export default function ResidentRegistrations({ focusRegistrationId = null }) {
                       <Button
                         variant="danger"
                         type="submit"
-                        disabled={actionLoading}
+                        disabled={actionLoading || !rejectionReason.trim()}
                       >
                         {actionLoading && (
                           <Loader2 size={15} strokeWidth={2} className="rr-spin" aria-hidden="true" />

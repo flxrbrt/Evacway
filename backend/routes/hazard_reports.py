@@ -31,6 +31,11 @@ from services.pathfinding import (
     haversine,
 )
 from services.sogod_boundary import is_inside_sogod
+from services.public_status import (
+    active_hazard_status_filter,
+    get_public_status_summary,
+    hazard_status_group,
+)
 
 
 reports_bp = Blueprint('reports', __name__)
@@ -107,6 +112,7 @@ def report_to_dict(
         "photos": photos,
         "report_type": report.report_type,
         "status": report.status,
+        "status_group": hazard_status_group(report.status),
         "response_notes": report.response_notes,
         "latitude": float(lat) if lat is not None else None,
         "longitude": float(lng) if lng is not None else None,
@@ -512,7 +518,10 @@ def list_hazard_reports():
         .outerjoin(validator_user, HazardReport.validated_by == validator_user.id)
     )
     if status_filter:
-        query = query.filter(HazardReport.status == status_filter)
+        if status_filter == 'active':
+            query = query.filter(active_hazard_status_filter())
+        else:
+            query = query.filter(HazardReport.status == status_filter)
     rows = query.order_by(HazardReport.submitted_at.desc()).all()
 
     results = []
@@ -554,13 +563,13 @@ def closed_road_names_near(report):
 
 @reports_bp.route('/api/hazard-reports/public', methods=['GET'])
 def list_public_hazard_reports():
-    # Public on purpose: residents don't log in. Only validated reports,
+    # Public on purpose: residents don't log in. Only active reports,
     # and only fields that are safe to show on the public map.
     query = db.session.query(
         HazardReport,
         func.ST_Y(HazardReport.geom).label('latitude'),
         func.ST_X(HazardReport.geom).label('longitude')
-    ).filter(HazardReport.status == 'validated')
+    ).filter(active_hazard_status_filter())
     rows = query.order_by(HazardReport.submitted_at.desc()).all()
 
     result = []
@@ -592,6 +601,13 @@ def list_public_hazard_reports():
         })
 
     return jsonify(result)
+
+
+@reports_bp.route('/api/public-status-summary', methods=['GET'])
+def get_public_status_summary_route():
+    response = jsonify(get_public_status_summary())
+    response.headers['Cache-Control'] = 'public, max-age=60'
+    return response
 
 
 @reports_bp.route('/api/hazard-reports/<int:report_id>/validate', methods=['PATCH'])

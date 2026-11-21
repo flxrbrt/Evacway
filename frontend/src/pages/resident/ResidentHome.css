@@ -437,6 +437,33 @@
   margin: 2px 0;
 }
 
+.profile-dropdown-privacy {
+  padding: 6px 8px;
+}
+
+.profile-dropdown-privacy label {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--text, #0f172a);
+  font-size: 12px;
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.profile-dropdown-privacy input {
+  margin: 2px 0 0;
+  accent-color: var(--primary, #2563eb);
+  flex: 0 0 auto;
+}
+
+.profile-dropdown-privacy-error {
+  display: block;
+  margin: 5px 0 0 22px;
+  color: var(--danger, #b42318);
+  font-size: 11px;
+}
+
 .profile-dropdown-logout-btn {
   display: flex;
   align-items: center;
@@ -877,6 +904,85 @@
 .control-stack-btn:disabled {
   cursor: default;
   opacity: 0.7;
+}
+
+.offline-map-download-icon {
+  position: relative;
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+  align-items: center;
+  justify-content: center;
+}
+
+.offline-map-download-icon-base,
+.offline-map-download-icon-fill {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.offline-map-download-icon-base {
+  color: var(--brand);
+  opacity: 0.24;
+}
+
+.offline-map-download-icon-fill {
+  color: var(--brand);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: clip-path 180ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .offline-map-download-icon-fill {
+    transition: none;
+  }
+}
+
+.offline-map-download-status {
+  position: absolute;
+  top: 104px;
+  right: calc(100% + 8px);
+  width: max-content;
+  max-width: min(280px, calc(100vw - 96px));
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--paper);
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.14);
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.4;
+  z-index: 410;
+}
+
+.offline-map-download-status.is-saved {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.offline-map-download-btn:hover + .offline-map-download-status.is-saved,
+.offline-map-download-btn:focus-visible + .offline-map-download-status.is-saved {
+  opacity: 1;
+  visibility: visible;
+}
+
+.public-centers-updated {
+  position: absolute;
+  bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  left: 12px;
+  z-index: 390;
+  padding: 6px 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--paper);
+  color: var(--muted, #64748b);
+  font-size: 11px;
+  line-height: 1.3;
 }
 
 .right-control-stack.mobile .control-stack-btn {

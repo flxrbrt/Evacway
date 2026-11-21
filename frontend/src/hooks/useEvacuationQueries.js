@@ -29,6 +29,7 @@ export const queryKeys = {
   hazardZones: ["hazard-zones"],
   roadSegments: ["road-segments"],
   publicHazardReports: ["hazard-reports", "public"],
+  publicStatusSummary: ["public-status-summary"],
   sogodBoundary: ["sogod-boundary"],
   dashboardFamilies: ["families", "dashboard"],
   checkInSummary: ["evacuee-check-in-list", "summary"],
@@ -85,6 +86,16 @@ export function useEvacuationCenters(includeInactive = false, options = {}) {
   return useQuery({
     queryKey: includeInactive ? queryKeys.allCenters : queryKeys.activeCenters,
     queryFn: () => api.getEvacuationCenters(includeInactive),
+    ...options,
+  });
+}
+
+export function usePublicOfflineCenters(options = {}) {
+  return useQuery({
+    queryKey: ["public-offline-centers"],
+    queryFn: api.getPublicOfflineCenters,
+    staleTime: 0,
+    gcTime: 60 * 60 * 1000,
     ...options,
   });
 }
@@ -171,6 +182,17 @@ export function usePublicHazardReports(options = {}) {
   return useQuery({
     queryKey: queryKeys.publicHazardReports,
     queryFn: api.getPublicHazardReports,
+    ...options,
+  });
+}
+
+export function usePublicStatusSummary(options = {}) {
+  return useQuery({
+    queryKey: queryKeys.publicStatusSummary,
+    queryFn: api.getPublicStatusSummary,
+    staleTime: 60_000,
+    gcTime: 60_000,
+    refetchInterval: 60_000,
     ...options,
   });
 }

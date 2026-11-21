@@ -200,7 +200,7 @@ class MemberEditFlowTests(unittest.TestCase):
     def _auth_headers(self):
         token = create_access_token(
             identity=str(self.admin_id),
-            additional_claims={'role': 'admin'},
+            additional_claims={'role': 'admin', 'account_type': 'user', 'mfa_verified': True, 'mfa_version': 0},
         )
         return {'Authorization': f'Bearer {token}'}
 

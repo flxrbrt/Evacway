@@ -13,6 +13,7 @@ import {
   faPhone,
 } from "@fortawesome/free-solid-svg-icons";
 import { api } from "../../services/api";
+import { emergencyContacts, createSmsUri, buildRescueMessage } from "../../config/emergencyContacts";
 import { queryKeys } from "../../hooks/useEvacuationQueries";
 import { createSelectedLocationElement, refineGeolocation } from "../../utils/mapLocationIndicators";
 import { useAuth } from "../../context/AuthContext";
@@ -20,20 +21,6 @@ import { needsLocationConfirmation } from "../../utils/locationConfirmation";
 import "./RescueAlertModal.css";
 
 const MAX_PHOTOS = 5;
-
-// Hotline numbers reused from existing app data (backend/seed.py and evacuation centers)
-const EMERGENCY_HOTLINES = [
-  {
-    label: "Municipal DRRMO",
-    number: "0917 123 4567",
-    tel: "09171234567",
-  },
-  {
-    label: "Sogod Emergency Operations",
-    number: "0917 987 6543",
-    tel: "09179876543",
-  },
-];
 
 export default function RescueAlertModal({
   onClose,
@@ -63,6 +50,9 @@ export default function RescueAlertModal({
   const [coordinates, setCoordinates] = useState(initialCoordinates);
   const [addressText, setAddressText] = useState("");
   const [locationMessage, setLocationMessage] = useState("");
+  const [guestLocation, setGuestLocation] = useState("");
+  const [peopleNeedingRescue, setPeopleNeedingRescue] = useState("");
+  const [guestCoordinates, setGuestCoordinates] = useState(null);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [locating, setLocating] = useState(false);
@@ -283,6 +273,46 @@ export default function RescueAlertModal({
       });
   }
 
+  function captureGuestLocation() {
+    setLocationMessage("");
+    setGuestCoordinates(null);
+    if (!navigator.geolocation) {
+      setLocationMessage("GPS is unavailable. Type a nearby street, landmark, or barangay below.");
+      return;
+    }
+
+    setLocating(true);
+    navigator.geolocation.getCurrentPosition(
+      ({ coords: position }) => {
+        setGuestCoordinates({ latitude: position.latitude, longitude: position.longitude });
+        setGuestLocation("");
+        setLocationMessage("GPS location ready to include in your text.");
+        setLocating(false);
+      },
+      () => {
+        setGuestCoordinates(null);
+        setLocationMessage("GPS location is unavailable. Type a nearby street, landmark, or barangay below.");
+        setLocating(false);
+      },
+      { enableHighAccuracy: true, timeout: 12000, maximumAge: 60000 }
+    );
+  }
+
+  const guestSmsMessage = buildRescueMessage({
+    coordinates: guestCoordinates,
+    location: guestLocation,
+    people: peopleNeedingRescue,
+  });
+  const hasGuestLocation = Boolean(guestCoordinates || guestLocation.trim());
+  const isIPadOS = navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1;
+  const guestSmsUri = hasGuestLocation
+    ? createSmsUri(
+        emergencyContacts.rescueSmsNumber,
+        guestSmsMessage,
+        isIPadOS ? `${navigator.userAgent} iPad` : navigator.userAgent
+      )
+    : "";
+
   function handleFilesSelected(event) {
     const files = Array.from(event.target.files || []);
     event.target.value = "";
@@ -418,10 +448,10 @@ export default function RescueAlertModal({
               </div>
 
               <div className="rescue-hotline-list">
-                {EMERGENCY_HOTLINES.map((item) => (
+                {emergencyContacts.hotlines.map((item) => (
                   <a
-                    key={item.tel}
-                    href={`tel:${item.tel}`}
+                    key={item.label}
+                    href={`tel:${item.number.replace(/[^+\d]/g, "")}`}
                     className="rescue-hotline-link"
                     title={`Call ${item.label} (${item.number})`}
                   >
@@ -434,12 +464,83 @@ export default function RescueAlertModal({
                     </div>
                   </a>
                 ))}
+                {emergencyContacts.hotlines.length === 0 && (
+                  <p className="rescue-hotline-unavailable" role="status">
+                    Verified emergency hotline numbers are not configured yet.
+                  </p>
+                )}
               </div>
 
               <p className="rescue-hotline-note">
                 If someone’s life is in danger, call now.
               </p>
             </div>
+
+            <section className="rescue-text-card" aria-labelledby="rescue-text-title">
+              <h3 id="rescue-text-title">Text my location</h3>
+              <p>Open a text message to send your location to rescue responders.</p>
+              <div className="rescue-location-btn-row">
+                <button
+                  type="button"
+                  className="rescue-location-button"
+                  onClick={captureGuestLocation}
+                  disabled={locating}
+                >
+                  <FontAwesomeIcon icon={faLocationCrosshairs} />
+                  <span>{locating ? "Getting GPS…" : "Use my current GPS"}</span>
+                </button>
+              </div>
+              <label className="rescue-field">
+                <span className="rescue-field-label">Location if GPS is unavailable</span>
+                <input
+                  type="text"
+                  className="rescue-text-input"
+                  value={guestLocation}
+                  onChange={(event) => {
+                    setGuestLocation(event.target.value);
+                    setGuestCoordinates(null);
+                    setLocationMessage("");
+                  }}
+                  maxLength={255}
+                  placeholder="Street, landmark, or barangay"
+                />
+              </label>
+              {locationMessage && (
+                <small className="rescue-location-message" role="status">{locationMessage}</small>
+              )}
+              <label className="rescue-field">
+                <span className="rescue-field-label">Number of people (optional)</span>
+                <input
+                  type="number"
+                  className="rescue-text-input"
+                  min="1"
+                  max="999"
+                  step="1"
+                  value={peopleNeedingRescue}
+                  onChange={(event) => setPeopleNeedingRescue(event.target.value)}
+                  placeholder="Number of people"
+                />
+              </label>
+              {guestSmsUri ? (
+                <a className="rescue-text-location-button" href={guestSmsUri}>
+                  <FontAwesomeIcon icon={faPhone} /> Text my location
+                </a>
+              ) : (
+                <button type="button" className="rescue-text-location-button" disabled>
+                  <FontAwesomeIcon icon={faPhone} /> Text my location
+                </button>
+              )}
+              {!emergencyContacts.rescueSmsNumber && (
+                <small className="rescue-location-message" role="status">
+                  Texting is unavailable until a rescue destination is configured.
+                </small>
+              )}
+              {emergencyContacts.rescueSmsNumber && !hasGuestLocation && (
+                <small className="rescue-location-message" role="status">
+                  Share your GPS location or type a location to continue.
+                </small>
+              )}
+            </section>
           </div>
 
           <footer className="rescue-unauth-footer">
@@ -532,7 +633,7 @@ export default function RescueAlertModal({
                   value={requesterContact}
                   onChange={(event) => setRequesterContact(event.target.value)}
                   maxLength={20}
-                  placeholder="e.g. 0917 123 4567"
+                  placeholder="Enter your contact number"
                 />
                 <small className="rescue-field-hint">
                   We’ll use your saved number if you leave this as is. Update it if it has changed.

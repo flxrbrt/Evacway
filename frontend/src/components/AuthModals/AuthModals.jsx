@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
   faXmark,
@@ -9,8 +9,6 @@ import {
   faEye,
   faEyeSlash,
   faCircleNotch,
-  faHouseUser,
-  faUserShield,
   faArrowLeft,
   faTriangleExclamation,
   faCircleCheck,
@@ -140,6 +138,7 @@ export function ResidentSignUpDialog({ dialogRef, isOpen, onClose, onOpenLogin }
   const [barangaysLoading, setBarangaysLoading] = useState(false);
   const [barangaysError, setBarangaysError] = useState("");
   const [fieldErrors, setFieldErrors] = useState({});
+  const [privacyConsent, setPrivacyConsent] = useState(false);
   const [formError, setFormError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
@@ -193,6 +192,7 @@ export function ResidentSignUpDialog({ dialogRef, isOpen, onClose, onOpenLogin }
     });
     setTouched({});
     setFieldErrors({});
+    setPrivacyConsent(false);
     setFormError("");
     setSubmitted(false);
     setShowPassword(false);
@@ -445,7 +445,13 @@ export function ResidentSignUpDialog({ dialogRef, isOpen, onClose, onOpenLogin }
               </button>
             </div>
           </div>
-          <p role="status">Your request is pending staff validation. We will email you once it has been reviewed.</p>
+          <div className="ew-signup-confirmation" role="status">
+            <p>Your request is awaiting staff review. Staff will review your details and match them with the resident roster.</p>
+            <p><strong>Expected wait:</strong> Review times vary with staff workload; there is no fixed estimate.</p>
+            <p>
+              We’ll email the decision to <strong>{values.email}</strong>.
+            </p>
+          </div>
           <button type="button" className="ew-btn ew-btn-primary ew-btn-block" onClick={close}>Done</button>
         </div>
       ) : (
@@ -591,13 +597,37 @@ export function ResidentSignUpDialog({ dialogRef, isOpen, onClose, onOpenLogin }
                 </div>
               </div>
             )}
+
+            <div className="ew-field ew-signup-wide ew-privacy-consent">
+              <label className="ew-privacy-consent-label" htmlFor="signup-privacy-consent">
+                <input
+                  id="signup-privacy-consent"
+                  type="checkbox"
+                  checked={privacyConsent}
+                  onChange={(event) => setPrivacyConsent(event.target.checked)}
+                  aria-describedby="signup-privacy-consent-error"
+                  required
+                />
+                <span>
+                  I have read and agree to the{" "}
+                  <Link to="/data-privacy-notice" target="_blank" rel="noreferrer">
+                    Data Privacy Notice
+                  </Link>
+                </span>
+              </label>
+              {!privacyConsent && (
+                <span className="ew-field-error" id="signup-privacy-consent-error" role="alert">
+                  Please agree to continue.
+                </span>
+              )}
+            </div>
           </div>
 
           <div className="ew-signup-actions">
             <button
               type="submit"
               className="ew-btn ew-btn-primary ew-btn-block"
-              disabled={submitting || barangaysLoading}
+              disabled={submitting || barangaysLoading || !privacyConsent}
             >
               {submitting ? (
                 <>
@@ -622,9 +652,8 @@ export function ResidentSignUpDialog({ dialogRef, isOpen, onClose, onOpenLogin }
 }
 
 export function LoginDialog({ dialogRef, onOpenSignUp, onLoginSuccess, notice = "" }) {
-  const { login } = useAuth();
+  const { loginResident } = useAuth();
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState("resident");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -672,7 +701,7 @@ export function LoginDialog({ dialogRef, onOpenSignUp, onLoginSuccess, notice = 
     setError("");
     setLoading(true);
     try {
-      const user = await login(email, password);
+      const user = await loginResident(email, password);
       close();
       if (typeof onLoginSuccess === "function") {
         onLoginSuccess(user);
@@ -716,44 +745,11 @@ export function LoginDialog({ dialogRef, onOpenSignUp, onLoginSuccess, notice = 
           </p>
         )}
 
-        {/* Role Selector Tabs (when not in recovery mode) */}
-        {!recoveryMode && (
-          <div className="ew-role-tabs" role="tablist" aria-label="Account category">
-            <button
-              type="button"
-              role="tab"
-              aria-selected={activeTab === "resident"}
-              className={`ew-role-tab ${activeTab === "resident" ? "active" : ""}`}
-              onClick={() => setActiveTab("resident")}
-            >
-              <FontAwesomeIcon icon={faHouseUser} className="ew-tab-icon" />
-              <span>Resident</span>
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={activeTab === "staff"}
-              className={`ew-role-tab ${activeTab === "staff" ? "active" : ""}`}
-              onClick={() => setActiveTab("staff")}
-            >
-              <FontAwesomeIcon icon={faUserShield} className="ew-tab-icon" />
-              <span>LGU & Admin</span>
-            </button>
-          </div>
-        )}
-
-        {/* Contextual Role Info Banner */}
         {!recoveryMode && (
           <div className="ew-role-banner" role="status">
-            {activeTab === "resident" ? (
-              <p>
-                <strong>Resident Access:</strong> Check your designated evacuation shelter, building, and room assignment, and report community road hazards.
-              </p>
-            ) : (
-              <p>
-                <strong>Staff Access:</strong> Authorized dashboard for Sogod DRRM personnel, center supervisors, and administrative officers.
-              </p>
-            )}
+            <p>
+              <strong>Resident Access:</strong> Sign in to view your evacuation center and room assignment, and report community road hazards.
+            </p>
           </div>
         )}
 
@@ -793,7 +789,7 @@ export function LoginDialog({ dialogRef, onOpenSignUp, onLoginSuccess, notice = 
               type="email"
               name="email"
               autoComplete="email"
-              placeholder={activeTab === "resident" ? "resident@example.com" : "officer@sogod.gov.ph"}
+              placeholder="Email address"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
@@ -858,7 +854,7 @@ export function LoginDialog({ dialogRef, onOpenSignUp, onLoginSuccess, notice = 
               <span>Signing in…</span>
             </>
           ) : (
-            `Sign In as ${activeTab === "resident" ? "Resident" : "LGU / Admin"}`
+            "Sign in as Resident"
           )}
         </button>
 
@@ -878,18 +874,23 @@ export function LoginDialog({ dialogRef, onOpenSignUp, onLoginSuccess, notice = 
           </button>
         )}
 
-        {/* Centered Sign-up Footer for Resident tab */}
-        {!recoveryMode && activeTab === "resident" && (
-          <div className="ew-login-footer">
-            <span className="ew-login-footer-text">No account?</span>{" "}
-            <button
-              type="button"
-              className="ew-login-signup-link"
-              onClick={onOpenSignUp}
-            >
-              Sign up
-            </button>
-          </div>
+        {!recoveryMode && (
+          <>
+            <div className="ew-login-footer">
+              <span className="ew-login-footer-text">No account?</span>{" "}
+              <button
+                type="button"
+                className="ew-login-signup-link"
+                onClick={onOpenSignUp}
+              >
+                Sign up
+              </button>
+            </div>
+            <div className="ew-login-footer">
+              <span className="ew-login-footer-text">Staff access?</span>{" "}
+              <Link className="ew-login-signup-link" to="/login" onClick={close}>Staff sign in</Link>
+            </div>
+          </>
         )}
       </form>
     </dialog>

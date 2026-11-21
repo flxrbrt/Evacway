@@ -53,6 +53,9 @@ STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS ix_resident_registration_requests_created_at ON resident_registration_requests (created_at)",
     "CREATE INDEX IF NOT EXISTS ix_resident_registration_requests_email ON resident_registration_requests (email)",
     "CREATE INDEX IF NOT EXISTS ix_resident_registration_requests_contact ON resident_registration_requests (contact_number)",
+    "ALTER TABLE resident_registration_requests ADD COLUMN IF NOT EXISTS privacy_consent BOOLEAN NOT NULL DEFAULT FALSE",
+    "ALTER TABLE resident_registration_requests ADD COLUMN IF NOT EXISTS privacy_consent_at TIMESTAMP",
+    "ALTER TABLE resident_registration_requests ADD COLUMN IF NOT EXISTS privacy_notice_version VARCHAR(40)",
 ]
 
 

@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
-    "test": "node --test src/utils/polygonSnap.test.js",
+    "test": "node --test src/utils/polygonSnap.test.js src/utils/centerBuildings.test.js src/config/emergencyContacts.test.js src/config/offlineMap.test.js",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -19,6 +19,7 @@
     "lucide-react": "^1.76.0",
     "mapbox-gl": "^3.30.0",
     "playwright": "^1.64.1",
+    "qrcode.react": "^4.2.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-leaflet": "^5.0.0",

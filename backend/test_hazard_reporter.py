@@ -158,7 +158,7 @@ class HazardReporterTests(unittest.TestCase):
 
         self.admin_token = create_access_token(
             identity=str(self.admin.id),
-            additional_claims={'role': 'admin', 'account_type': 'user', 'name': self.admin.name},
+            additional_claims={'role': 'admin', 'account_type': 'user', 'name': self.admin.name, 'mfa_verified': True, 'mfa_version': 0},
         )
         self.lgu_token = create_access_token(
             identity=str(self.lgu.id),

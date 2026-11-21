@@ -80,7 +80,10 @@ class NonRegisteredEvacueeTests(unittest.TestCase):
         self.resident_headers = self.headers(self.account.id, 'resident_account')
 
     def headers(self, identity, account_type='user'):
-        return {'Authorization': 'Bearer ' + create_access_token(identity=str(identity), additional_claims={'account_type': account_type})}
+        claims = {'account_type': account_type}
+        if account_type == 'user':
+            claims.update({'mfa_verified': True, 'mfa_version': 0})
+        return {'Authorization': 'Bearer ' + create_access_token(identity=str(identity), additional_claims=claims)}
 
     def create(self, people=None):
         return self.client.post('/api/non-registered-evacuees', headers=self.staff_headers,

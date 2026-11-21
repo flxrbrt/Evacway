@@ -16,6 +16,7 @@ import Dashboard from "./components/Dashboard/Dashboard";
 import ManageProfile from "./pages/profile/ManageProfile";
 import AdminMap from "./pages/admin/AdminMap";
 import ErrorBoundary from "./components/ErrorBoundary/ErrorBoundary";
+import DataPrivacyNotice from "./pages/DataPrivacyNotice";
 
 function App() {
   return (
@@ -31,6 +32,7 @@ function App() {
           <Route path="/login" element={<Login />} />
           <Route path="/forgot-password" element={<ForgotPassword />} />
           <Route path="/set-password" element={<PasswordSetup />} />
+          <Route path="/data-privacy-notice" element={<DataPrivacyNotice />} />
           <Route
             path="/dashboard"
             element={

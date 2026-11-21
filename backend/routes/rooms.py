@@ -18,7 +18,7 @@ from models import (
 )
 
 from flask_jwt_extended import get_jwt_identity
-from utils import role_required
+from utils import get_optional_caller, public_room_payload, role_required
 
 
 rooms_bp = Blueprint('rooms', __name__)
@@ -65,7 +65,10 @@ def get_rooms(center_id):
             "error": "Evacuation center not found"
         }), 404
 
-    include_inactive = request.args.get('include_inactive') == 'true'
+    caller = get_optional_caller()
+    is_staff = caller is not None and caller.get('role') in ('admin', 'lgu_personnel')
+    resident_id = caller.get('resident_id') if caller and caller.get('role') == 'resident' else None
+    include_inactive = is_staff and request.args.get('include_inactive') == 'true'
 
     query = EvacuationCenterRoom.query.filter_by(
         evacuation_center_id=center_id
@@ -106,6 +109,22 @@ def get_rooms(center_id):
         room_data["longitude"] = None
 
         result.append(room_data)
+
+    if not is_staff:
+        my_room_ids = set()
+        if resident_id:
+            my_room_ids = {
+                room_id for (room_id,) in db.session.query(EvacuationAssignment.room_id)
+                .filter(
+                    EvacuationAssignment.resident_id == resident_id,
+                    EvacuationAssignment.room_id.in_([room.id for room in rooms]),
+                )
+                .all()
+            } if rooms else set()
+        result = [
+            public_room_payload(room, room.id in my_room_ids)
+            for room in rooms
+        ]
 
     return jsonify(result)
 
